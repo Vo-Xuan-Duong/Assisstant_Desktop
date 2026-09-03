@@ -13,8 +13,16 @@ The assistant can now reason over common Windows accessibility state and perform
 Snapshot fields:
 
 ```text
-supports_toggle
-toggle_state = off | on | indeterminate
+toggle_state: number | null
+```
+
+Current native UIA values:
+
+```text
+0 = off
+1 = on
+2 = indeterminate
+null = TogglePattern unavailable
 ```
 
 Action:
@@ -37,12 +45,13 @@ A toggle can enable settings or options with consequences, so it is intentionall
 
 ### SelectionItemPattern
 
-Snapshot fields:
+Snapshot field:
 
 ```text
-supports_selection_item
-is_selected
+is_selected: boolean | null
 ```
+
+`null` means the element does not expose `SelectionItemPattern`.
 
 Action:
 
@@ -63,11 +72,20 @@ Selection itself may alter application state or choose a consequential workflow 
 
 ### ExpandCollapsePattern
 
-Snapshot fields:
+Snapshot field:
 
 ```text
-supports_expand_collapse
-expand_collapse_state = collapsed | expanded | partially_expanded | leaf
+expand_collapse_state: number | null
+```
+
+Current native UIA values:
+
+```text
+0 = collapsed
+1 = expanded
+2 = partially_expanded
+3 = leaf_node
+null = ExpandCollapsePattern unavailable
 ```
 
 Action:
@@ -86,20 +104,20 @@ Typical controls:
 
 Risk classification: **Moderate**.
 
-The native layer refuses requests that are incompatible with the current pattern state, for example trying to expand a leaf node.
-
 ### ScrollPattern
 
 Snapshot field:
 
 ```text
-scroll = {
+scroll: {
   horizontally_scrollable,
   vertically_scrollable,
   horizontal_percent,
   vertical_percent
-}
+} | null
 ```
+
+Windows UI Automation can return `-1` for a scroll percentage when that axis is not scrollable.
 
 Action:
 
