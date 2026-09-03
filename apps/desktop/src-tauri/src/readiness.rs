@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     env,
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -257,16 +258,36 @@ fn context_storage_check(state: &DesktopState) -> ReadinessCheck {
         };
     }
 
-    let probe = artifact_dir.join(".readiness-probe");
-    if let Err(error) = fs::write(&probe, b"readiness") {
+    let probe = artifact_dir.join(format!(".readiness-probe-{}", std::process::id()));
+    let mut probe_file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(file) => file,
+        Err(error) => {
+            return ReadinessCheck {
+                id: "context_storage",
+                label: "Context Storage",
+                level: ReadinessLevel::Blocking,
+                detail: format!("Context artifact directory không writable: {error}"),
+                path: Some(artifact_dir.display().to_string()),
+            };
+        }
+    };
+
+    if let Err(error) = probe_file.write_all(b"readiness") {
+        drop(probe_file);
+        let _ = fs::remove_file(&probe);
         return ReadinessCheck {
             id: "context_storage",
             label: "Context Storage",
             level: ReadinessLevel::Blocking,
-            detail: format!("Context artifact directory không writable: {error}"),
+            detail: format!("Không thể ghi context readiness probe: {error}"),
             path: Some(artifact_dir.display().to_string()),
         };
     }
+    drop(probe_file);
     let _ = fs::remove_file(&probe);
 
     ReadinessCheck {
