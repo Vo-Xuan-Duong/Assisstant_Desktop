@@ -7,14 +7,17 @@ use windows::{
             CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
         },
         UI::Accessibility::{
-            CUIAutomation, IUIAutomation, IUIAutomationCondition, IUIAutomationElement,
-            IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
-            IUIAutomationRangeValuePattern, IUIAutomationScrollPattern,
-            IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern,
-            IUIAutomationValuePattern, ScrollAmount, ScrollAmount_LargeDecrement,
-            ScrollAmount_LargeIncrement, ScrollAmount_NoAmount, ScrollAmount_SmallDecrement,
-            ScrollAmount_SmallIncrement, TreeScope_Children, UIA_InvokePatternId,
-            UIA_ValuePatternId,
+            CUIAutomation, ExpandCollapseState, ExpandCollapseState_Collapsed,
+            ExpandCollapseState_Expanded, ExpandCollapseState_LeafNode,
+            ExpandCollapseState_PartiallyExpanded, IUIAutomation,
+            IUIAutomationCondition, IUIAutomationElement, IUIAutomationExpandCollapsePattern,
+            IUIAutomationInvokePattern, IUIAutomationRangeValuePattern,
+            IUIAutomationScrollPattern, IUIAutomationSelectionItemPattern,
+            IUIAutomationTogglePattern, IUIAutomationValuePattern, ScrollAmount,
+            ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement, ScrollAmount_NoAmount,
+            ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement, ToggleState,
+            ToggleState_Indeterminate, ToggleState_Off, ToggleState_On, TreeScope_Children,
+            UIA_InvokePatternId, UIA_ValuePatternId,
         },
     },
 };
@@ -72,6 +75,25 @@ pub struct UiRangeValueSnapshot {
     pub read_only: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiToggleState {
+    Off,
+    On,
+    Indeterminate,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiExpandCollapseState {
+    Collapsed,
+    Expanded,
+    PartiallyExpanded,
+    Leaf,
+    Unknown,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UiScrollAmount {
@@ -114,9 +136,9 @@ pub struct UiElementSnapshot {
     pub supports_invoke: bool,
     pub supports_value: bool,
     pub range_value: Option<UiRangeValueSnapshot>,
-    pub toggle_state: Option<i32>,
+    pub toggle_state: Option<UiToggleState>,
     pub is_selected: Option<bool>,
-    pub expand_collapse_state: Option<i32>,
+    pub expand_collapse_state: Option<UiExpandCollapseState>,
     pub scroll: Option<UiScrollSnapshot>,
 }
 
@@ -469,7 +491,8 @@ fn snapshot_element(
                 })
             }),
         toggle_state: pattern::<IUIAutomationTogglePattern>(element, UIA_TOGGLE_PATTERN_ID)
-            .and_then(|pattern| unsafe { pattern.CurrentToggleState().ok() }),
+            .and_then(|pattern| unsafe { pattern.CurrentToggleState().ok() })
+            .map(normalize_toggle_state),
         is_selected: pattern::<IUIAutomationSelectionItemPattern>(element, UIA_SELECTION_ITEM_PATTERN_ID)
             .and_then(|pattern| unsafe { pattern.CurrentIsSelected().ok() })
             .map(|value| value.as_bool()),
@@ -477,7 +500,8 @@ fn snapshot_element(
             element,
             UIA_EXPAND_COLLAPSE_PATTERN_ID,
         )
-        .and_then(|pattern| unsafe { pattern.CurrentExpandCollapseState().ok() }),
+        .and_then(|pattern| unsafe { pattern.CurrentExpandCollapseState().ok() })
+        .map(normalize_expand_collapse_state),
         scroll: pattern::<IUIAutomationScrollPattern>(element, UIA_SCROLL_PATTERN_ID)
             .map(|pattern| UiScrollSnapshot {
                 horizontally_scrollable: unsafe { pattern.CurrentHorizontallyScrollable() }
@@ -491,6 +515,32 @@ fn snapshot_element(
                 vertical_percent: unsafe { pattern.CurrentVerticalScrollPercent() }
                     .unwrap_or(-1.0),
             }),
+    }
+}
+
+fn normalize_toggle_state(state: ToggleState) -> UiToggleState {
+    if state == ToggleState_Off {
+        UiToggleState::Off
+    } else if state == ToggleState_On {
+        UiToggleState::On
+    } else if state == ToggleState_Indeterminate {
+        UiToggleState::Indeterminate
+    } else {
+        UiToggleState::Unknown
+    }
+}
+
+fn normalize_expand_collapse_state(state: ExpandCollapseState) -> UiExpandCollapseState {
+    if state == ExpandCollapseState_Collapsed {
+        UiExpandCollapseState::Collapsed
+    } else if state == ExpandCollapseState_Expanded {
+        UiExpandCollapseState::Expanded
+    } else if state == ExpandCollapseState_PartiallyExpanded {
+        UiExpandCollapseState::PartiallyExpanded
+    } else if state == ExpandCollapseState_LeafNode {
+        UiExpandCollapseState::Leaf
+    } else {
+        UiExpandCollapseState::Unknown
     }
 }
 
