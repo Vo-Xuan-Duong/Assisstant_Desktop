@@ -93,6 +93,16 @@ impl WindowsMcpServer {
     }
 
     #[tool(
+        name = "apps_list",
+        description = "List currently running Windows process executables and process ids. This is read-only and does not terminate or modify processes."
+    )]
+    fn apps_list(&self) -> Result<String, String> {
+        apps::list_running()
+            .map_err(tool_error)
+            .and_then(|value| to_json(&value))
+    }
+
+    #[tool(
         name = "window_get_active",
         description = "Read the title and process id of the current Windows foreground window. This is read-only."
     )]
