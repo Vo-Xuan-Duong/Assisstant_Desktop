@@ -47,7 +47,34 @@ impl ContextIntent {
             ],
         );
 
+        let ui_interaction = contains_any(
+            &text,
+            &[
+                "nhấn nút",
+                "bấm nút",
+                "bấm vào",
+                "click vào",
+                "click the",
+                "press the button",
+                "điền vào",
+                "nhập vào ô",
+                "nhập vào trường",
+                "fill in",
+                "type into",
+                "chọn mục",
+                "chọn nút",
+                "select the",
+                "focus vào",
+                "focus the",
+                "menu này",
+                "nút này",
+                "ô này",
+                "field này",
+            ],
+        );
+
         let active_window = screen
+            || ui_interaction
             || contains_any(
                 &text,
                 &[
@@ -374,5 +401,13 @@ mod tests {
         let intent = ContextIntent::infer("Giải thích nội dung tôi vừa copy");
         assert!(intent.clipboard);
         assert!(!intent.screen);
+    }
+
+    #[test]
+    fn ui_interaction_requests_source_window_context() {
+        let intent = ContextIntent::infer("Bấm nút Retry giúp tôi");
+        assert!(intent.active_window);
+        assert!(!intent.screen);
+        assert!(!intent.clipboard);
     }
 }
