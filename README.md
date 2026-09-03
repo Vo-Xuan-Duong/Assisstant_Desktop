@@ -8,10 +8,10 @@ Development is phase-based: finish one bounded subsystem, static-review it, upda
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 13C — Wake Keyword Preparation**
-- **Latest completed main commit:** `2b3395856297f574f7c67d9e11a55db04c33f510`
-- **Current branch:** `phase/13d-wake-hot-reload-settings`
-- **Current phase:** Phase 13D — Wake Phrase Lifecycle & Hot Reload
+- **Latest completed phase on `main`: Phase 13D — Wake Phrase Lifecycle & Hot Reload**
+- **Latest completed main commit:** `0fe3d38e66939e17d7c7f78eda009e2a1b6e3add`
+- **Current branch:** `phase/14a-windows-startup-single-instance`
+- **Current phase:** Phase 14A — Windows Startup & Single Instance
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
@@ -71,6 +71,7 @@ Verified Download   Local Preparation
 - SentencePiece — local GigaSpeech wake phrase tokenization when `wake-word` is enabled.
 - reqwest — verified resource download transport.
 - SHA-256 — resource integrity verification before install.
+- Tauri single-instance/autostart plugins — Windows process lifecycle and optional logon startup.
 
 ## Development progress
 
@@ -110,7 +111,8 @@ Verified Download   Local Preparation
 | 13A — Runtime Resource Registry | ✅ | unified Whisper/wake paths/status + setup UI |
 | 13B — Verified Resource Installer | ✅ | pinned manifest + verified Whisper install + progress UI |
 | 13C — Wake Keyword Preparation | ✅ | local SentencePiece tokenization + validated `keywords.txt` generation |
-| **13D — Wake Lifecycle & Hot Reload** | **🚧** | transactional phrase replacement + detector hot reload + persisted wake settings |
+| 13D — Wake Lifecycle & Hot Reload | ✅ | transactional phrase replacement + detector hot reload + persisted wake settings |
+| **14A — Windows Startup & Single Instance** | **🚧** | one process + tray-controlled logon startup + hidden background launch |
 
 ## Recent merge points
 
@@ -134,6 +136,7 @@ Verified Download   Local Preparation
 13A  5c9338d...  runtime resource registry + setup UI
 13B  f39648f...  verified resource installer
 13C  2b33958...  wake keyword preparation
+13D  0fe3d38...  wake lifecycle + hot reload
 ```
 
 ## Current MCP capability surface
@@ -307,7 +310,7 @@ Current generator rules:
 - no MCP/Gemini/Antigravity call;
 - canonical `@PHRASE_LABEL` output.
 
-Phase 13D removes the restart requirement. Existing `keywords.txt` can be replaced transactionally:
+Existing `keywords.txt` can be replaced transactionally:
 
 ```text
 new .part
@@ -332,6 +335,19 @@ Wake preferences are persisted to:
 ```
 
 containing user-facing `enabled` and `phrase` values. Explicit `ASSISTANT_WAKE_ENABLED` remains a startup override. A settings-write failure is reported as a warning but does not undo an already successful runtime update.
+
+## Windows lifecycle
+
+Phase 14A adds process and logon lifecycle behavior without exposing new MCP tools.
+
+- the single-instance plugin is registered before the other lifecycle plugins;
+- a normal second launch reuses and focuses the running instance;
+- tray menu item **Khởi động cùng Windows** enables/disables native Windows autostart;
+- autostart always uses the fixed `--background` argument;
+- background launch initializes the full runtime but hides the main/edge windows;
+- a background duplicate does not steal focus from the user.
+
+Autostart remains opt-in and is controlled locally from the tray.
 
 ## Local Windows preflight
 
@@ -370,7 +386,7 @@ Desktop context is collected on demand only. Screen and clipboard data are treat
 
 ## Next direction
 
-After Phase 13D, remaining remote development moves to **final integration/release-readiness hardening**, not new computer-use features. The goal is to audit package metadata, sidecar/resource contracts, local build/run commands, release checklist and known Windows-only verification gates.
+After Phase 14A, remaining remote development is **release-readiness hardening**: package metadata and Windows bundle audit, release/local-build commands, signing/update policy documentation, release checklist, and known Windows-only verification gates.
 
 Actual compiler/runtime failures from the Windows local verification harness take precedence over adding any new capability.
 
@@ -384,6 +400,7 @@ Actual compiler/runtime failures from the Windows local verification harness tak
 - [`docs/WAKE_RUNTIME.md`](docs/WAKE_RUNTIME.md)
 - [`docs/WAKE_KEYWORD_PREPARATION.md`](docs/WAKE_KEYWORD_PREPARATION.md)
 - [`docs/WAKE_HOT_RELOAD.md`](docs/WAKE_HOT_RELOAD.md)
+- [`docs/WINDOWS_LIFECYCLE.md`](docs/WINDOWS_LIFECYCLE.md)
 - [`docs/UI_AUTOMATION_PATTERNS.md`](docs/UI_AUTOMATION_PATTERNS.md)
 - [`docs/PERMISSION_GATEWAY.md`](docs/PERMISSION_GATEWAY.md)
 - [`docs/RUNTIME_READINESS.md`](docs/RUNTIME_READINESS.md)
