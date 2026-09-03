@@ -101,6 +101,26 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
         risk: ToolRisk::Sensitive,
         description: "Write text/value into an explicitly inspected Windows UI Automation control.",
     },
+    ToolDefinition {
+        name: "ui_toggle",
+        risk: ToolRisk::Sensitive,
+        description: "Toggle an explicitly inspected UI Automation checkbox or switch. The semantic setting change can be consequential.",
+    },
+    ToolDefinition {
+        name: "ui_select",
+        risk: ToolRisk::Sensitive,
+        description: "Select an explicitly inspected UI Automation item. Selection can alter application state or workflow choices.",
+    },
+    ToolDefinition {
+        name: "ui_set_expanded",
+        risk: ToolRisk::Moderate,
+        description: "Expand or collapse an explicitly inspected UI Automation control.",
+    },
+    ToolDefinition {
+        name: "ui_scroll",
+        risk: ToolRisk::Moderate,
+        description: "Scroll an explicitly inspected UI Automation container by a bounded relative amount.",
+    },
 ];
 
 pub fn tool_definition(name: &str) -> Option<&'static ToolDefinition> {
