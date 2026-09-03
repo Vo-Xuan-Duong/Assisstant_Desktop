@@ -70,6 +70,15 @@ export type WakeRuntimeEvent =
   | { type: "detected"; detection: WakeDetection }
   | { type: "error"; message: string };
 
+export type ToolRisk = "safe" | "moderate" | "sensitive" | "blocked";
+
+export interface PermissionRequest {
+  request_id: string;
+  tool_name: string;
+  risk: ToolRisk;
+  arguments: unknown;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";

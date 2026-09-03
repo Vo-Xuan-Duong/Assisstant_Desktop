@@ -1,5 +1,6 @@
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
+    fmt,
     path::PathBuf,
     process::Stdio,
     sync::Arc,
@@ -20,13 +21,32 @@ use crate::{
 
 const MAX_DIAGNOSTIC_LINES: usize = 32;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AntigravityConfig {
     pub binary: String,
     pub model: Option<String>,
     pub agent: Option<String>,
     pub effort: Option<String>,
     pub working_directory: Option<PathBuf>,
+    /// Ephemeral environment passed only to the Antigravity process tree. This
+    /// is used for local runtime integration such as the permission broker and
+    /// must never be logged with values.
+    pub environment: BTreeMap<String, String>,
+}
+
+impl fmt::Debug for AntigravityConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let environment_keys: Vec<&str> = self.environment.keys().map(String::as_str).collect();
+        formatter
+            .debug_struct("AntigravityConfig")
+            .field("binary", &self.binary)
+            .field("model", &self.model)
+            .field("agent", &self.agent)
+            .field("effort", &self.effort)
+            .field("working_directory", &self.working_directory)
+            .field("environment_keys", &environment_keys)
+            .finish()
+    }
 }
 
 impl Default for AntigravityConfig {
@@ -37,11 +57,16 @@ impl Default for AntigravityConfig {
             agent: None,
             effort: None,
             working_directory: None,
+            environment: BTreeMap::new(),
         }
     }
 }
 
 impl AntigravityConfig {
+    pub fn set_environment(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.environment.insert(key.into(), value.into());
+    }
+
     fn command(&self) -> Command {
         let mut command = Command::new(&self.binary);
         command
@@ -65,6 +90,9 @@ impl AntigravityConfig {
         }
         if let Some(cwd) = &self.working_directory {
             command.current_dir(cwd);
+        }
+        if !self.environment.is_empty() {
+            command.envs(&self.environment);
         }
 
         command

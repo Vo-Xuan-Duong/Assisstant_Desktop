@@ -1,3 +1,4 @@
+mod permissions;
 mod server;
 
 use anyhow::Result;

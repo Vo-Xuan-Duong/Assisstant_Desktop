@@ -27,6 +27,7 @@ antigravity-bridge = { path = "../../../crates/antigravity-bridge" }
 assistant-common = { path = "../../../crates/common" }
 assistant-core = { path = "../../../crates/assistant-core" }
 context-engine = { path = "../../../crates/context-engine" }
+permission-broker = { path = "../../../crates/permission-broker" }
 voice-runtime = { path = "../../../crates/voice-runtime" }
 windows-tools = { path = "../../../crates/windows-tools" }
 async-trait.workspace = true
@@ -36,3 +37,4 @@ tauri-plugin-global-shortcut = "2.3"
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+uuid.workspace = true

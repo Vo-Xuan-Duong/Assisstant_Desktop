@@ -1,4 +1,5 @@
 mod edge;
+mod permission_desktop;
 mod wake_desktop;
 
 use std::sync::{Arc, Mutex};
@@ -11,6 +12,7 @@ use assistant_common::{AssistantEvent, AssistantState, SessionId, UserRequest};
 use assistant_core::{AssistantCore, EventSink};
 use async_trait::async_trait;
 use context_engine::ContextEngine;
+use permission_desktop::PermissionDesktopService;
 use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -521,7 +523,13 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let initial_source_window = current_external_window();
-            let client = Arc::new(AntigravityClient::new(AntigravityConfig::default()));
+            let (permission_service, broker_environment) =
+                PermissionDesktopService::setup(app.handle())?;
+            let mut antigravity_config = AntigravityConfig::default();
+            for (key, value) in broker_environment {
+                antigravity_config.set_environment(key, value);
+            }
+            let client = Arc::new(AntigravityClient::new(antigravity_config));
             let sink = Arc::new(TauriEventSink {
                 app: app.handle().clone(),
             });
@@ -552,6 +560,7 @@ pub fn run() {
                     turn_gate: AsyncMutex::new(()),
                 },
             });
+            app.manage(permission_service);
             app.manage(WakeService::setup(app.handle()));
 
             edge::setup(app.handle())?;
@@ -578,7 +587,8 @@ pub fn run() {
             assistant_voice_turn,
             assistant_speak,
             assistant_restart,
-            assistant_reset
+            assistant_reset,
+            permission_desktop::assistant_permission_respond
         ])
         .run(tauri::generate_context!())
         .expect("error while running Assisstant Desktop");
