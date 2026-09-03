@@ -1,8 +1,14 @@
 {
   "name": "assisstant-desktop-workspace",
   "private": true,
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "desktop:dev": "pnpm --filter @assisstant/desktop tauri dev",
-    "desktop:build": "pnpm --filter @assisstant/desktop tauri build"
+    "desktop:build": "pnpm --filter @assisstant/desktop tauri build",
+    "desktop:release:verify": "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-release.ps1",
+    "desktop:release:verify:public": "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-release.ps1 -PublicRelease",
+    "desktop:release:build": "pnpm --filter @assisstant/desktop tauri build"
   }
 }
