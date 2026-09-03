@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use antigravity_bridge::{AntigravityClient, AntigravityConfig, CliHealth};
 use assistant_common::{AssistantEvent, AssistantState, SessionId, UserRequest};
@@ -14,9 +18,19 @@ use tauri::{
 use tauri_plugin_global_shortcut::{
     Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex as AsyncMutex, RwLock};
 use tracing::{debug, warn};
 use tracing_subscriber::EnvFilter;
+use voice_runtime::{
+    tts::{TextToSpeech, WindowsSapiTts},
+    vad::{UtteranceSegmenter, VadEvent},
+    MicrophoneConfig, MicrophoneStream,
+};
+#[cfg(feature = "voice-whisper")]
+use voice_runtime::{
+    stt::SpeechRecognizer,
+    whisper::{WhisperConfig, WhisperRecognizer},
+};
 use windows_tools::window::{self, WindowHandle};
 
 #[derive(Clone)]
@@ -35,12 +49,22 @@ impl EventSink for TauriEventSink {
 
 type DesktopCore = AssistantCore<AntigravityClient, TauriEventSink>;
 
+#[cfg(feature = "voice-whisper")]
+struct WhisperVoiceState {
+    model_path: PathBuf,
+    recognizer: AsyncMutex<Option<WhisperRecognizer>>,
+    turn_gate: AsyncMutex<()>,
+}
+
 struct DesktopState {
     client: Arc<AntigravityClient>,
     core: Arc<DesktopCore>,
     context: ContextEngine,
+    tts: WindowsSapiTts,
     session_id: RwLock<SessionId>,
     source_window: Mutex<Option<WindowHandle>>,
+    #[cfg(feature = "voice-whisper")]
+    voice: WhisperVoiceState,
 }
 
 #[derive(Debug, Serialize)]
@@ -48,6 +72,21 @@ struct RuntimeHealth {
     state: &'static str,
     detail: Option<String>,
     conversation_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct VoiceCapabilities {
+    tts_available: bool,
+    whisper_compiled: bool,
+    model_path: Option<String>,
+    model_available: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct VoiceTurnResult {
+    transcript: String,
+    response: String,
+    tts_error: Option<String>,
 }
 
 #[tauri::command]
@@ -72,13 +111,7 @@ async fn assistant_health(state: State<'_, DesktopState>) -> RuntimeHealth {
     }
 }
 
-#[tauri::command]
-async fn assistant_submit(text: String, state: State<'_, DesktopState>) -> Result<String, String> {
-    let prompt = text.trim();
-    if prompt.is_empty() {
-        return Err("Yêu cầu không được để trống.".into());
-    }
-
+async fn complete_prompt(prompt: &str, state: &DesktopState) -> Result<String, String> {
     if state.core.state().await == AssistantState::Error {
         state.core.recover().await.map_err(|error| error.to_string())?;
     }
@@ -112,6 +145,179 @@ async fn assistant_submit(text: String, state: State<'_, DesktopState>) -> Resul
         .handle_text(UserRequest::new(session_id, enriched_prompt))
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn assistant_submit(text: String, state: State<'_, DesktopState>) -> Result<String, String> {
+    let prompt = text.trim();
+    if prompt.is_empty() {
+        return Err("Yêu cầu không được để trống.".into());
+    }
+
+    complete_prompt(prompt, &state).await
+}
+
+#[tauri::command]
+async fn assistant_voice_capabilities(state: State<'_, DesktopState>) -> VoiceCapabilities {
+    #[cfg(feature = "voice-whisper")]
+    {
+        return VoiceCapabilities {
+            tts_available: true,
+            whisper_compiled: true,
+            model_path: Some(state.voice.model_path.display().to_string()),
+            model_available: state.voice.model_path.is_file(),
+        };
+    }
+
+    #[cfg(not(feature = "voice-whisper"))]
+    {
+        let _ = state;
+        VoiceCapabilities {
+            tts_available: true,
+            whisper_compiled: false,
+            model_path: None,
+            model_available: false,
+        }
+    }
+}
+
+#[tauri::command]
+async fn assistant_speak(text: String, state: State<'_, DesktopState>) -> Result<(), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("Không có nội dung để đọc.".into());
+    }
+
+    state
+        .core
+        .begin_speaking()
+        .await
+        .map_err(|error| error.to_string())?;
+    let result = state.tts.speak(text).await.map_err(|error| error.to_string());
+    let finish = state
+        .core
+        .finish_speaking()
+        .await
+        .map_err(|error| error.to_string());
+
+    result?;
+    finish
+}
+
+#[tauri::command]
+async fn assistant_voice_turn(
+    app: AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<VoiceTurnResult, String> {
+    #[cfg(not(feature = "voice-whisper"))]
+    {
+        let _ = (app, state);
+        return Err(
+            "Bản build hiện tại chưa bật feature `voice-whisper`. Text/TTS vẫn hoạt động bình thường."
+                .into(),
+        );
+    }
+
+    #[cfg(feature = "voice-whisper")]
+    {
+        let _turn = state.voice.turn_gate.lock().await;
+        if state.core.state().await == AssistantState::Error {
+            state.core.recover().await.map_err(|error| error.to_string())?;
+        }
+        if state.core.state().await != AssistantState::Idle {
+            return Err("Assistant đang bận với một tác vụ khác.".into());
+        }
+        if !state.voice.model_path.is_file() {
+            return Err(format!(
+                "Chưa có Whisper model tại {}. Có thể override bằng ASSISTANT_WHISPER_MODEL.",
+                state.voice.model_path.display()
+            ));
+        }
+
+        state
+            .core
+            .begin_listening()
+            .await
+            .map_err(|error| error.to_string())?;
+
+        let capture_result = capture_one_utterance(&app).await;
+        let utterance = match capture_result {
+            Ok(utterance) => utterance,
+            Err(error) => {
+                let _ = state.core.cancel_listening().await;
+                return Err(error);
+            }
+        };
+
+        let recognizer = {
+            let mut slot = state.voice.recognizer.lock().await;
+            if slot.is_none() {
+                let mut config = WhisperConfig::new(state.voice.model_path.clone());
+                config.language = Some("vi".into());
+                *slot = Some(WhisperRecognizer::load(config).map_err(|error| error.to_string())?);
+            }
+            slot.as_ref()
+                .expect("recognizer initialized above")
+                .clone()
+        };
+
+        let transcript = match recognizer.transcribe(utterance).await {
+            Ok(transcript) if !transcript.is_empty() => transcript,
+            Ok(_) => {
+                let _ = state.core.cancel_listening().await;
+                return Err("Không nhận diện được nội dung giọng nói.".into());
+            }
+            Err(error) => {
+                let _ = state.core.cancel_listening().await;
+                return Err(error.to_string());
+            }
+        };
+
+        // AssistantCore transitions Listening -> Processing for this call.
+        let response = complete_prompt(&transcript.text, &state).await?;
+
+        state
+            .core
+            .begin_speaking()
+            .await
+            .map_err(|error| error.to_string())?;
+        let tts_error = state.tts.speak(&response).await.err().map(|error| error.to_string());
+        if let Err(error) = state.core.finish_speaking().await {
+            warn!(%error, "failed to finish voice speaking state");
+        }
+
+        Ok(VoiceTurnResult {
+            transcript: transcript.text,
+            response,
+            tts_error,
+        })
+    }
+}
+
+#[cfg(feature = "voice-whisper")]
+async fn capture_one_utterance(app: &AppHandle) -> Result<voice_runtime::vad::Utterance, String> {
+    let mut microphone = MicrophoneStream::open_default(MicrophoneConfig::default())
+        .map_err(|error| error.to_string())?;
+    let mut segmenter = UtteranceSegmenter::default();
+
+    let recording = async {
+        while let Some(chunk) = microphone.next_chunk().await {
+            let _ = app.emit("voice:level", chunk.level);
+            match segmenter.push(chunk) {
+                VadEvent::UtteranceReady(utterance) => return Ok(utterance),
+                VadEvent::DiscardedShortUtterance => {
+                    debug!("discarded short voice utterance");
+                }
+                VadEvent::Idle | VadEvent::SpeechStarted | VadEvent::SpeechContinues => {}
+            }
+        }
+
+        Err("Microphone stream đã kết thúc trước khi nhận được câu nói.".to_owned())
+    };
+
+    tokio::time::timeout(Duration::from_secs(25), recording)
+        .await
+        .map_err(|_| "Không phát hiện câu nói hoàn chỉnh trong 25 giây.".to_owned())?
 }
 
 #[tauri::command]
@@ -231,12 +437,30 @@ pub fn run() {
             });
             let core = Arc::new(AssistantCore::new(Arc::clone(&client), sink));
 
+            #[cfg(feature = "voice-whisper")]
+            let model_path = if let Some(path) = std::env::var_os("ASSISTANT_WHISPER_MODEL") {
+                PathBuf::from(path)
+            } else {
+                app.path()
+                    .app_local_data_dir()?
+                    .join("models")
+                    .join("whisper")
+                    .join("ggml-base.bin")
+            };
+
             app.manage(DesktopState {
                 client,
                 core,
                 context: ContextEngine::default(),
+                tts: WindowsSapiTts::default(),
                 session_id: RwLock::new(SessionId::new()),
                 source_window: Mutex::new(initial_source_window),
+                #[cfg(feature = "voice-whisper")]
+                voice: WhisperVoiceState {
+                    model_path,
+                    recognizer: AsyncMutex::new(None),
+                    turn_gate: AsyncMutex::new(()),
+                },
             });
 
             setup_shortcut(app)?;
@@ -254,6 +478,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             assistant_health,
             assistant_submit,
+            assistant_voice_capabilities,
+            assistant_voice_turn,
+            assistant_speak,
             assistant_restart,
             assistant_reset
         ])
