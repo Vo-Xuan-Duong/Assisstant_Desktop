@@ -426,7 +426,7 @@ fn apply_command(
             CommandEffect::default()
         }
         Some(WakeCommand::Reload {
-            mut detector: replacement,
+            detector: mut replacement,
             ack,
         }) => {
             let result = replacement.reset().map_err(|error| error.to_string());
