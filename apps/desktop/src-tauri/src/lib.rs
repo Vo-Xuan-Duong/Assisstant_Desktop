@@ -1,3 +1,5 @@
+mod edge;
+
 use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "voice-whisper")]
@@ -364,8 +366,18 @@ fn remember_source_window(app: &AppHandle) {
     }
 }
 
+fn source_window(app: &AppHandle) -> Option<WindowHandle> {
+    app.state::<DesktopState>()
+        .source_window
+        .lock()
+        .map(|source| *source)
+        .unwrap_or(None)
+}
+
 fn show_main_window(app: &AppHandle) {
     remember_source_window(app);
+    edge::activate(app, source_window(app));
+
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
@@ -374,6 +386,7 @@ fn show_main_window(app: &AppHandle) {
 }
 
 fn hide_main_window(app: &AppHandle) {
+    edge::hide(app);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
@@ -470,6 +483,7 @@ pub fn run() {
                 },
             });
 
+            edge::setup(app.handle())?;
             setup_shortcut(app)?;
             setup_tray(app)?;
             Ok(())
@@ -478,6 +492,7 @@ pub fn run() {
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    edge::hide(window.app_handle());
                     let _ = window.hide();
                 }
             }
