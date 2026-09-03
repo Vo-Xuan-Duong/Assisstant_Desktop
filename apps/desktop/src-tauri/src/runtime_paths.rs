@@ -49,9 +49,10 @@ impl RuntimePaths {
             .app_local_data_dir()
             .map_err(|error| format!("cannot resolve app local data directory: {error}"))?;
 
-        let runtime_dir = env::var_os("ASSISTANT_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| app_local_data.join("runtime"));
+        let runtime_dir = match env::var_os("ASSISTANT_RUNTIME_DIR").map(PathBuf::from) {
+            Some(path) => require_absolute("ASSISTANT_RUNTIME_DIR", path)?,
+            None => app_local_data.join("runtime"),
+        };
         let context_dir = app_local_data.join("context");
         let mcp_config_path = runtime_dir.join(".agents").join("mcp_config.json");
 
@@ -76,7 +77,10 @@ impl RuntimePaths {
 
 fn resolve_mcp_binary(app: &AppHandle) -> Result<(PathBuf, McpBinarySource), String> {
     if let Some(path) = env::var_os("ASSISTANT_MCP_BINARY").map(PathBuf::from) {
-        return Ok((path, McpBinarySource::Environment));
+        return Ok((
+            require_absolute("ASSISTANT_MCP_BINARY", path)?,
+            McpBinarySource::Environment,
+        ));
     }
 
     let resource_dir = app
@@ -102,9 +106,17 @@ fn resolve_mcp_binary(app: &AppHandle) -> Result<(PathBuf, McpBinarySource), Str
         }
     }
 
-    // Preserve the expected packaged path even when the file is missing so the
-    // readiness panel can report the exact location that needs attention.
     Ok((bundled, McpBinarySource::ExpectedBundled))
+}
+
+fn require_absolute(name: &str, path: PathBuf) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(format!(
+            "{name} must be an absolute path so runtime behavior never depends on the process working directory"
+        ))
+    }
 }
 
 fn write_mcp_config(config_path: &Path, runtime_dir: &Path, binary: &Path) -> Result<(), String> {
@@ -131,8 +143,6 @@ fn write_mcp_config(config_path: &Path, runtime_dir: &Path, binary: &Path) -> Re
     })
     .map_err(|error| format!("cannot serialize generated MCP config: {error}"))?;
 
-    // Setup runs before Antigravity is spawned, so a direct replacement here
-    // cannot race with the MCP config reader. The file contains no credentials.
     fs::write(config_path, bytes)
         .map_err(|error| format!("cannot write generated MCP config: {error}"))
 }
