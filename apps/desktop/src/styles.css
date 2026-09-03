@@ -16,6 +16,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .eyebrow, .section-label { margin: 0 0 5px; color: #9aa5ba; font-size: 11px; font-weight: 700; letter-spacing: .14em; }
 h1 { margin: 0; font-size: 22px; font-weight: 650; }
+h2 { margin: 0; font-size: 19px; font-weight: 650; }
 .runtime-pill { display: flex; align-items: center; gap: 8px; max-width: 220px; padding: 8px 11px; border: 1px solid #2b3242; border-radius: 999px; color: #b9c2d3; background: rgba(22, 26, 35, .85); font-size: 12px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #7c879b; box-shadow: 0 0 12px currentColor; }
 .runtime-available .status-dot { background: #6bd8a6; }
@@ -56,5 +57,35 @@ textarea::placeholder { color: #667187; }
 .state-listening .voice-button { color: #fff; border-color: #7fa6ff; box-shadow: 0 0 20px rgba(126, 165, 255, .28); }
 footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: #657087; font-size: 11px; }
 .footer-action { padding: 6px 9px; font-size: 11px; }
+
+.permission-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: rgba(4, 6, 10, .72); backdrop-filter: blur(10px); }
+.permission-modal { width: min(560px, 100%); max-height: min(680px, calc(100vh - 48px)); overflow: auto; display: grid; gap: 16px; padding: 20px; border: 1px solid #4a3d4c; border-radius: 20px; background: linear-gradient(180deg, rgba(31, 25, 34, .98), rgba(18, 18, 25, .99)); box-shadow: 0 24px 90px rgba(0, 0, 0, .55), 0 0 50px rgba(217, 101, 112, .08); }
+.permission-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.risk-badge { flex: 0 0 auto; padding: 5px 9px; border: 1px solid #664651; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.risk-sensitive { color: #ffc2ca; background: #321d24; }
+.permission-copy { margin: 0; color: #c8ceda; line-height: 1.55; }
+.permission-copy strong { color: #f9dde2; overflow-wrap: anywhere; }
+.permission-meta { display: grid; gap: 5px; }
+.permission-meta span, .permission-arguments > span { color: #8994a8; font-size: 10px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
+.permission-meta code { color: #aab6cb; overflow-wrap: anywhere; font-size: 11px; }
+.permission-arguments { min-width: 0; display: grid; gap: 7px; }
+.permission-arguments pre { margin: 0; max-height: 260px; overflow: auto; padding: 12px; border: 1px solid #302c38; border-radius: 12px; background: #0d0f15; color: #dce3ef; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
+.permission-timeout { color: #b9939a; font-size: 12px; }
+.permission-timeout strong { color: #ffc4cc; }
+.permission-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.permission-deny, .permission-allow { min-height: 40px; border-radius: 11px; padding: 9px 15px; font-weight: 750; }
+.permission-deny { border: 1px solid #3d465a; background: #171b24; color: #d1d9e7; }
+.permission-allow { border: 1px solid #875260; background: #482833; color: #ffe5e9; box-shadow: 0 0 20px rgba(217, 101, 112, .1); }
+.permission-deny:focus-visible, .permission-allow:focus-visible { outline: 2px solid #93b4ff; outline-offset: 2px; }
+
 @keyframes pulse { 50% { opacity: .25; } }
-@media (max-width: 600px) { .topbar, .runtime-card, footer { align-items: flex-start; flex-direction: column; } .runtime-actions { justify-content: flex-start; } .message { max-width: 96%; } .voice-strip { grid-template-columns: 1fr; } }
+@media (max-width: 600px) {
+  .topbar, .runtime-card, footer { align-items: flex-start; flex-direction: column; }
+  .runtime-actions { justify-content: flex-start; }
+  .message { max-width: 96%; }
+  .voice-strip { grid-template-columns: 1fr; }
+  .permission-backdrop { padding: 12px; }
+  .permission-modal { padding: 16px; border-radius: 16px; }
+  .permission-heading, .permission-actions { align-items: stretch; flex-direction: column; }
+  .permission-actions button { width: 100%; }
+}
