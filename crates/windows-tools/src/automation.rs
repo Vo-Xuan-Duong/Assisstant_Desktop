@@ -9,11 +9,12 @@ use windows::{
         UI::Accessibility::{
             CUIAutomation, IUIAutomation, IUIAutomationCondition, IUIAutomationElement,
             IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
-            IUIAutomationScrollPattern, IUIAutomationSelectionItemPattern,
-            IUIAutomationTogglePattern, IUIAutomationValuePattern, ScrollAmount,
-            ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement, ScrollAmount_NoAmount,
-            ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement, TreeScope_Children,
-            UIA_InvokePatternId, UIA_ValuePatternId,
+            IUIAutomationRangeValuePattern, IUIAutomationScrollPattern,
+            IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern,
+            IUIAutomationValuePattern, ScrollAmount, ScrollAmount_LargeDecrement,
+            ScrollAmount_LargeIncrement, ScrollAmount_NoAmount, ScrollAmount_SmallDecrement,
+            ScrollAmount_SmallIncrement, TreeScope_Children, UIA_InvokePatternId,
+            UIA_ValuePatternId,
         },
     },
 };
@@ -28,6 +29,7 @@ const HARD_MAX_NODES: usize = 500;
 // Microsoft UI Automation control-pattern identifiers. Keeping these local avoids
 // coupling pattern support to generated constant availability while matching the
 // stable UIAutomationClient.h values.
+const UIA_RANGE_VALUE_PATTERN_ID: i32 = 10003;
 const UIA_SCROLL_PATTERN_ID: i32 = 10004;
 const UIA_EXPAND_COLLAPSE_PATTERN_ID: i32 = 10005;
 const UIA_SELECTION_ITEM_PATTERN_ID: i32 = 10010;
@@ -58,6 +60,16 @@ pub struct UiScrollSnapshot {
     pub vertically_scrollable: bool,
     pub horizontal_percent: f64,
     pub vertical_percent: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct UiRangeValueSnapshot {
+    pub value: f64,
+    pub minimum: f64,
+    pub maximum: f64,
+    pub small_change: f64,
+    pub large_change: f64,
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -101,6 +113,7 @@ pub struct UiElementSnapshot {
     pub bounds: Option<UiRect>,
     pub supports_invoke: bool,
     pub supports_value: bool,
+    pub range_value: Option<UiRangeValueSnapshot>,
     pub toggle_state: Option<i32>,
     pub is_selected: Option<bool>,
     pub expand_collapse_state: Option<i32>,
@@ -145,7 +158,8 @@ impl UiInspectOptions {
 ///
 /// This intentionally does not read ValuePattern text. The tree is structural
 /// context only; field content is retrieved or modified only through an explicit
-/// action in a later layer.
+/// action in a later layer. Numeric RangeValue state is exposed because it is
+/// bounded control state, not arbitrary editable text.
 pub fn inspect(handle: WindowHandle, options: UiInspectOptions) -> ToolResult<UiTreeSnapshot> {
     let options = options.normalized();
     let client = AutomationClient::new(handle)?;
@@ -203,7 +217,11 @@ pub fn focus(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
 pub fn invoke(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
     let client = AutomationClient::new(handle)?;
     let element = client.resolve(path)?;
-    let pattern = get_pattern::<IUIAutomationInvokePattern>(&element, UIA_InvokePatternId, "InvokePattern")?;
+    let pattern = get_pattern::<IUIAutomationInvokePattern>(
+        &element,
+        UIA_InvokePatternId,
+        "InvokePattern",
+    )?;
     unsafe { pattern.Invoke()? };
     Ok(())
 }
@@ -218,7 +236,11 @@ pub fn set_value(handle: WindowHandle, path: &[u32], value: &str) -> ToolResult<
 
     let client = AutomationClient::new(handle)?;
     let element = client.resolve(path)?;
-    let pattern = get_pattern::<IUIAutomationValuePattern>(&element, UIA_ValuePatternId, "ValuePattern")?;
+    let pattern = get_pattern::<IUIAutomationValuePattern>(
+        &element,
+        UIA_ValuePatternId,
+        "ValuePattern",
+    )?;
 
     let read_only = unsafe { pattern.CurrentIsReadOnly()? }.as_bool();
     if read_only {
@@ -229,6 +251,40 @@ pub fn set_value(handle: WindowHandle, path: &[u32], value: &str) -> ToolResult<
 
     let value = windows::core::BSTR::from(value);
     unsafe { pattern.SetValue(&value)? };
+    Ok(())
+}
+
+/// Set a bounded numeric control through UIA RangeValuePattern.
+pub fn set_range_value(handle: WindowHandle, path: &[u32], value: f64) -> ToolResult<()> {
+    if !value.is_finite() {
+        return Err(ToolError::InvalidArgument(
+            "UI Automation range value must be finite".into(),
+        ));
+    }
+
+    let client = AutomationClient::new(handle)?;
+    let element = client.resolve(path)?;
+    let pattern = get_pattern::<IUIAutomationRangeValuePattern>(
+        &element,
+        UIA_RANGE_VALUE_PATTERN_ID,
+        "RangeValuePattern",
+    )?;
+
+    if unsafe { pattern.CurrentIsReadOnly()? }.as_bool() {
+        return Err(ToolError::Unsupported(
+            "element RangeValuePattern is read-only".into(),
+        ));
+    }
+
+    let minimum = unsafe { pattern.CurrentMinimum()? };
+    let maximum = unsafe { pattern.CurrentMaximum()? };
+    if value < minimum || value > maximum {
+        return Err(ToolError::InvalidArgument(format!(
+            "UI Automation range value {value} is outside [{minimum}, {maximum}]"
+        )));
+    }
+
+    unsafe { pattern.SetValue(value)? };
     Ok(())
 }
 
@@ -401,6 +457,17 @@ fn snapshot_element(
             .map(UiRect::from),
         supports_invoke: supports_pattern::<IUIAutomationInvokePattern>(element, UIA_InvokePatternId),
         supports_value: supports_pattern::<IUIAutomationValuePattern>(element, UIA_ValuePatternId),
+        range_value: pattern::<IUIAutomationRangeValuePattern>(element, UIA_RANGE_VALUE_PATTERN_ID)
+            .and_then(|pattern| {
+                Some(UiRangeValueSnapshot {
+                    value: unsafe { pattern.CurrentValue().ok()? },
+                    minimum: unsafe { pattern.CurrentMinimum().ok()? },
+                    maximum: unsafe { pattern.CurrentMaximum().ok()? },
+                    small_change: unsafe { pattern.CurrentSmallChange().ok()? },
+                    large_change: unsafe { pattern.CurrentLargeChange().ok()? },
+                    read_only: unsafe { pattern.CurrentIsReadOnly().ok()? }.as_bool(),
+                })
+            }),
         toggle_state: pattern::<IUIAutomationTogglePattern>(element, UIA_TOGGLE_PATTERN_ID)
             .and_then(|pattern| unsafe { pattern.CurrentToggleState().ok() }),
         is_selected: pattern::<IUIAutomationSelectionItemPattern>(element, UIA_SELECTION_ITEM_PATTERN_ID)
