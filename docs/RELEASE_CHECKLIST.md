@@ -1,199 +1,258 @@
 # Release checklist
 
-This document defines the Windows release gate for Assisstant Desktop. It is intentionally local-first: GitHub Actions are not part of the current release path.
+This document defines the Windows release gate for Assisstant Desktop. The release path remains local-first; GitHub Actions are not used.
 
 ## Release shape
 
-The supported release target is Windows with an NSIS current-user installer.
-
-Windows builds load `tauri.windows.conf.json`, which enables both product voice features:
+Supported release target:
 
 ```text
-voice-whisper
-wake-word
+Windows x64/MSVC
+Tauri full features: voice-whisper + wake-word
+NSIS current-user installer
+assistant-mcp external sidecar
 ```
 
-and overrides the generic bundle target with:
-
-```text
-nsis
-```
-
-The packaged desktop must include the `assistant-mcp` external sidecar. The existing Tauri `beforeBuildCommand` stages a release build of that sidecar before the frontend bundle is produced.
+`tauri.windows.conf.json` is loaded automatically on Windows. Public signed builds add `tauri.windows.signed.conf.json` through Tauri's `--config` merge option.
 
 ## Required local environment
 
-- Windows 10/11 x64 with the MSVC Rust toolchain.
-- Rust `1.85.0`, pinned by `rust-toolchain.toml` and matching the workspace release baseline.
+- Windows 10/11 x64.
+- Rust `1.85.0` as pinned by `rust-toolchain.toml`.
 - Node.js `20.19+` or `22.12+`.
 - pnpm.
-- Microsoft Edge WebView2 runtime / installer prerequisites.
-- Antigravity CLI (`agy`) available for end-to-end runtime verification.
-- Visual Studio C++ Build Tools if the MSVC linker/native dependencies require them.
+- Microsoft Edge WebView2 prerequisites.
+- Antigravity CLI (`agy`) for end-to-end verification.
+- Visual Studio C++ Build Tools / Windows SDK when native linking or signing requires them.
+
+## First local release preparation
+
+Run:
+
+```powershell
+pnpm desktop:release:prepare
+```
+
+This performs only deterministic preparation work:
+
+1. materializes `apps/desktop/src-tauri/icons/icon.ico` from the tracked Base64 payload;
+2. verifies the generated ICO against its pinned SHA-256;
+3. runs `cargo generate-lockfile`;
+4. runs `pnpm install --lockfile-only --ignore-scripts`.
+
+The generated ICO is intentionally ignored by Git because its reproducible source is committed as:
+
+```text
+apps/desktop/src-tauri/icons/app-icon.svg
+apps/desktop/src-tauri/icons/icon.ico.b64
+```
+
+Review and commit the generated dependency lockfiles:
+
+```text
+Cargo.lock
+pnpm-lock.yaml
+```
+
+Do not fabricate or hand-edit resolved dependency entries.
 
 ## Repository gates
 
 Before a release candidate is built, all of these must be true:
 
-- `LICENSE` exists and matches the workspace MIT declaration.
-- `rust-toolchain.toml` remains pinned to Rust `1.85.0` for this release baseline.
-- `Cargo.lock` is generated, reviewed and committed.
-- `pnpm-lock.yaml` is generated, reviewed and committed.
-- a branded Windows icon is approved and committed at `apps/desktop/src-tauri/icons/icon.ico` together with the normal Tauri icon set used by packaging.
-- `tauri.windows.conf.json` enables `voice-whisper` and `wake-word`.
-- Windows bundle target is exactly `nsis`.
-- NSIS install mode remains `currentUser` unless the security/elevation model is deliberately changed.
-- `binaries/assistant-mcp` remains declared in Tauri `externalBin`.
-- desktop/Tauri versions are synchronized.
-- working tree is clean and the release commit is reviewed.
+- `LICENSE` matches the workspace MIT declaration;
+- Rust toolchain remains pinned to `1.85.0` for the current baseline;
+- `Cargo.lock` and `pnpm-lock.yaml` are committed;
+- tracked icon SVG/Base64 payload exists;
+- materialized `icons/icon.ico` matches the pinned SHA-256;
+- `tauri.windows.conf.json` enables `voice-whisper` and `wake-word`;
+- Windows bundle target is exactly `nsis`;
+- NSIS install mode is `currentUser`;
+- Windows bundle explicitly uses `icons/icon.ico`;
+- `binaries/assistant-mcp` remains in Tauri `externalBin`;
+- desktop/Tauri versions match;
+- working tree is clean.
 
-Run the read-only gate:
+Read-only verification:
 
 ```powershell
 pnpm desktop:release:verify
 ```
 
-It does not build, install, sign, download resources or invoke GitHub Actions.
+The verifier never builds, installs, signs, downloads models, or invokes GitHub Actions.
 
-## Local functional verification
+## Release icon contract
 
-Run the existing prerequisite/runtime verifier first:
+Human-editable source:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1
+```text
+apps/desktop/src-tauri/icons/app-icon.svg
 ```
 
-Then perform the Phase 14A lifecycle checks in `docs/WINDOWS_LIFECYCLE.md`, including:
+Reproducible Windows ICO payload:
 
-- normal startup;
-- second-launch single-instance behavior;
-- tray show/hide;
-- opt-in Windows startup;
-- `--background` startup;
-- global shortcut;
-- wake activation when wake resources are installed.
-
-Also verify:
-
-- text request → Antigravity/Gemini response;
-- permission-gated MCP action;
-- permission Ask/Allow once/Deny paths;
-- microphone → VAD → Whisper → Gemini → SAPI voice turn;
-- wake phrase generation/hot reload;
-- readiness/resource panels;
-- runtime paths under app-local-data after install.
-
-## Dependency lockfiles
-
-The repository does not generate dependency lockfiles remotely. Create them on the release workstation:
-
-```powershell
-cargo generate-lockfile
-pnpm install --lockfile-only
+```text
+apps/desktop/src-tauri/icons/icon.ico.b64
 ```
 
-Review both `Cargo.lock` and `pnpm-lock.yaml`, then commit them. Subsequent frontend release dependency installs should use the frozen pnpm lockfile:
-
-```powershell
-pnpm install --frozen-lockfile
-```
-
-Cargo automatically consumes the committed `Cargo.lock` for the workspace application build. A release must not be cut while either lockfile is reported as blocking.
-
-## Release icon
-
-Do not publish with a placeholder/generic executable icon. Create and review the final product artwork, then generate the Tauri icon set locally. The required Windows release gate checks:
+Materialized build asset:
 
 ```text
 apps/desktop/src-tauri/icons/icon.ico
 ```
 
-If using the Tauri icon generator, review every generated file before committing it.
+Materialize only assets with:
 
-## Build release candidate
+```powershell
+pnpm desktop:assets:prepare
+```
 
-After all non-signing gates pass:
+This command is safe to run before dev/build and does not touch dependency lockfiles.
+
+## Local unsigned release candidate
+
+After the two lockfiles are committed:
 
 ```powershell
 pnpm install --frozen-lockfile
-pnpm desktop:release:verify
 pnpm desktop:release:build
 ```
 
-The build hooks should:
+`desktop:release:build` materializes the icon, runs the read-only release verifier, then invokes the normal Tauri Windows release build.
+
+The Tauri build hooks then:
 
 1. build `windows-mcp` / `assistant-mcp.exe` in release mode;
-2. stage it with the Rust host target triple under `src-tauri/binaries/`;
+2. stage the target-triple sidecar under `src-tauri/binaries/`;
 3. build the React frontend;
-4. compile the Tauri desktop with Whisper and wake-word features;
-5. produce an NSIS installer.
+4. compile the desktop with Whisper + wake-word features;
+5. produce the NSIS installer.
 
-Expected installer output is under the Tauri/Cargo release bundle `nsis` directory for the active target.
+Unsigned builds are development/release-candidate artifacts only.
 
-## Installed-package verification
+## Public Windows signing
 
-Test the installer on a clean or disposable Windows user profile, not only from the repository checkout.
+The repository contains a generic signing overlay and script but no certificate identity or secret:
 
-Verify that:
+```text
+apps/desktop/src-tauri/tauri.windows.signed.conf.json
+apps/desktop/src-tauri/scripts/sign-windows.ps1
+```
 
-- installation does not require Administrator privileges in current-user mode;
-- installed app starts without repository-relative paths;
-- `assistant-mcp.exe` is present and the generated runtime MCP config points to the installed sidecar;
-- app-local-data directories are created correctly;
-- optional Whisper/wake resources can be installed/prepared after installation;
-- uninstall removes application binaries while not unexpectedly deleting user-owned runtime data unless that behavior is explicitly chosen;
-- install → update/reinstall → uninstall flows do not leave a broken Windows startup entry.
+The signed overlay configures Tauri `bundle.windows.signCommand`. Tauri replaces `%1` with each file that must be signed; the script uses Windows `signtool.exe`, signs with SHA-256, timestamps the artifact, and immediately verifies the resulting Authenticode signature.
 
-## Code signing policy
+Set these local environment variables before public verification/build:
 
-Local unsigned builds are acceptable for development only.
+```powershell
+$env:ASSISTANT_WINDOWS_CERT_SHA1 = "<40-character certificate thumbprint>"
+$env:ASSISTANT_WINDOWS_TIMESTAMP_URL = "<your certificate provider RFC3161 timestamp URL>"
+```
 
-Before distributing a production installer publicly, configure and review Windows code signing. Tauri supports Windows signing through the Windows bundle signing configuration. The exact certificate/account/signing command is intentionally not committed until a real signing identity is available.
+The certificate must be installed in:
 
-Enforce this gate with:
+```text
+Cert:\CurrentUser\My
+```
+
+and expose its private key.
+
+Do not commit PFX files, private keys, passwords, signing tokens, or cloud signing secrets.
+
+Public gate:
 
 ```powershell
 pnpm desktop:release:verify:public
 ```
 
-The public-release verifier fails while no reviewed Windows `signCommand` is configured.
+It additionally verifies:
 
-Do not commit certificate private keys, passwords, client secrets or signing tokens to the repository.
+- the signed config calls the reviewed signing script and preserves `%1`;
+- thumbprint syntax is valid;
+- timestamp URL is absolute HTTP(S);
+- the matching CurrentUser certificate exists and has a private key;
+- the certificate is not expired;
+- `signtool.exe` is available.
+
+Public signed build:
+
+```powershell
+pnpm desktop:release:build:public
+```
+
+This merges `tauri.windows.signed.conf.json` on top of the normal Windows config and therefore keeps the same features, installer target and icon contract while adding signing.
+
+## Local functional verification
+
+Run the prerequisite/runtime verifier:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1
+```
+
+Then verify at minimum:
+
+- normal startup and second-launch single-instance behavior;
+- tray show/hide and opt-in Windows startup;
+- `--background` startup;
+- global shortcut;
+- text → Antigravity/Gemini response;
+- permission Ask / Allow once / Deny paths;
+- permission-gated MCP mutations;
+- microphone → VAD → Whisper → Gemini → SAPI;
+- wake detection, phrase generation and hot reload;
+- readiness/resource panels;
+- runtime paths under app-local-data.
+
+## Installed-package verification
+
+Test the NSIS installer on a clean/disposable Windows user profile.
+
+Verify that:
+
+- current-user installation does not require Administrator privileges;
+- installed app starts without repository-relative paths;
+- bundled `assistant-mcp.exe` is present;
+- generated runtime MCP config points to the installed sidecar;
+- app-local-data directories are created correctly;
+- optional Whisper/wake resources can be installed after installation;
+- startup enable/disable survives reinstall/update flows correctly;
+- uninstall does not unexpectedly delete user-owned runtime data.
+
+For a public artifact also verify Authenticode on the final installer/executables with SignTool before publication.
 
 ## Updater policy
 
-Automatic updater artifacts are intentionally disabled for now. Do not enable the updater until all of the following are defined together:
+Automatic updater artifacts remain disabled. Do not enable the updater until all of these exist together:
 
 - trusted update endpoint;
-- updater public/private signing key lifecycle;
+- updater signing-key lifecycle;
 - version publication process;
 - rollback/recovery policy;
 - installer/update test matrix.
 
-Manual signed releases are the safer initial distribution model.
+Manual signed releases remain the initial distribution model.
 
 ## Versioning
 
 For each release:
 
 1. choose a semantic version;
-2. update the workspace/Tauri/frontend versions consistently;
-3. re-run `verify-release.ps1`;
-4. build and smoke-test the installed package;
-5. sign the public installer;
-6. verify the signature on the final artifact;
-7. create the Git tag/release only after the exact signed artifact has passed verification.
+2. update workspace/Tauri/frontend versions consistently;
+3. commit reviewed dependency lockfiles;
+4. run release verification;
+5. build and smoke-test the installed package;
+6. for public distribution, sign and verify the exact final artifacts;
+7. create the Git tag/release only after those exact artifacts pass verification.
 
 Never reuse a version/tag for different binaries.
 
-## Current external blockers
+## Remaining machine-dependent gates
 
-These are not safely inventable during remote code development and must be supplied/approved locally before the first public release:
+After Phase 15, repository-side release automation is complete. The remaining gates are intentionally machine/identity dependent:
 
-1. final application icon/branding;
-2. generated and reviewed `Cargo.lock`;
-3. generated and reviewed `pnpm-lock.yaml`;
-4. real Windows code-signing identity/configuration;
-5. full compile/runtime/install verification on Windows.
+1. generate and review `Cargo.lock` using the real resolver;
+2. generate and review `pnpm-lock.yaml` using the real resolver;
+3. perform native Windows compile/install/runtime verification;
+4. for public distribution, provide a real trusted Windows code-signing certificate/private key.
 
-Compiler/runtime findings discovered during these checks override this checklist and should be fixed before adding further product capability.
+Compiler/runtime/install findings override this checklist and must be fixed before publication.
