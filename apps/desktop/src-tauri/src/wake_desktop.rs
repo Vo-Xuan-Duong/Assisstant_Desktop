@@ -177,7 +177,29 @@ impl WakeService {
     pub async fn suspend(&self) {
         #[cfg(feature = "wake-word")]
         if let Some(handle) = &self.handle {
-            let _ = handle.suspend().await;
+            let mut state = handle.subscribe_state();
+            if handle.suspend().await.is_err() {
+                return;
+            }
+
+            // Sending the command is not enough: wait until the worker has
+            // dropped its CPAL stream before a full voice turn opens a new one.
+            let wait = async {
+                loop {
+                    if matches!(
+                        *state.borrow_and_update(),
+                        WakeRuntimeState::Suspended
+                            | WakeRuntimeState::Disabled
+                            | WakeRuntimeState::Stopped
+                    ) {
+                        break;
+                    }
+                    if state.changed().await.is_err() {
+                        break;
+                    }
+                }
+            };
+            let _ = tokio::time::timeout(Duration::from_secs(2), wait).await;
         }
     }
 
