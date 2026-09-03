@@ -31,8 +31,8 @@ export function getResourceCatalog(): Promise<ResourceInstallManifest[]> {
   return invoke<ResourceInstallManifest[]>("assistant_resource_catalog");
 }
 
-export function installResource(resourceId: string): Promise<ResourceInstallResult> {
-  return invoke<ResourceInstallResult>("assistant_resource_install", { resourceId });
+export function installResource(resourceId: string, phrase?: string): Promise<ResourceInstallResult> {
+  return invoke<ResourceInstallResult>("assistant_resource_install", { resourceId, phrase });
 }
 
 export function onResourceInstallProgress(
