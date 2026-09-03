@@ -21,6 +21,7 @@ tauri-build = { version = "2.6", features = [] }
 antigravity-bridge = { path = "../../../crates/antigravity-bridge" }
 assistant-common = { path = "../../../crates/common" }
 assistant-core = { path = "../../../crates/assistant-core" }
+context-engine = { path = "../../../crates/context-engine" }
 async-trait.workspace = true
 serde.workspace = true
 tauri = { version = "2.11", features = ["tray-icon"] }
