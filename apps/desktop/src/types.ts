@@ -39,6 +39,21 @@ export interface AudioLevel {
   peak: number;
 }
 
+export interface WakeStatus {
+  compiled: boolean;
+  available: boolean;
+  enabled: boolean;
+  state: string;
+  model_dir?: string | null;
+  keywords_path?: string | null;
+  detail?: string | null;
+}
+
+export type WakeRuntimeEvent =
+  | { type: "state_changed"; from: string; to: string }
+  | { type: "detected"; detection: { keyword: string; start_time_seconds: number } }
+  | { type: "error"; message: string };
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
