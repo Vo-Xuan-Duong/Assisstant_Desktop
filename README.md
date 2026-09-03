@@ -8,14 +8,15 @@ The project is developed phase-by-phase: each subsystem is given a stable contra
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 11C — Window Discovery & Activation**
-- **Current development branch:** `phase/11d-monitor-window-placement`
-- **Current phase:** Phase 11D — Monitor Discovery & Window Placement
-- **Latest completed `main` commit:** `0f5aeada05eaee6cd68d47a5e97dfb69836b48de`
+- **Latest completed phase on `main`: Phase 11D — Monitor Discovery & Window Placement**
+- **Current development branch:** `phase/12a-runtime-readiness`
+- **Current phase:** Phase 12A — Runtime Readiness Diagnostics
+- **Latest completed `main` commit:** `5b1409db94291610e35d36e923b55cc5a4086c34`
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
 - **Default safety posture:** fail closed for unknown/blocked actions
+- **Current integration priority:** make local/runtime readiness explicit before packaging
 
 ## Architecture
 
@@ -99,7 +100,8 @@ Wake word / Hotkey / Text
 | 11A — VirtualizedItem | ✅ | Status + semantic `Realize()` with mandatory reinspection |
 | 11B — Window Management | ✅ | Minimize/maximize/restore + graceful close with stale-HWND guard |
 | 11C — Window Discovery & Activation | ✅ | Bounded top-level window discovery + explicit foreground activation |
-| **11D — Monitor Discovery & Window Placement** | **🚧** | Monitor/work-area geometry + explicit move/resize without raw input |
+| 11D — Monitor Discovery & Window Placement | ✅ | Monitor/work-area geometry + explicit move/resize without raw input |
+| **12A — Runtime Readiness Diagnostics** | **🚧** | Actionable readiness report across AI/MCP/security/context/voice/wake |
 
 ## Recent merge points
 
@@ -124,6 +126,7 @@ Phase 10E  9ad37fb...  MCP router modularization
 Phase 11A  26c4d48...  VirtualizedItem support
 Phase 11B  7582688...  Explicit window management
 Phase 11C  0f5aead...  Window discovery + activation
+Phase 11D  5b1409d...  Monitor discovery + window placement
 ```
 
 ## Current Windows/MCP capability surface
@@ -135,11 +138,11 @@ Phase 11C  0f5aead...  Window discovery + activation
 - `audio_set_mute`
 - `apps_open`
 - `apps_list`
-- `display_list` *(Phase 11D, in development)*
+- `display_list`
 - `window_get_active`
 - `window_list`
 - `window_activate`
-- `window_set_bounds` *(Phase 11D, in development)*
+- `window_set_bounds`
 - `window_set_state`
 - `window_close`
 - `system_get_info`
@@ -191,29 +194,48 @@ window_close       → Sensitive
 
 `window_close` posts `WM_CLOSE`; it does **not** terminate the process and preserves normal unsaved-changes/application shutdown behavior.
 
-## Phase 11D — Monitor Discovery & Window Placement
+## Phase 12A — Runtime Readiness Diagnostics
 
-The current branch adds:
+The current branch adds one aggregate diagnostic command and a dedicated desktop panel.
+
+Readiness checks:
 
 ```text
-display_list
-    ↓
-monitor bounds + work_area + primary
-
-window_set_bounds(HWND, expected PID, x, y, width, height)
-    ↓
-validate bounds
-    ↓
-revalidate HWND owner PID
-    ↓
-SetWindowPos(SWP_NOZORDER | SWP_NOACTIVATE)
+Antigravity CLI
+Windows MCP
+Permission Broker
+Context Storage
+Windows TTS
+Local Whisper STT
+Wake Word
 ```
 
-`work_area` is intended for assistant-managed placement so taskbars and other reserved desktop areas are not covered.
+Each check is classified as:
 
-Window placement keeps focus and Z-order unchanged. If activation is desired, the agent must call `window_activate` as a separate, permission-controlled action.
+```text
+ready
+optional_missing
+blocking
+```
 
-Native placement rejects non-positive dimensions, dimensions above 32768 pixels, coordinates outside ±100000 pixels, and stale HWND/PID pairs.
+Overall readiness is derived conservatively:
+
+```text
+any blocking
+    → blocking
+
+no blocking + optional component missing
+    → optional_missing
+
+all required/selected components ready
+    → ready
+```
+
+`Windows MCP` checks the active MCP configuration and the configured `assistant-mcp.exe` path. The repository now includes `.agents/mcp_config.json` for the local/dev layout; `ASSISTANT_MCP_CONFIG` can override the config location.
+
+Missing Whisper or wake resources are optional and do not block text assistant operation. Missing Antigravity, malformed permission policy, unavailable broker, unwritable context storage or a missing MCP executable are surfaced as blocking for the capability that requires them.
+
+The readiness report intentionally does **not** expose broker secrets, credentials, prompt/chat text, clipboard contents, screenshots, permission arguments or audit contents.
 
 ## Permission model
 
@@ -282,6 +304,8 @@ active_executable
 
 Screenshots are captured only when the user request needs screen context. Local desktop context is marked as **untrusted context** before being inserted into the AI request.
 
+Phase 12A currently reports that context artifacts still use a working-directory-relative path. Moving that storage to app-local-data is intentionally deferred to Phase 12B so packaging/path migration remains a bounded change.
+
 ## Development rules
 
 1. Develop one bounded phase at a time.
@@ -297,7 +321,15 @@ Screenshots are captured only when the user request needs screen context. Local 
 
 ## Next direction
 
-After Phase 11D is locked, development will continue with another bounded Windows/system capability or with local integration hardening. Raw mouse/keyboard automation remains deferred until semantic APIs are exhausted and a separate safety design is in place.
+After Phase 12A, development moves to **Phase 12B — Runtime Paths & Packaging Hardening**:
+
+- move context artifacts from working-directory-relative storage to app-local-data;
+- remove assumptions that MCP resources live under repo-local `target/release` in packaged builds;
+- define explicit dev vs packaged runtime resource resolution;
+- keep environment overrides for diagnostics/recovery;
+- update readiness to reflect the new packaged runtime contract.
+
+Raw mouse/keyboard automation remains deferred until semantic APIs are exhausted and a separate safety design is in place.
 
 ## Documentation
 
@@ -316,3 +348,4 @@ Key design documents live under [`docs/`](docs/), including:
 - [`docs/WINDOW_MANAGEMENT.md`](docs/WINDOW_MANAGEMENT.md)
 - [`docs/WINDOW_DISCOVERY_ACTIVATION.md`](docs/WINDOW_DISCOVERY_ACTIVATION.md)
 - [`docs/MONITOR_WINDOW_PLACEMENT.md`](docs/MONITOR_WINDOW_PLACEMENT.md)
+- [`docs/RUNTIME_READINESS.md`](docs/RUNTIME_READINESS.md)
