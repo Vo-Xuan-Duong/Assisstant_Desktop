@@ -21,6 +21,8 @@ const stateLabel: Record<ResourceState, string> = {
   not_compiled: "Not compiled",
 };
 
+const wakeModelFileNames = new Set(["encoder", "decoder", "joiner", "tokens"]);
+
 function formatBytes(value: number): string {
   if (value <= 0) return "Local generated";
   const units = ["B", "KB", "MB", "GB"];
@@ -170,6 +172,9 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
               );
 
               const wakeKeywordManifest = resource.id === "wake_word" ? manifestById.get("wake_keywords") : undefined;
+              const wakeRuntimeModelReady = resource.files
+                .filter((file) => wakeModelFileNames.has(file.name))
+                .every((file) => file.exists);
               const wakeTokensReady = resource.files.some((file) => file.name === "tokens" && file.exists);
               const wakeKeywordsReady = resource.files.some((file) => file.name === "keywords" && file.exists);
               const wakeBpeReady = resource.preparation_files.some((file) => file.name === "bpe_model" && file.exists);
@@ -177,6 +182,7 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
               const canPrepareWake = Boolean(
                 resource.id === "wake_word" &&
                   resource.compiled &&
+                  wakeRuntimeModelReady &&
                   wakeTokensReady &&
                   wakeBpeReady &&
                   wakePhrase.trim() &&
@@ -280,6 +286,7 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
                             : "Tạo + nạp ngay"}
                       </button>
                       {!resource.compiled && <small>Build cần bật feature `wake-word` để tokenize local.</small>}
+                      {!wakeRuntimeModelReady && <small>Wake model chưa đủ encoder/decoder/joiner/tokens để hot-load.</small>}
                       {!wakeBpeReady && <small>Thiếu `bpe.model` trong wake model directory.</small>}
                       {!wakeTokensReady && <small>Thiếu `tokens.txt` trong wake model directory.</small>}
                     </div>
