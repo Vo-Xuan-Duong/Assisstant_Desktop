@@ -80,6 +80,8 @@ export default function EdgeOverlay() {
 
   const style = {
     "--voice-level": voiceLevel.toFixed(3),
+    "--voice-opacity": (0.48 + voiceLevel * 0.5).toFixed(3),
+    "--voice-scale": (0.48 + voiceLevel * 0.5).toFixed(3),
   } as CSSProperties;
 
   return (
