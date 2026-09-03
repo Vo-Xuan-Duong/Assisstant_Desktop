@@ -149,12 +149,13 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
               const manifest = manifestById.get(resource.id);
               const currentProgress = progress[resource.id];
               const isInstalling = Boolean(installing[resource.id]);
+              const allFilesPresent = resource.files.length > 0 && resource.files.every((file) => file.exists);
               const percent = currentProgress?.total_bytes
                 ? Math.min(100, Math.round((currentProgress.downloaded_bytes / currentProgress.total_bytes) * 100))
                 : 0;
               const canInstall = Boolean(
                 manifest?.installable &&
-                  resource.state !== "ready" &&
+                  !allFilesPresent &&
                   !isInstalling,
               );
 
@@ -205,8 +206,8 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
                           disabled={!canInstall}
                           onClick={() => void startInstall(resource.id)}
                         >
-                          {resource.state === "ready"
-                            ? "Đã cài"
+                          {allFilesPresent
+                            ? "File đã có"
                             : isInstalling
                               ? `Đang cài ${percent}%`
                               : "Tải và xác minh"}
