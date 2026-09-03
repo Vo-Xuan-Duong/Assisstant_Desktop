@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+voice-whisper = ["voice-runtime/whisper"]
+
 [lib]
 name = "assisstant_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -22,6 +26,7 @@ antigravity-bridge = { path = "../../../crates/antigravity-bridge" }
 assistant-common = { path = "../../../crates/common" }
 assistant-core = { path = "../../../crates/assistant-core" }
 context-engine = { path = "../../../crates/context-engine" }
+voice-runtime = { path = "../../../crates/voice-runtime" }
 windows-tools = { path = "../../../crates/windows-tools" }
 async-trait.workspace = true
 serde.workspace = true

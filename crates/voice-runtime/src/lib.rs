@@ -1,4 +1,5 @@
 pub mod stt;
+pub mod tts;
 pub mod vad;
 #[cfg(feature = "whisper")]
 pub mod whisper;
