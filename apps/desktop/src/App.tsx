@@ -1,12 +1,21 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getRuntimeHealth,
+  getVoiceCapabilities,
   onAssistantEvent,
+  onVoiceLevel,
   resetConversation,
   restartRuntime,
+  runVoiceTurn,
+  speakText,
   submitPrompt,
 } from "./api";
-import type { AssistantState, ChatMessage, RuntimeHealth } from "./types";
+import type {
+  AssistantState,
+  ChatMessage,
+  RuntimeHealth,
+  VoiceCapabilities,
+} from "./types";
 
 const quickPrompts = [
   "Âm lượng hiện tại bao nhiêu?",
@@ -21,6 +30,8 @@ function message(role: ChatMessage["role"], text: string): ChatMessage {
 export default function App() {
   const [assistantState, setAssistantState] = useState<AssistantState>("idle");
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
+  const [voice, setVoice] = useState<VoiceCapabilities | null>(null);
+  const [voiceLevel, setVoiceLevel] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([
     message("system", "Desktop runtime đã sẵn sàng. Antigravity sẽ được khởi tạo khi cần."),
   ]);
@@ -36,28 +47,49 @@ export default function App() {
     }
   }, []);
 
+  const refreshVoice = useCallback(async () => {
+    try {
+      setVoice(await getVoiceCapabilities());
+    } catch {
+      setVoice(null);
+    }
+  }, []);
+
   useEffect(() => {
     void refreshHealth();
+    void refreshVoice();
     let disposed = false;
-    let unsubscribe: (() => void) | undefined;
+    let unsubscribeAssistant: (() => void) | undefined;
+    let unsubscribeLevel: (() => void) | undefined;
 
     void onAssistantEvent((event) => {
       if (event.type === "state_changed") {
         setAssistantState(event.to);
+        if (event.to !== "listening") setVoiceLevel(0);
       }
       if (event.type === "error") {
         setAssistantState("error");
+        setVoiceLevel(0);
       }
     }).then((unlisten) => {
       if (disposed) unlisten();
-      else unsubscribe = unlisten;
+      else unsubscribeAssistant = unlisten;
+    });
+
+    void onVoiceLevel((level) => {
+      const normalized = Math.max(0, Math.min(1, level.rms * 8));
+      setVoiceLevel(normalized);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unsubscribeLevel = unlisten;
     });
 
     return () => {
       disposed = true;
-      unsubscribe?.();
+      unsubscribeAssistant?.();
+      unsubscribeLevel?.();
     };
-  }, [refreshHealth]);
+  }, [refreshHealth, refreshVoice]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -67,11 +99,21 @@ export default function App() {
     if (!health) return "Đang kiểm tra runtime";
     if (health.state === "missing") return "Không tìm thấy Antigravity CLI";
     if (health.state === "unhealthy") return "Antigravity CLI có vấn đề";
+    if (assistantState === "listening") return "Đang nghe";
     if (assistantState === "processing") return "Đang suy luận";
     if (assistantState === "executing") return "Đang thực thi tool";
+    if (assistantState === "speaking") return "Đang trả lời";
     if (assistantState === "error") return "Cần khôi phục runtime";
     return "Sẵn sàng";
   }, [assistantState, health]);
+
+  const voiceReady = Boolean(voice?.whisper_compiled && voice.model_available);
+  const voiceHint = useMemo(() => {
+    if (!voice) return "Đang kiểm tra voice runtime";
+    if (!voice.whisper_compiled) return "Build chưa bật feature voice-whisper";
+    if (!voice.model_available) return `Thiếu Whisper model${voice.model_path ? `: ${voice.model_path}` : ""}`;
+    return "Voice local sẵn sàng";
+  }, [voice]);
 
   const send = useCallback(
     async (text: string) => {
@@ -104,6 +146,52 @@ export default function App() {
     await send(input);
   }
 
+  async function onVoiceTurn() {
+    if (busy || !voiceReady) return;
+    setBusy(true);
+    setVoiceLevel(0);
+
+    try {
+      const result = await runVoiceTurn();
+      setMessages((current) => [
+        ...current,
+        message("user", result.transcript),
+        message("assistant", result.response),
+        ...(result.tts_error
+          ? [message("system", `TTS không thể phát phản hồi: ${result.tts_error}`)]
+          : []),
+      ]);
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        message("system", `Voice turn thất bại: ${String(error)}`),
+      ]);
+    } finally {
+      setVoiceLevel(0);
+      await refreshHealth();
+      await refreshVoice();
+      setBusy(false);
+    }
+  }
+
+  async function onSpeakLast() {
+    if (busy || !voice?.tts_available) return;
+    const lastAssistant = [...messages].reverse().find((item) => item.role === "assistant");
+    if (!lastAssistant) return;
+
+    setBusy(true);
+    try {
+      await speakText(lastAssistant.text);
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        message("system", `Không thể đọc phản hồi: ${String(error)}`),
+      ]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onRestart() {
     setBusy(true);
     try {
@@ -131,7 +219,7 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell state-${assistantState}`}>
       <header className="topbar">
         <div>
           <p className="eyebrow">ASSISSTANT DESKTOP</p>
@@ -148,6 +236,7 @@ export default function App() {
           <span className="section-label">Runtime</span>
           <strong>{health?.detail || "Antigravity CLI"}</strong>
           <small>{health?.conversation_id ? `Conversation ${health.conversation_id}` : "Chưa có conversation active"}</small>
+          <small className={voiceReady ? "voice-ready" : "voice-warning"}>{voiceHint}</small>
         </div>
         <div className="runtime-actions">
           <button type="button" className="secondary" disabled={busy} onClick={() => void refreshHealth()}>
@@ -169,7 +258,7 @@ export default function App() {
             <p>{item.text}</p>
           </article>
         ))}
-        {busy && (
+        {busy && assistantState !== "listening" && assistantState !== "speaking" && (
           <article className="message message-assistant pending">
             <span>Assistant</span>
             <p>Đang xử lý<span className="thinking-dots">...</span></p>
@@ -186,6 +275,13 @@ export default function App() {
         ))}
       </section>
 
+      <div className="voice-strip" aria-live="polite">
+        <div className="voice-meter" aria-hidden="true">
+          <span style={{ transform: `scaleX(${Math.max(0.025, voiceLevel)})` }} />
+        </div>
+        <span>{assistantState === "listening" ? "Hãy nói..." : voiceHint}</span>
+      </div>
+
       <form className="composer" onSubmit={onSubmit}>
         <textarea
           value={input}
@@ -200,14 +296,33 @@ export default function App() {
           rows={2}
           disabled={busy}
         />
-        <button type="submit" className="primary" disabled={busy || !input.trim()}>
-          Gửi
-        </button>
+        <div className="composer-actions">
+          <button
+            type="button"
+            className="voice-button"
+            title={voiceHint}
+            aria-label="Bắt đầu voice turn"
+            disabled={busy || !voiceReady}
+            onClick={() => void onVoiceTurn()}
+          >
+            Mic
+          </button>
+          <button type="submit" className="primary" disabled={busy || !input.trim()}>
+            Gửi
+          </button>
+        </div>
       </form>
 
       <footer>
         <span>Alt + Space để mở Assistant</span>
-        <span>Voice sẽ được thêm sau khi Text MVP ổn định</span>
+        <button
+          type="button"
+          className="footer-action"
+          disabled={busy || !voice?.tts_available || !messages.some((item) => item.role === "assistant")}
+          onClick={() => void onSpeakLast()}
+        >
+          Đọc lại phản hồi cuối
+        </button>
       </footer>
     </main>
   );
