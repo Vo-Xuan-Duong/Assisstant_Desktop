@@ -81,6 +81,26 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
         risk: ToolRisk::Moderate,
         description: "Replace Windows clipboard content with Unicode text.",
     },
+    ToolDefinition {
+        name: "ui_inspect",
+        risk: ToolRisk::Safe,
+        description: "Inspect structural Windows UI Automation metadata without reading editable values.",
+    },
+    ToolDefinition {
+        name: "ui_focus",
+        risk: ToolRisk::Moderate,
+        description: "Move keyboard focus to an explicitly inspected Windows UI Automation element.",
+    },
+    ToolDefinition {
+        name: "ui_invoke",
+        risk: ToolRisk::Sensitive,
+        description: "Invoke an explicitly inspected Windows UI Automation control. The semantic action can be consequential.",
+    },
+    ToolDefinition {
+        name: "ui_set_value",
+        risk: ToolRisk::Sensitive,
+        description: "Write text/value into an explicitly inspected Windows UI Automation control.",
+    },
 ];
 
 pub fn tool_definition(name: &str) -> Option<&'static ToolDefinition> {
