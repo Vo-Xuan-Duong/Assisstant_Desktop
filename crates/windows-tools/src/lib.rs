@@ -3,6 +3,7 @@ pub mod audio;
 pub mod clipboard;
 pub mod error;
 pub mod media;
+pub mod screen;
 pub mod system;
 pub mod window;
 
