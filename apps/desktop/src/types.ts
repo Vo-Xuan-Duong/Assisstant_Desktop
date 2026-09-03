@@ -58,6 +58,38 @@ export interface RuntimeResourceSnapshot {
   resources: RuntimeResourceStatus[];
 }
 
+export type ResourcePackageKind = "single_file" | "tar_bz2";
+
+export interface ResourceInstallManifest {
+  id: string;
+  version: string;
+  package_kind: ResourcePackageKind;
+  installable: boolean;
+  source_url: string;
+  source_page: string;
+  license: string;
+  expected_bytes: number;
+  sha256?: string | null;
+  note: string;
+}
+
+export type ResourceInstallStage = "starting" | "downloading" | "verified" | "installed" | "failed";
+
+export interface ResourceInstallProgress {
+  resource_id: string;
+  stage: ResourceInstallStage;
+  downloaded_bytes: number;
+  total_bytes: number;
+  message: string;
+}
+
+export interface ResourceInstallResult {
+  resource_id: string;
+  path: string;
+  bytes: number;
+  sha256: string;
+}
+
 export interface VoiceCapabilities {
   tts_available: boolean;
   whisper_compiled: boolean;

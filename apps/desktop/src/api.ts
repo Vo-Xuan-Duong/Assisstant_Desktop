@@ -3,6 +3,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AssistantEvent,
   AudioLevel,
+  ResourceInstallManifest,
+  ResourceInstallProgress,
+  ResourceInstallResult,
   RuntimeHealth,
   RuntimeReadinessReport,
   RuntimeResourceSnapshot,
@@ -22,6 +25,20 @@ export function getRuntimeReadiness(): Promise<RuntimeReadinessReport> {
 
 export function getRuntimeResources(): Promise<RuntimeResourceSnapshot> {
   return invoke<RuntimeResourceSnapshot>("assistant_resources");
+}
+
+export function getResourceCatalog(): Promise<ResourceInstallManifest[]> {
+  return invoke<ResourceInstallManifest[]>("assistant_resource_catalog");
+}
+
+export function installResource(resourceId: string): Promise<ResourceInstallResult> {
+  return invoke<ResourceInstallResult>("assistant_resource_install", { resourceId });
+}
+
+export function onResourceInstallProgress(
+  handler: (progress: ResourceInstallProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<ResourceInstallProgress>("resource:install_progress", ({ payload }) => handler(payload));
 }
 
 export function submitPrompt(text: string): Promise<string> {
