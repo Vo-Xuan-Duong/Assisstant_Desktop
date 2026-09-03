@@ -45,12 +45,13 @@ Implementation: Windows Core Audio / `IAudioEndpointVolume`.
 ### Applications
 
 - `apps_open` — open a Windows Shell target such as an application, document, file path, or URI.
+- `apps_list` — list running process executable names and process ids through Tool Help APIs.
 
-This is deliberately **not** a general-purpose command shell. The tool passes one target to Windows Shell and does not accept arbitrary PowerShell/cmd command lines as an execution primitive.
+`apps_open` is deliberately **not** a general-purpose command shell. The tool passes one target to Windows Shell and does not expose PowerShell/cmd command execution as a primitive.
 
 ### Window context
 
-- `window_get_active` — return the current foreground-window title and process id.
+- `window_get_active` — return the current foreground-window title, process id, and executable name when it can be resolved.
 
 ### System
 
@@ -69,7 +70,7 @@ These send the corresponding Windows media keys.
 - `clipboard_read_text` — read Unicode text from the clipboard.
 - `clipboard_write_text` — replace clipboard text.
 
-Clipboard reads are classified as **Moderate** rather than Safe because clipboard content may contain credentials or other sensitive user data even though the operation itself is read-only.
+Clipboard reads are classified as **Moderate** rather than Safe because clipboard content may contain sensitive user data even though the operation itself is read-only.
 
 ## Risk catalogue
 
@@ -81,6 +82,8 @@ Moderate
 Sensitive
 Blocked
 ```
+
+The catalogue stores the exact public MCP name (`audio_set_volume`, `apps_open`, etc.). This lets the later permission gateway map an incoming MCP tool call to one risk classification without aliases or fuzzy matching.
 
 Current tools are Safe or Moderate only. Phase 2 intentionally does not expose shutdown, restart, file deletion, process termination, administrator actions, or raw shell execution.
 
@@ -117,6 +120,8 @@ Example:
   }
 }
 ```
+
+The repository ignores `.agents/mcp_config.json` because it is machine-local configuration, while the example remains version controlled.
 
 The production desktop application will later manage this integration more automatically; the workspace file is sufficient for Phase 2 development and manual verification.
 
@@ -161,4 +166,4 @@ IAudioEndpointVolume
 Windows volume changes
 ```
 
-No GitHub Action is required for this verification; it is intentionally designed to be run locally on the Windows development machine.
+Native verification is intentionally performed on the Windows development machine rather than by introducing a GitHub Action at this stage.
