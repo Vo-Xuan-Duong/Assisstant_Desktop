@@ -9,11 +9,12 @@ repository.workspace = true
 [features]
 default = []
 whisper = ["dep:whisper-rs"]
-wake-sherpa = ["dep:sherpa-onnx"]
+wake-sherpa = ["dep:sherpa-onnx", "dep:sentencepiece"]
 
 [dependencies]
 async-trait.workspace = true
 cpal.workspace = true
+sentencepiece = { workspace = true, optional = true, features = ["static"] }
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

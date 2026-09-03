@@ -2,12 +2,14 @@ use serde::Serialize;
 
 pub const WHISPER_RESOURCE_ID: &str = "whisper";
 pub const WAKE_RESOURCE_ID: &str = "wake_word";
+pub const WAKE_KEYWORDS_RESOURCE_ID: &str = "wake_keywords";
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourcePackageKind {
     SingleFile,
     TarBz2,
+    Generated,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -25,13 +27,14 @@ pub struct ResourceInstallManifest {
 }
 
 pub fn manifests() -> Vec<ResourceInstallManifest> {
-    vec![whisper_manifest(), wake_manifest()]
+    vec![whisper_manifest(), wake_manifest(), wake_keywords_manifest()]
 }
 
 pub fn manifest(resource_id: &str) -> Option<ResourceInstallManifest> {
     match resource_id {
         WHISPER_RESOURCE_ID => Some(whisper_manifest()),
         WAKE_RESOURCE_ID => Some(wake_manifest()),
+        WAKE_KEYWORDS_RESOURCE_ID => Some(wake_keywords_manifest()),
         _ => None,
     }
 }
@@ -62,6 +65,21 @@ pub fn wake_manifest() -> ResourceInstallManifest {
         license: "UNRESOLVED_FOR_AUTO_INSTALL",
         expected_bytes: 17_626_723,
         sha256: None,
-        note: "Automatic wake installation stays disabled until the exact archive SHA-256/model redistribution terms and application-specific keywords generation contract are pinned.",
+        note: "Automatic wake model installation remains disabled until archive SHA-256 and model redistribution terms are pinned.",
+    }
+}
+
+pub fn wake_keywords_manifest() -> ResourceInstallManifest {
+    ResourceInstallManifest {
+        id: WAKE_KEYWORDS_RESOURCE_ID,
+        version: "local-gigaspeech-bpe-v1",
+        package_kind: ResourcePackageKind::Generated,
+        installable: true,
+        source_url: "",
+        source_page: "https://k2-fsa.github.io/sherpa/onnx/kws/pretrained_models/index.html",
+        license: "LOCAL_GENERATED_FILE",
+        expected_bytes: 0,
+        sha256: None,
+        note: "Generated locally from the manually installed GigaSpeech bpe.model + tokens.txt. The backend validates every SentencePiece token against the runtime vocabulary and never downloads wake model data for this action.",
     }
 }

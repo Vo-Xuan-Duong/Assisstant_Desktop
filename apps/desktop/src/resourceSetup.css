@@ -85,6 +85,7 @@
 
 .resource-root-path,
 .resource-files code,
+.resource-preparation-files code,
 .resource-manifest code {
   display: block;
   overflow-wrap: anywhere;
@@ -109,17 +110,31 @@
   flex-basis: 100%;
 }
 
-.resource-files {
+.resource-files,
+.resource-preparation-files {
   display: grid;
   gap: 0.55rem;
   margin-top: 0.75rem;
 }
 
-.resource-files > div {
+.resource-files > div,
+.resource-preparation-files > div {
   display: grid;
   gap: 0.2rem;
   padding-top: 0.5rem;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.resource-preparation-files {
+  padding: 0.7rem;
+  border: 1px dashed rgba(128, 158, 210, 0.2);
+  border-radius: 10px;
+}
+
+.resource-preparation-files > small {
+  opacity: 0.65;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .resource-file-ready > span {
@@ -129,6 +144,10 @@
 .resource-file-missing > span,
 .resource-error {
   color: #f5b76d;
+}
+
+.resource-notice {
+  color: #9dd8b7;
 }
 
 .resource-progress {
@@ -176,6 +195,40 @@
 .resource-manual {
   font-size: 0.74rem;
   opacity: 0.65;
+}
+
+.wake-keyword-preparation {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.9rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(99, 159, 244, 0.22);
+  border-radius: 12px;
+  background: rgba(68, 116, 196, 0.06);
+}
+
+.wake-keyword-preparation > div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.wake-keyword-preparation small {
+  opacity: 0.68;
+  line-height: 1.4;
+}
+
+.wake-keyword-preparation input {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.18);
+  color: inherit;
+  padding: 0.65rem 0.75rem;
+  outline: none;
+}
+
+.wake-keyword-preparation input:focus {
+  border-color: rgba(112, 174, 255, 0.5);
 }
 
 @media (max-width: 600px) {

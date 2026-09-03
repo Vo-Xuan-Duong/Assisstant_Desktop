@@ -5,6 +5,8 @@ pub mod wake;
 pub mod wake_runtime;
 #[cfg(feature = "wake-sherpa")]
 pub mod sherpa_wake;
+#[cfg(feature = "wake-sherpa")]
+pub mod wake_keywords;
 #[cfg(feature = "whisper")]
 pub mod whisper;
 
