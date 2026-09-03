@@ -5,20 +5,29 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use assistant_common::ToolRisk;
 use permission_broker::{
     bind_local, BrokerError, BrokerHandle, PermissionRequest, UserDecision,
 };
-use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use permission_engine::{
+    PermissionDecision, PermissionOverrideSnapshot, ENV_PERMISSION_POLICY_PATH,
+};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tokio::{
     io::AsyncWriteExt,
     sync::Mutex,
 };
 use tracing::warn;
 use uuid::Uuid;
+use windows_tools::{tool_definition, TOOL_CATALOG};
 
 const CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RECENT_AUDIT: usize = 100;
+const POLICY_GET_EVENT: &str = "permission:policy_get";
+const POLICY_SET_EVENT: &str = "permission:policy_set";
+const POLICY_SNAPSHOT_EVENT: &str = "permission:policy_snapshot";
+const POLICY_ERROR_EVENT: &str = "permission:policy_error";
 
 #[derive(Debug)]
 struct PendingPermission {
@@ -39,29 +48,63 @@ pub struct PermissionAuditEntry {
     pub duration_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PermissionPolicyToolView {
+    pub name: String,
+    pub description: String,
+    pub default_decision: PermissionDecision,
+    pub override_decision: Option<PermissionDecision>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PermissionPolicyView {
+    pub revision: u64,
+    pub load_error: Option<String>,
+    pub tools: Vec<PermissionPolicyToolView>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PermissionPolicySetEvent {
+    tool_name: String,
+    decision: Option<PermissionDecision>,
+}
+
 #[derive(Clone)]
 pub struct PermissionDesktopService {
     broker: BrokerHandle,
     pending: Arc<Mutex<HashMap<Uuid, PendingPermission>>>,
     recent_audit: Arc<Mutex<VecDeque<PermissionAuditEntry>>>,
     audit_path: PathBuf,
+    policy_path: PathBuf,
+    policy: Arc<Mutex<PermissionOverrideSnapshot>>,
+    policy_load_error: Arc<Mutex<Option<String>>>,
 }
 
 impl PermissionDesktopService {
-    pub fn setup(app: &AppHandle) -> Result<(Self, [(String, String); 2]), BrokerError> {
-        let audit_path = app
+    pub fn setup(app: &AppHandle) -> Result<(Self, Vec<(String, String)>), BrokerError> {
+        let local_data = app
             .path()
             .app_local_data_dir()
-            .map_err(|error| BrokerError::Rejected(format!("cannot resolve app local data directory: {error}")))?
-            .join("audit")
-            .join("permissions.jsonl");
+            .map_err(|error| BrokerError::Rejected(format!("cannot resolve app local data directory: {error}")))?;
+        let audit_path = local_data.join("audit").join("permissions.jsonl");
+        let policy_path = local_data.join("permissions").join("policy.json");
+        let (policy, policy_load_error) = load_policy_snapshot(&policy_path);
+
         let (broker, mut requests) = tauri::async_runtime::block_on(bind_local(CONFIRMATION_TIMEOUT))?;
-        let environment = broker.endpoint().environment();
+        let mut environment = broker.endpoint().environment().into_iter().collect::<Vec<_>>();
+        environment.push((
+            ENV_PERMISSION_POLICY_PATH.to_owned(),
+            policy_path.to_string_lossy().into_owned(),
+        ));
+
         let service = Self {
             broker,
             pending: Arc::new(Mutex::new(HashMap::new())),
             recent_audit: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_RECENT_AUDIT))),
             audit_path,
+            policy_path,
+            policy: Arc::new(Mutex::new(policy)),
+            policy_load_error: Arc::new(Mutex::new(policy_load_error)),
         };
 
         let app_handle = app.clone();
@@ -72,6 +115,7 @@ impl PermissionDesktopService {
             }
         });
 
+        setup_policy_events(app, &service);
         Ok((service, environment))
     }
 
@@ -225,6 +269,52 @@ impl PermissionDesktopService {
         let limit = limit.clamp(1, MAX_RECENT_AUDIT);
         recent.iter().rev().take(limit).cloned().collect()
     }
+
+    async fn policy_view(&self) -> PermissionPolicyView {
+        let policy = self.policy.lock().await.clone();
+        let load_error = self.policy_load_error.lock().await.clone();
+        let tools = TOOL_CATALOG
+            .iter()
+            .filter(|tool| tool.risk == ToolRisk::Moderate)
+            .map(|tool| PermissionPolicyToolView {
+                name: tool.name.to_owned(),
+                description: tool.description.to_owned(),
+                default_decision: PermissionDecision::Allow,
+                override_decision: policy.decision_for(tool.name),
+            })
+            .collect();
+        PermissionPolicyView {
+            revision: policy.revision,
+            load_error,
+            tools,
+        }
+    }
+
+    async fn set_policy_override(
+        &self,
+        tool_name: &str,
+        decision: Option<PermissionDecision>,
+    ) -> Result<PermissionPolicyView, String> {
+        let definition = tool_definition(tool_name)
+            .ok_or_else(|| format!("unknown permission tool `{tool_name}`"))?;
+        if definition.risk != ToolRisk::Moderate {
+            return Err(format!(
+                "runtime policy overrides are restricted to Moderate tools; `{tool_name}` is {:?}",
+                definition.risk
+            ));
+        }
+
+        let mut next = self.policy.lock().await.clone();
+        match decision {
+            Some(decision) => next.set(tool_name.to_owned(), decision),
+            None => next.clear(tool_name),
+        }
+
+        persist_policy_snapshot(&self.policy_path, &next).await?;
+        *self.policy.lock().await = next;
+        *self.policy_load_error.lock().await = None;
+        Ok(self.policy_view().await)
+    }
 }
 
 fn unix_ms_now() -> u64 {
@@ -233,6 +323,83 @@ fn unix_ms_now() -> u64 {
         .unwrap_or_default()
         .as_millis()
         .min(u64::MAX as u128) as u64
+}
+
+fn load_policy_snapshot(path: &PathBuf) -> (PermissionOverrideSnapshot, Option<String>) {
+    match std::fs::read(path) {
+        Ok(bytes) => match serde_json::from_slice::<PermissionOverrideSnapshot>(&bytes) {
+            Ok(snapshot) => (snapshot, None),
+            Err(error) => (
+                PermissionOverrideSnapshot::default(),
+                Some(format!("runtime permission policy is malformed: {error}")),
+            ),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            (PermissionOverrideSnapshot::default(), None)
+        }
+        Err(error) => (
+            PermissionOverrideSnapshot::default(),
+            Some(format!("cannot read runtime permission policy: {error}")),
+        ),
+    }
+}
+
+async fn persist_policy_snapshot(
+    path: &PathBuf,
+    snapshot: &PermissionOverrideSnapshot,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| format!("cannot create permission policy directory: {error}"))?;
+    }
+    let bytes = serde_json::to_vec_pretty(snapshot)
+        .map_err(|error| format!("cannot serialize permission policy: {error}"))?;
+    tokio::fs::write(path, bytes)
+        .await
+        .map_err(|error| format!("cannot write permission policy: {error}"))
+}
+
+fn setup_policy_events(app: &AppHandle, service: &PermissionDesktopService) {
+    let get_app = app.clone();
+    let get_service = service.clone();
+    app.listen(POLICY_GET_EVENT, move |_| {
+        let app = get_app.clone();
+        let service = get_service.clone();
+        tauri::async_runtime::spawn(async move {
+            let view = service.policy_view().await;
+            let _ = app.emit(POLICY_SNAPSHOT_EVENT, view);
+        });
+    });
+
+    let set_app = app.clone();
+    let set_service = service.clone();
+    app.listen(POLICY_SET_EVENT, move |event| {
+        let request = serde_json::from_str::<PermissionPolicySetEvent>(event.payload());
+        let app = set_app.clone();
+        let service = set_service.clone();
+        tauri::async_runtime::spawn(async move {
+            match request {
+                Ok(request) => match service
+                    .set_policy_override(&request.tool_name, request.decision)
+                    .await
+                {
+                    Ok(view) => {
+                        let _ = app.emit(POLICY_SNAPSHOT_EVENT, view);
+                    }
+                    Err(error) => {
+                        let _ = app.emit(POLICY_ERROR_EVENT, error);
+                    }
+                },
+                Err(error) => {
+                    let _ = app.emit(
+                        POLICY_ERROR_EVENT,
+                        format!("invalid permission policy event payload: {error}"),
+                    );
+                }
+            }
+        });
+    });
 }
 
 fn emit_request(app: &AppHandle, request: &PermissionRequest) -> Result<(), String> {
