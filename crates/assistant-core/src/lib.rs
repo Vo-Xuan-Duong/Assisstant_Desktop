@@ -66,6 +66,7 @@ fn is_valid_transition(from: AssistantState, to: AssistantState) -> bool {
         (from, to),
         (Idle, Listening)
             | (Idle, Processing)
+            | (Idle, Speaking)
             | (Idle, Error)
             | (Listening, Processing)
             | (Listening, Idle)
@@ -116,6 +117,28 @@ where
 
     pub async fn state(&self) -> AssistantState {
         self.state.lock().await.state()
+    }
+
+    pub async fn begin_listening(&self) -> Result<(), CoreError> {
+        self.change_state(AssistantState::Listening).await
+    }
+
+    pub async fn cancel_listening(&self) -> Result<(), CoreError> {
+        if self.state().await == AssistantState::Listening {
+            self.change_state(AssistantState::Idle).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn begin_speaking(&self) -> Result<(), CoreError> {
+        self.change_state(AssistantState::Speaking).await
+    }
+
+    pub async fn finish_speaking(&self) -> Result<(), CoreError> {
+        if self.state().await == AssistantState::Speaking {
+            self.change_state(AssistantState::Idle).await?;
+        }
+        Ok(())
     }
 
     pub async fn handle_text(&self, request: UserRequest) -> Result<String, CoreError> {
@@ -180,9 +203,19 @@ mod tests {
     }
 
     #[test]
+    fn state_machine_accepts_voice_output_after_completed_text_turn() {
+        let mut state = StateMachine::default();
+        state.transition(AssistantState::Processing).unwrap();
+        state.transition(AssistantState::Idle).unwrap();
+        state.transition(AssistantState::Speaking).unwrap();
+        state.transition(AssistantState::Idle).unwrap();
+        assert_eq!(state.state(), AssistantState::Idle);
+    }
+
+    #[test]
     fn state_machine_rejects_invalid_transition() {
         let mut state = StateMachine::default();
-        let result = state.transition(AssistantState::Speaking);
+        let result = state.transition(AssistantState::Executing);
         assert!(matches!(result, Err(CoreError::InvalidTransition { .. })));
     }
 }
