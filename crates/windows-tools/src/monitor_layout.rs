@@ -20,7 +20,7 @@ use crate::{
 
 const HARD_MAX_MONITORS: usize = 32;
 const MAX_WINDOW_DIMENSION: i32 = 32_768;
-const MAX_ABS_WINDOW_COORDINATE: i32 = 100_000;
+const MAX_ABS_WINDOW_COORDINATE: i64 = 100_000;
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct DesktopRect {
@@ -125,6 +125,9 @@ fn validate_bounds(x: i32, y: i32, width: i32, height: i32) -> ToolResult<()> {
             "window dimensions must not exceed {MAX_WINDOW_DIMENSION} pixels"
         )));
     }
+
+    let x = i64::from(x);
+    let y = i64::from(y);
     if x.abs() > MAX_ABS_WINDOW_COORDINATE || y.abs() > MAX_ABS_WINDOW_COORDINATE {
         return Err(ToolError::InvalidArgument(format!(
             "window coordinates must stay within ±{MAX_ABS_WINDOW_COORDINATE} pixels"
@@ -154,7 +157,7 @@ unsafe extern "system" fn enum_monitor_callback(
             monitor_handle: monitor.0 as isize,
             bounds: info.rcMonitor.into(),
             work_area: info.rcWork.into(),
-            primary: (info.dwFlags & MONITORINFOF_PRIMARY) != 0,
+            primary: (info.dwFlags & MONITORINFOF_PRIMARY as u32) != 0,
         });
     }
 
