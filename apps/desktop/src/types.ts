@@ -21,6 +21,24 @@ export interface RuntimeHealth {
   conversation_id?: string | null;
 }
 
+export interface VoiceCapabilities {
+  tts_available: boolean;
+  whisper_compiled: boolean;
+  model_path?: string | null;
+  model_available: boolean;
+}
+
+export interface VoiceTurnResult {
+  transcript: string;
+  response: string;
+  tts_error?: string | null;
+}
+
+export interface AudioLevel {
+  rms: number;
+  peak: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
