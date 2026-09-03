@@ -1,6 +1,7 @@
 mod edge;
 mod permission_desktop;
 mod readiness;
+mod runtime_paths;
 mod wake_desktop;
 
 use std::sync::{Arc, Mutex};
@@ -12,8 +13,9 @@ use antigravity_bridge::{AntigravityClient, AntigravityConfig, CliHealth};
 use assistant_common::{AssistantEvent, AssistantState, SessionId, UserRequest};
 use assistant_core::{AssistantCore, EventSink};
 use async_trait::async_trait;
-use context_engine::ContextEngine;
+use context_engine::{ContextConfig, ContextEngine};
 use permission_desktop::PermissionDesktopService;
+use runtime_paths::RuntimePaths;
 use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -68,6 +70,7 @@ struct DesktopState {
     client: Arc<AntigravityClient>,
     core: Arc<DesktopCore>,
     context: ContextEngine,
+    runtime_paths: RuntimePaths,
     tts: WindowsSapiTts,
     session_id: RwLock<SessionId>,
     source_window: Mutex<Option<WindowHandle>>,
@@ -139,8 +142,6 @@ async fn assistant_wake_set_enabled(
     wake: State<'_, WakeService>,
 ) -> Result<WakeStatus, String> {
     wake.set_enabled(enabled).await?;
-    // Give the worker one scheduler turn to publish its new state before the
-    // command returns a UI snapshot.
     tokio::task::yield_now().await;
     Ok(wake.status())
 }
@@ -319,7 +320,6 @@ async fn run_voice_turn_inner(
         Err(error) => return fail_listening(state, error.to_string()).await,
     };
 
-    // AssistantCore performs Listening -> Processing -> Idle for the AI turn.
     let response = complete_prompt(&transcript.text, state).await?;
 
     state
@@ -533,9 +533,15 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let initial_source_window = current_external_window();
+            let runtime_paths = RuntimePaths::prepare(app.handle()).map_err(std::io::Error::other)?;
             let (permission_service, broker_environment) =
                 PermissionDesktopService::setup(app.handle())?;
             let mut antigravity_config = AntigravityConfig::default();
+            antigravity_config.working_directory = Some(runtime_paths.runtime_dir.clone());
+            antigravity_config.set_environment(
+                "ASSISTANT_MCP_CONFIG",
+                runtime_paths.mcp_config_path.to_string_lossy().into_owned(),
+            );
             for (key, value) in broker_environment {
                 antigravity_config.set_environment(key, value);
             }
@@ -544,13 +550,17 @@ pub fn run() {
                 app: app.handle().clone(),
             });
             let core = Arc::new(AssistantCore::new(Arc::clone(&client), sink));
+            let context = ContextEngine::new(ContextConfig {
+                artifact_dir: runtime_paths.context_dir.clone(),
+                ..ContextConfig::default()
+            });
 
             #[cfg(feature = "voice-whisper")]
             let model_path = if let Some(path) = std::env::var_os("ASSISTANT_WHISPER_MODEL") {
                 PathBuf::from(path)
             } else {
-                app.path()
-                    .app_local_data_dir()?
+                runtime_paths
+                    .app_local_data
                     .join("models")
                     .join("whisper")
                     .join("ggml-base.bin")
@@ -559,7 +569,8 @@ pub fn run() {
             app.manage(DesktopState {
                 client,
                 core,
-                context: ContextEngine::default(),
+                context,
+                runtime_paths,
                 tts: WindowsSapiTts::default(),
                 session_id: RwLock::new(SessionId::new()),
                 source_window: Mutex::new(initial_source_window),
