@@ -8,6 +8,7 @@ pub mod screen;
 pub mod system;
 pub mod virtualized;
 pub mod window;
+pub mod window_control;
 
 use assistant_common::ToolRisk;
 
@@ -51,6 +52,16 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
         name: "window_get_active",
         risk: ToolRisk::Safe,
         description: "Read metadata about the current foreground window.",
+    },
+    ToolDefinition {
+        name: "window_set_state",
+        risk: ToolRisk::Moderate,
+        description: "Minimize, maximize, or restore an explicitly identified top-level Windows window.",
+    },
+    ToolDefinition {
+        name: "window_close",
+        risk: ToolRisk::Sensitive,
+        description: "Request graceful close of an explicitly identified top-level window through WM_CLOSE.",
     },
     ToolDefinition {
         name: "system_get_info",
