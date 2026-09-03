@@ -36,6 +36,28 @@ export interface RuntimeReadinessReport {
   checks: ReadinessCheck[];
 }
 
+export type ResourceState = "ready" | "missing" | "incomplete" | "not_compiled";
+
+export interface ResourceFileStatus {
+  name: string;
+  path: string;
+  exists: boolean;
+}
+
+export interface RuntimeResourceStatus {
+  id: string;
+  label: string;
+  state: ResourceState;
+  compiled: boolean;
+  root_path: string;
+  detail: string;
+  files: ResourceFileStatus[];
+}
+
+export interface RuntimeResourceSnapshot {
+  resources: RuntimeResourceStatus[];
+}
+
 export interface VoiceCapabilities {
   tts_available: boolean;
   whisper_compiled: boolean;
