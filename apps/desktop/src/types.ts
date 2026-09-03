@@ -52,13 +52,14 @@ export interface RuntimeResourceStatus {
   root_path: string;
   detail: string;
   files: ResourceFileStatus[];
+  preparation_files: ResourceFileStatus[];
 }
 
 export interface RuntimeResourceSnapshot {
   resources: RuntimeResourceStatus[];
 }
 
-export type ResourcePackageKind = "single_file" | "tar_bz2";
+export type ResourcePackageKind = "single_file" | "tar_bz2" | "generated";
 
 export interface ResourceInstallManifest {
   id: string;
