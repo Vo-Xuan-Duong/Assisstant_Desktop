@@ -98,8 +98,10 @@ $RootPackagePath = Join-Path $RepoRoot "package.json"
 $DesktopPackagePath = Join-Path $DesktopDir "package.json"
 $WorkspaceCargoPath = Join-Path $RepoRoot "Cargo.toml"
 $DesktopCargoPath = Join-Path $TauriDir "Cargo.toml"
+$CargoLockPath = Join-Path $RepoRoot "Cargo.lock"
+$RustToolchainPath = Join-Path $RepoRoot "rust-toolchain.toml"
 $LicensePath = Join-Path $RepoRoot "LICENSE"
-$LockfilePath = Join-Path $RepoRoot "pnpm-lock.yaml"
+$PnpmLockPath = Join-Path $RepoRoot "pnpm-lock.yaml"
 $SidecarStagePath = Join-Path $DesktopDir "scripts\stage-sidecar.mjs"
 $IconPath = Join-Path $TauriDir "icons\icon.ico"
 
@@ -113,11 +115,31 @@ Require-File "desktop_cargo" $DesktopCargoPath "Desktop Cargo manifest exists." 
 Require-File "license" $LicensePath "Repository license file exists." | Out-Null
 Require-File "sidecar_stage" $SidecarStagePath "Release sidecar staging script exists." | Out-Null
 
-if (Test-Path $LockfilePath -PathType Leaf) {
-    Add-Result "pnpm_lock" "ready" "pnpm lockfile is committed for reproducible frontend dependency resolution." $LockfilePath
+if (Test-Path $RustToolchainPath -PathType Leaf) {
+    $toolchainText = Get-Content $RustToolchainPath -Raw
+    if ($toolchainText -match 'channel\s*=\s*"1\.85\.0"') {
+        Add-Result "rust_toolchain" "ready" "Rust toolchain is pinned to 1.85.0, matching the workspace release baseline." $RustToolchainPath
+    }
+    else {
+        Add-Result "rust_toolchain" "blocking" "rust-toolchain.toml must pin channel 1.85.0 for the current release baseline." $RustToolchainPath
+    }
 }
 else {
-    Add-Result "pnpm_lock" "blocking" "pnpm-lock.yaml is missing. Run `pnpm install --lockfile-only` locally, review it, and commit it before release." $LockfilePath
+    Add-Result "rust_toolchain" "blocking" "rust-toolchain.toml is missing." $RustToolchainPath
+}
+
+if (Test-Path $CargoLockPath -PathType Leaf) {
+    Add-Result "cargo_lock" "ready" "Cargo.lock is committed for reproducible Rust dependency resolution." $CargoLockPath
+}
+else {
+    Add-Result "cargo_lock" "blocking" "Cargo.lock is missing. Run `cargo generate-lockfile` locally, review it, and commit it before release." $CargoLockPath
+}
+
+if (Test-Path $PnpmLockPath -PathType Leaf) {
+    Add-Result "pnpm_lock" "ready" "pnpm lockfile is committed for reproducible frontend dependency resolution." $PnpmLockPath
+}
+else {
+    Add-Result "pnpm_lock" "blocking" "pnpm-lock.yaml is missing. Run `pnpm install --lockfile-only` locally, review it, and commit it before release." $PnpmLockPath
 }
 
 if (Test-Path $IconPath -PathType Leaf) {
@@ -211,7 +233,7 @@ if ($windows) {
 }
 
 if ($rootPackage) {
-    $expectedScripts = @("desktop:dev", "desktop:build", "desktop:release:verify")
+    $expectedScripts = @("desktop:dev", "desktop:build", "desktop:release:verify", "desktop:release:build")
     foreach ($scriptName in $expectedScripts) {
         $property = $rootPackage.scripts.PSObject.Properties[$scriptName]
         if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
