@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::{
     sync::{broadcast, mpsc, watch},
-    time::{sleep, Instant},
+    time::{sleep, timeout, Instant},
 };
 use tracing::{debug, warn};
 
@@ -87,14 +87,42 @@ impl WakeRuntimeHandle {
         self.commands
             .send(WakeCommand::SetEnabled(enabled))
             .await
-            .map_err(|_| "wake runtime is no longer running".to_owned())
+            .map_err(|_| "wake runtime is no longer running".to_owned())?;
+
+        if !enabled {
+            self.wait_for_state(|state| {
+                matches!(state, WakeRuntimeState::Disabled | WakeRuntimeState::Stopped)
+            })
+            .await?;
+        }
+        Ok(())
     }
 
+    /// Suspend wake capture and do not return until the worker has released its
+    /// CPAL microphone stream. This acts as a resource barrier before Whisper or
+    /// another full-duplex voice path opens the same Windows input endpoint.
     pub async fn suspend(&self) -> Result<(), String> {
+        if matches!(
+            self.state(),
+            WakeRuntimeState::Disabled | WakeRuntimeState::Stopped | WakeRuntimeState::Suspended
+        ) {
+            return Ok(());
+        }
+
         self.commands
             .send(WakeCommand::Suspend)
             .await
-            .map_err(|_| "wake runtime is no longer running".to_owned())
+            .map_err(|_| "wake runtime is no longer running".to_owned())?;
+
+        self.wait_for_state(|state| {
+            matches!(
+                state,
+                WakeRuntimeState::Suspended
+                    | WakeRuntimeState::Disabled
+                    | WakeRuntimeState::Stopped
+            )
+        })
+        .await
     }
 
     pub async fn resume(&self) -> Result<(), String> {
@@ -121,6 +149,29 @@ impl WakeRuntimeHandle {
 
     pub fn subscribe(&self) -> broadcast::Receiver<WakeRuntimeEvent> {
         self.events.subscribe()
+    }
+
+    async fn wait_for_state(
+        &self,
+        predicate: impl Fn(WakeRuntimeState) -> bool,
+    ) -> Result<(), String> {
+        let mut state = self.state.clone();
+        let wait = async {
+            loop {
+                let current = *state.borrow();
+                if predicate(current) {
+                    return Ok(());
+                }
+                state
+                    .changed()
+                    .await
+                    .map_err(|_| "wake runtime stopped while waiting for state change".to_owned())?;
+            }
+        };
+
+        timeout(Duration::from_secs(2), wait)
+            .await
+            .map_err(|_| "timed out waiting for wake runtime to release microphone".to_owned())?
     }
 }
 
