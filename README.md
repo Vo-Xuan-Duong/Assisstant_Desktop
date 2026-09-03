@@ -8,10 +8,10 @@ Development is phase-based: finish one bounded subsystem, static-review it, upda
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 13D — Wake Phrase Lifecycle & Hot Reload**
-- **Latest completed main commit:** `0fe3d38e66939e17d7c7f78eda009e2a1b6e3add`
-- **Current branch:** `phase/14a-windows-startup-single-instance`
-- **Current phase:** Phase 14A — Windows Startup & Single Instance
+- **Latest completed phase on `main`: Phase 14A — Windows Startup & Single Instance**
+- **Latest completed main commit:** `1e20daf634274a423f36e10da5a2e8d3cebfce45`
+- **Current branch:** `phase/14b-release-readiness`
+- **Current phase:** Phase 14B — Release Readiness
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
@@ -72,6 +72,7 @@ Verified Download   Local Preparation
 - reqwest — verified resource download transport.
 - SHA-256 — resource integrity verification before install.
 - Tauri single-instance/autostart plugins — Windows process lifecycle and optional logon startup.
+- NSIS — Windows current-user installer target for release candidates.
 
 ## Development progress
 
@@ -112,7 +113,8 @@ Verified Download   Local Preparation
 | 13B — Verified Resource Installer | ✅ | pinned manifest + verified Whisper install + progress UI |
 | 13C — Wake Keyword Preparation | ✅ | local SentencePiece tokenization + validated `keywords.txt` generation |
 | 13D — Wake Lifecycle & Hot Reload | ✅ | transactional phrase replacement + detector hot reload + persisted wake settings |
-| **14A — Windows Startup & Single Instance** | **🚧** | one process + tray-controlled logon startup + hidden background launch |
+| 14A — Windows Startup & Single Instance | ✅ | one process + tray-controlled logon startup + hidden background launch |
+| **14B — Release Readiness** | **🚧** | full-feature Windows bundle contract + release verifier/checklist |
 
 ## Recent merge points
 
@@ -137,6 +139,7 @@ Verified Download   Local Preparation
 13B  f39648f...  verified resource installer
 13C  2b33958...  wake keyword preparation
 13D  0fe3d38...  wake lifecycle + hot reload
+14A  1e20daf...  Windows startup + single instance
 ```
 
 ## Current MCP capability surface
@@ -363,6 +366,39 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1 -Json
 
 The verifier is read-only and now also reports wake `tokens.txt`, `keywords.txt`, preparation-only `bpe.model`, and persisted `settings/wake.json` state. It does not build, test, start the app, invoke Actions, download models or change runtime policy.
 
+## Release readiness
+
+Windows release builds use `apps/desktop/src-tauri/tauri.windows.conf.json` to compile the full product surface:
+
+```text
+voice-whisper + wake-word
+```
+
+and restrict installer output to a current-user NSIS package. This avoids accidentally shipping the default feature-light Cargo build or requiring Administrator access for a normal install.
+
+Read-only release gate:
+
+```powershell
+pnpm desktop:release:verify
+```
+
+Stricter public-release gate:
+
+```powershell
+pnpm desktop:release:verify:public
+```
+
+The release verifier checks bundle identity, full voice/wake feature selection, sidecar contract, license, version alignment, NSIS policy, lockfile, release icon and optional public code-signing policy. It never builds, signs, installs, downloads models or invokes Actions.
+
+Current external release gates that still require local owner input are:
+
+- generate/review/commit `pnpm-lock.yaml`;
+- approve and commit final application icon assets;
+- configure a real Windows code-signing identity before public distribution;
+- run the full native build/install/runtime verification on Windows.
+
+Automatic updater artifacts remain disabled until an authenticated update endpoint, signing-key lifecycle and rollback policy are defined.
+
 ## Readiness model
 
 The in-app Readiness panel checks Antigravity, Windows MCP, Permission Broker, Context Storage, TTS, Whisper and Wake Word. Whisper/wake checks reuse the ResourceRegistry paths used by the actual voice/wake runtimes.
@@ -386,9 +422,9 @@ Desktop context is collected on demand only. Screen and clipboard data are treat
 
 ## Next direction
 
-After Phase 14A, remaining remote development is **release-readiness hardening**: package metadata and Windows bundle audit, release/local-build commands, signing/update policy documentation, release checklist, and known Windows-only verification gates.
+After Phase 14B, the planned remote feature roadmap is complete. Further work is driven by **local Windows verification findings** and the external release gates above, not by adding new computer-use capabilities.
 
-Actual compiler/runtime failures from the Windows local verification harness take precedence over adding any new capability.
+Compiler/runtime/install failures found locally take precedence over release publication.
 
 ## Documentation
 
@@ -401,6 +437,7 @@ Actual compiler/runtime failures from the Windows local verification harness tak
 - [`docs/WAKE_KEYWORD_PREPARATION.md`](docs/WAKE_KEYWORD_PREPARATION.md)
 - [`docs/WAKE_HOT_RELOAD.md`](docs/WAKE_HOT_RELOAD.md)
 - [`docs/WINDOWS_LIFECYCLE.md`](docs/WINDOWS_LIFECYCLE.md)
+- [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)
 - [`docs/UI_AUTOMATION_PATTERNS.md`](docs/UI_AUTOMATION_PATTERNS.md)
 - [`docs/PERMISSION_GATEWAY.md`](docs/PERMISSION_GATEWAY.md)
 - [`docs/RUNTIME_READINESS.md`](docs/RUNTIME_READINESS.md)
