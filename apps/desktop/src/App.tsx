@@ -129,7 +129,7 @@ export default function App() {
   }, [voiceReady]);
 
   const resolvePermission = useCallback(async (approved: boolean) => {
-    const request = permissionQueue[0];
+    const request = activePermission;
     if (!request || permissionRespondingRef.current) return;
 
     permissionRespondingRef.current = true;
@@ -151,7 +151,7 @@ export default function App() {
       );
       permissionRespondingRef.current = false;
     }
-  }, [permissionQueue]);
+  }, [activePermission]);
 
   useEffect(() => {
     if (!activePermission) {
