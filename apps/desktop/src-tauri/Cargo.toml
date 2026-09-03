@@ -1,0 +1,30 @@
+[package]
+name = "assisstant-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "assisstant_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "assisstant-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+antigravity-bridge = { path = "../../../crates/antigravity-bridge" }
+assistant-common = { path = "../../../crates/common" }
+assistant-core = { path = "../../../crates/assistant-core" }
+async-trait.workspace = true
+serde.workspace = true
+tauri = { version = "2.11", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2.3"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
