@@ -50,7 +50,6 @@ pub async fn assistant_resource_install(
 
 #[cfg(feature = "wake-word")]
 struct PreparedWakeReplacement {
-    detector: SherpaWakeWordDetector,
     phrase: String,
     destination: PathBuf,
     backup: Option<PathBuf>,
@@ -71,33 +70,45 @@ async fn prepare_wake_keywords(
     let destination = state.resources.wake_keywords_path().to_path_buf();
 
     let replacement = tokio::task::spawn_blocking(move || {
-        prepare_wake_replacement(model_dir, bpe_model, tokens, destination, phrase)
+        prepare_wake_replacement(bpe_model, tokens, destination, phrase)
     })
     .await
     .map_err(|error| format!("wake keyword preparation worker failed: {error}"))??;
 
     let PreparedWakeReplacement {
-        detector,
         phrase,
         destination,
         backup,
         content,
     } = replacement;
 
-    if let Err(error) = wake.reload_or_start(detector, phrase).await {
-        let destination_for_rollback = destination.clone();
-        let rollback_backup = backup.clone();
-        let rollback = tokio::task::spawn_blocking(move || {
-            rollback_keyword_swap(&destination_for_rollback, rollback_backup.as_deref())
-        })
-        .await
-        .map_err(|join| format!("wake keyword rollback worker failed: {join}"))?;
-        if let Err(rollback_error) = rollback {
+    let detector_model_dir = model_dir.clone();
+    let detector_keywords = destination.clone();
+    let detector_result = tokio::task::spawn_blocking(move || {
+        SherpaWakeWordDetector::load(SherpaWakeConfig::gigaspeech_int8(
+            detector_model_dir,
+            detector_keywords,
+        ))
+        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("wake detector validation worker failed: {error}"))?;
+
+    let detector = match detector_result {
+        Ok(detector) => detector,
+        Err(error) => {
+            rollback_after_failure(&destination, backup.as_deref()).await?;
             return Err(format!(
-                "wake detector reload failed: {error}; keyword rollback also failed: {rollback_error}"
+                "generated keywords were installed temporarily but the native detector rejected them; previous keywords restored: {error}"
             ));
         }
-        return Err(format!("wake detector reload failed; previous keywords restored: {error}"));
+    };
+
+    if let Err(error) = wake.reload_or_start(detector, phrase).await {
+        rollback_after_failure(&destination, backup.as_deref()).await?;
+        return Err(format!(
+            "wake detector hot reload failed; previous keywords restored: {error}"
+        ));
     }
 
     if let Some(backup) = backup {
@@ -115,7 +126,6 @@ async fn prepare_wake_keywords(
 
 #[cfg(feature = "wake-word")]
 fn prepare_wake_replacement(
-    model_dir: PathBuf,
     bpe_model: PathBuf,
     tokens: PathBuf,
     destination: PathBuf,
@@ -151,12 +161,6 @@ fn prepare_wake_replacement(
             .map_err(|error| format!("cannot sync temporary keywords file: {error}"))?;
         drop(file);
 
-        let detector = SherpaWakeWordDetector::load(SherpaWakeConfig::gigaspeech_int8(
-            &model_dir,
-            &temporary,
-        ))
-        .map_err(|error| format!("new wake detector could not load generated keywords: {error}"))?;
-
         let backup = if destination.exists() {
             fs::rename(&destination, &backup_path)
                 .map_err(|error| format!("cannot stage previous keywords file: {error}"))?;
@@ -173,7 +177,6 @@ fn prepare_wake_replacement(
         }
 
         Ok(PreparedWakeReplacement {
-            detector,
             phrase: prepared.phrase,
             destination,
             backup,
@@ -185,6 +188,18 @@ fn prepare_wake_replacement(
         let _ = fs::remove_file(&temporary);
     }
     result
+}
+
+#[cfg(feature = "wake-word")]
+async fn rollback_after_failure(
+    destination: &std::path::Path,
+    backup: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let destination = destination.to_path_buf();
+    let backup = backup.map(std::path::Path::to_path_buf);
+    tokio::task::spawn_blocking(move || rollback_keyword_swap(&destination, backup.as_deref()))
+        .await
+        .map_err(|error| format!("wake keyword rollback worker failed: {error}"))?
 }
 
 #[cfg(feature = "wake-word")]
