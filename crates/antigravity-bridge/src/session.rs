@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     path::PathBuf,
     process::Stdio,
     sync::Arc,
@@ -27,6 +27,10 @@ pub struct AntigravityConfig {
     pub agent: Option<String>,
     pub effort: Option<String>,
     pub working_directory: Option<PathBuf>,
+    /// Ephemeral environment passed only to the Antigravity process tree. This
+    /// is used for local runtime integration such as the permission broker and
+    /// must never be logged with values.
+    pub environment: BTreeMap<String, String>,
 }
 
 impl Default for AntigravityConfig {
@@ -37,11 +41,16 @@ impl Default for AntigravityConfig {
             agent: None,
             effort: None,
             working_directory: None,
+            environment: BTreeMap::new(),
         }
     }
 }
 
 impl AntigravityConfig {
+    pub fn set_environment(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.environment.insert(key.into(), value.into());
+    }
+
     fn command(&self) -> Command {
         let mut command = Command::new(&self.binary);
         command
@@ -65,6 +74,9 @@ impl AntigravityConfig {
         }
         if let Some(cwd) = &self.working_directory {
             command.current_dir(cwd);
+        }
+        if !self.environment.is_empty() {
+            command.envs(&self.environment);
         }
 
         command
