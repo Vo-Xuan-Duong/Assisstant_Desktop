@@ -68,7 +68,7 @@ export default function ReadinessPanel() {
               <strong>{summary(report)}</strong>
             </div>
             <div className="readiness-header-actions">
-              <ResourceSetupPanel />
+              <ResourceSetupPanel onResourcesChanged={refresh} />
               <button type="button" className="readiness-refresh" disabled={loading} onClick={() => void refresh()}>
                 {loading ? "Đang kiểm tra" : "Kiểm tra lại"}
               </button>
