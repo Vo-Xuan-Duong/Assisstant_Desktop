@@ -13,9 +13,11 @@ import {
   speakText,
   submitPrompt,
 } from "./api";
+import { onPermissionRequest, submitPermissionDecision } from "./permissionApi";
 import type {
   AssistantState,
   ChatMessage,
+  PermissionRequest,
   RuntimeHealth,
   VoiceCapabilities,
   WakeStatus,
@@ -28,6 +30,7 @@ const quickPrompts = [
 ];
 
 const WAKE_TO_COMMAND_DELAY_MS = 180;
+const PERMISSION_UI_TIMEOUT_SECONDS = 29;
 
 type VoiceTurnOrigin = "manual" | "wake";
 
@@ -37,6 +40,14 @@ function message(role: ChatMessage["role"], text: string): ChatMessage {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function formatPermissionArguments(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "Không thể hiển thị arguments.";
+  }
 }
 
 export default function App() {
@@ -51,9 +62,14 @@ export default function App() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [wakeBusy, setWakeBusy] = useState(false);
+  const [permissionQueue, setPermissionQueue] = useState<PermissionRequest[]>([]);
+  const [permissionRemaining, setPermissionRemaining] = useState(PERMISSION_UI_TIMEOUT_SECONDS);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const busyRef = useRef(false);
   const voiceReadyRef = useRef(false);
+  const permissionRespondingRef = useRef(false);
+
+  const activePermission = permissionQueue[0] ?? null;
 
   const refreshHealth = useCallback(async () => {
     try {
@@ -111,6 +127,53 @@ export default function App() {
   useEffect(() => {
     voiceReadyRef.current = voiceReady;
   }, [voiceReady]);
+
+  const resolvePermission = useCallback(async (approved: boolean) => {
+    const request = permissionQueue[0];
+    if (!request || permissionRespondingRef.current) return;
+
+    permissionRespondingRef.current = true;
+    try {
+      await submitPermissionDecision(request.request_id, approved);
+    } catch (error) {
+      // The broker may have already timed out. Do not include the permission
+      // arguments in chat/log output; only report the request id/tool name.
+      setMessages((current) => [
+        ...current,
+        message(
+          "system",
+          `Không thể gửi quyết định cho ${request.tool_name}: ${String(error)}`,
+        ),
+      ]);
+    } finally {
+      setPermissionQueue((current) =>
+        current.filter((item) => item.request_id !== request.request_id),
+      );
+      permissionRespondingRef.current = false;
+    }
+  }, [permissionQueue]);
+
+  useEffect(() => {
+    if (!activePermission) {
+      setPermissionRemaining(PERMISSION_UI_TIMEOUT_SECONDS);
+      return;
+    }
+
+    setPermissionRemaining(PERMISSION_UI_TIMEOUT_SECONDS);
+    const startedAt = Date.now();
+    const interval = window.setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      setPermissionRemaining(Math.max(0, PERMISSION_UI_TIMEOUT_SECONDS - elapsed));
+    }, 250);
+    const timeoutId = window.setTimeout(() => {
+      void resolvePermission(false);
+    }, PERMISSION_UI_TIMEOUT_SECONDS * 1000);
+
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timeoutId);
+    };
+  }, [activePermission?.request_id, resolvePermission]);
 
   const performVoiceTurn = useCallback(
     async (origin: VoiceTurnOrigin) => {
@@ -174,6 +237,7 @@ export default function App() {
     let unsubscribeAssistant: (() => void) | undefined;
     let unsubscribeLevel: (() => void) | undefined;
     let unsubscribeWake: (() => void) | undefined;
+    let unsubscribePermission: (() => void) | undefined;
 
     void onAssistantEvent((event) => {
       if (event.type === "state_changed") {
@@ -223,11 +287,24 @@ export default function App() {
       else unsubscribeWake = unlisten;
     });
 
+    void onPermissionRequest((request) => {
+      setPermissionQueue((current) => {
+        if (current.some((item) => item.request_id === request.request_id)) {
+          return current;
+        }
+        return [...current, request];
+      });
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unsubscribePermission = unlisten;
+    });
+
     return () => {
       disposed = true;
       unsubscribeAssistant?.();
       unsubscribeLevel?.();
       unsubscribeWake?.();
+      unsubscribePermission?.();
     };
   }, [performVoiceTurn]);
 
@@ -236,6 +313,7 @@ export default function App() {
   }, [messages]);
 
   const statusLabel = useMemo(() => {
+    if (activePermission) return "Đang chờ xác nhận";
     if (!health) return "Đang kiểm tra runtime";
     if (health.state === "missing") return "Không tìm thấy Antigravity CLI";
     if (health.state === "unhealthy") return "Antigravity CLI có vấn đề";
@@ -245,7 +323,7 @@ export default function App() {
     if (assistantState === "speaking") return "Đang trả lời";
     if (assistantState === "error") return "Cần khôi phục runtime";
     return "Sẵn sàng";
-  }, [assistantState, health]);
+  }, [activePermission, assistantState, health]);
 
   const send = useCallback(
     async (text: string) => {
@@ -465,6 +543,62 @@ export default function App() {
           Đọc lại phản hồi cuối
         </button>
       </footer>
+
+      {activePermission && (
+        <div className="permission-backdrop" role="presentation">
+          <section
+            className="permission-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="permission-title"
+          >
+            <div className="permission-heading">
+              <div>
+                <p className="eyebrow">SENSITIVE TOOL</p>
+                <h2 id="permission-title">Xác nhận hành động</h2>
+              </div>
+              <span className="risk-badge risk-sensitive">{activePermission.risk}</span>
+            </div>
+
+            <p className="permission-copy">
+              Assistant muốn thực thi <strong>{activePermission.tool_name}</strong>. Hành động chỉ
+              tiếp tục nếu bạn cho phép lần này.
+            </p>
+
+            <div className="permission-meta">
+              <span>Request</span>
+              <code>{activePermission.request_id}</code>
+            </div>
+
+            <div className="permission-arguments">
+              <span>Arguments</span>
+              <pre>{formatPermissionArguments(activePermission.arguments)}</pre>
+            </div>
+
+            <div className="permission-timeout">
+              Tự động từ chối sau <strong>{permissionRemaining}s</strong>
+              {permissionQueue.length > 1 && ` · ${permissionQueue.length - 1} yêu cầu đang chờ`}
+            </div>
+
+            <div className="permission-actions">
+              <button
+                type="button"
+                className="permission-deny"
+                onClick={() => void resolvePermission(false)}
+              >
+                Từ chối
+              </button>
+              <button
+                type="button"
+                className="permission-allow"
+                onClick={() => void resolvePermission(true)}
+              >
+                Cho phép một lần
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
