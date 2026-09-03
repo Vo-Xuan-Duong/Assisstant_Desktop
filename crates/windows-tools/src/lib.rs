@@ -126,6 +126,11 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
         risk: ToolRisk::Moderate,
         description: "Scroll an explicitly inspected UI Automation container by a bounded relative amount.",
     },
+    ToolDefinition {
+        name: "ui_scroll_into_view",
+        risk: ToolRisk::Moderate,
+        description: "Ask an explicitly inspected UI Automation ScrollItem element to move into its owning viewport.",
+    },
 ];
 
 pub fn tool_definition(name: &str) -> Option<&'static ToolDefinition> {
