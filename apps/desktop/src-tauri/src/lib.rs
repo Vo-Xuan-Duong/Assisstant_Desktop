@@ -13,6 +13,7 @@ use tauri::{
 use tauri_plugin_global_shortcut::{
     Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
 };
+use tokio::sync::RwLock;
 use tracing::warn;
 use tracing_subscriber::EnvFilter;
 
@@ -35,7 +36,7 @@ type DesktopCore = AssistantCore<AntigravityClient, TauriEventSink>;
 struct DesktopState {
     client: Arc<AntigravityClient>,
     core: Arc<DesktopCore>,
-    session_id: SessionId,
+    session_id: RwLock<SessionId>,
 }
 
 #[derive(Debug, Serialize)]
@@ -78,9 +79,10 @@ async fn assistant_submit(text: String, state: State<'_, DesktopState>) -> Resul
         state.core.recover().await.map_err(|error| error.to_string())?;
     }
 
+    let session_id = state.session_id.read().await.clone();
     state
         .core
-        .handle_text(UserRequest::new(state.session_id.clone(), prompt))
+        .handle_text(UserRequest::new(session_id, prompt))
         .await
         .map_err(|error| error.to_string())
 }
@@ -95,6 +97,7 @@ async fn assistant_restart(state: State<'_, DesktopState>) -> Result<(), String>
 #[tauri::command]
 async fn assistant_reset(state: State<'_, DesktopState>) -> Result<(), String> {
     state.client.reset().await;
+    *state.session_id.write().await = SessionId::new();
     state.core.recover().await.map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -180,7 +183,7 @@ pub fn run() {
             app.manage(DesktopState {
                 client,
                 core,
-                session_id: SessionId::new(),
+                session_id: RwLock::new(SessionId::new()),
             });
 
             setup_shortcut(app)?;
