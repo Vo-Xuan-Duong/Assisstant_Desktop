@@ -4,6 +4,7 @@ use serde_json::json;
 use windows_tools::{
     window::{ActiveWindow, WindowHandle},
     window_control::{self, WindowVisualState},
+    window_discovery,
 };
 
 use super::{to_json, WindowsMcpServer};
@@ -27,6 +28,22 @@ impl From<WindowStateInput> for WindowVisualState {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct WindowListInput {
+    /// Optional maximum number of visible titled top-level windows to return.
+    /// Native code defaults to 80 and hard-caps the request at 200.
+    pub max_windows: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct WindowTargetInput {
+    /// Exact HWND of the target top-level window.
+    pub window_handle: i64,
+    /// Process id observed for this HWND when the target was selected. The native
+    /// layer rejects the action if the HWND has since been recycled to another process.
+    pub expected_process_id: u32,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct WindowSetStateInput {
     /// Exact HWND of the target top-level window.
     pub window_handle: i64,
@@ -35,14 +52,6 @@ pub struct WindowSetStateInput {
     pub expected_process_id: u32,
     /// Desired semantic visual state.
     pub state: WindowStateInput,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct WindowCloseInput {
-    /// Exact HWND of the target top-level window.
-    pub window_handle: i64,
-    /// Process id observed for this HWND when the target was selected.
-    pub expected_process_id: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,8 +70,69 @@ fn explicit_window_handle(raw: i64) -> Result<WindowHandle, String> {
     Ok(WindowHandle(raw))
 }
 
+async fn run_blocking<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| format!("Windows window worker failed: {error}"))?
+}
+
 #[tool_router(router = window_tool_router, vis = "pub(crate)")]
 impl WindowsMcpServer {
+    #[tool(
+        name = "window_list",
+        description = "List visible titled top-level Windows windows with HWND, process id, executable, minimized state, and whether each window is currently foreground. The result is bounded. This is read-only and is the preferred way to discover a target before explicit window actions."
+    )]
+    async fn window_list(
+        &self,
+        Parameters(WindowListInput { max_windows }): Parameters<WindowListInput>,
+    ) -> Result<String, String> {
+        self.permissions
+            .authorize("window_list", json!({ "max_windows": max_windows }))
+            .await?;
+
+        let max_windows = max_windows.map(|value| value as usize);
+        let windows = run_blocking(move || {
+            window_discovery::list_top_level(max_windows).map_err(|error| error.to_string())
+        })
+        .await?;
+        to_json(&windows)
+    }
+
+    #[tool(
+        name = "window_activate",
+        description = "Restore if minimized and request foreground activation of one explicitly identified top-level Windows window. Pass the exact HWND and expected_process_id from window_list or trusted Desktop Context. The native layer rejects stale/recycled HWNDs. Windows focus-stealing rules can refuse the request; no keyboard/mouse fallback is used."
+    )]
+    async fn window_activate(
+        &self,
+        Parameters(WindowTargetInput {
+            window_handle,
+            expected_process_id,
+        }): Parameters<WindowTargetInput>,
+    ) -> Result<String, String> {
+        self.permissions
+            .authorize(
+                "window_activate",
+                json!({
+                    "window_handle": window_handle,
+                    "expected_process_id": expected_process_id,
+                }),
+            )
+            .await?;
+
+        let handle = explicit_window_handle(window_handle)?;
+        let before = window_discovery::activate(handle, expected_process_id)
+            .map_err(|error| error.to_string())?;
+        to_json(&WindowActionResult {
+            ok: true,
+            action: "activate",
+            window_before_action: before,
+        })
+    }
+
     #[tool(
         name = "window_set_state",
         description = "Minimize, maximize, or restore one explicitly identified top-level Windows window. Pass both the exact HWND and expected_process_id from the selected target so native validation can reject a recycled/stale HWND."
@@ -108,10 +178,10 @@ impl WindowsMcpServer {
     )]
     async fn window_close(
         &self,
-        Parameters(WindowCloseInput {
+        Parameters(WindowTargetInput {
             window_handle,
             expected_process_id,
-        }): Parameters<WindowCloseInput>,
+        }): Parameters<WindowTargetInput>,
     ) -> Result<String, String> {
         self.permissions
             .authorize(
