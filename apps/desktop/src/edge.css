@@ -16,6 +16,8 @@ body {
 
 .edge-surface {
   --voice-level: 0;
+  --voice-opacity: .48;
+  --voice-scale: .48;
   --edge-opacity: 0;
   --edge-scale: 0.58;
   --flow-duration: 3.8s;
@@ -59,23 +61,34 @@ body {
 
 .edge-top .edge-aura,
 .edge-top .edge-flow,
-.edge-top .edge-core,
+.edge-top .edge-core {
+  transform-origin: top center;
+  transform: scaleY(var(--edge-scale));
+}
+
 .edge-bottom .edge-aura,
 .edge-bottom .edge-flow,
 .edge-bottom .edge-core {
-  transform-origin: center;
+  transform-origin: bottom center;
   transform: scaleY(var(--edge-scale));
 }
 
 .edge-left .edge-aura,
 .edge-left .edge-flow,
-.edge-left .edge-core,
+.edge-left .edge-core {
+  background-image: linear-gradient(180deg, #38bdf8, #6366f1 31%, #b56cff 61%, #ff72a6 82%, #38bdf8);
+  background-size: 100% 240%;
+  transform-origin: center left;
+  transform: scaleX(var(--edge-scale));
+  animation-name: edge-flow-vertical;
+}
+
 .edge-right .edge-aura,
 .edge-right .edge-flow,
 .edge-right .edge-core {
   background-image: linear-gradient(180deg, #38bdf8, #6366f1 31%, #b56cff 61%, #ff72a6 82%, #38bdf8);
   background-size: 100% 240%;
-  transform-origin: center;
+  transform-origin: center right;
   transform: scaleX(var(--edge-scale));
   animation-name: edge-flow-vertical;
 }
@@ -92,13 +105,13 @@ body {
 }
 
 .edge-mode-listening {
-  --edge-opacity: calc(.48 + var(--voice-level) * .5);
-  --edge-scale: calc(.48 + var(--voice-level) * .5);
+  --edge-opacity: var(--voice-opacity);
+  --edge-scale: var(--voice-scale);
   --flow-duration: 2.4s;
 }
 
 .edge-mode-listening .edge-aura {
-  opacity: calc(.48 + var(--voice-level) * .48);
+  opacity: var(--voice-opacity);
 }
 
 .edge-mode-processing {
