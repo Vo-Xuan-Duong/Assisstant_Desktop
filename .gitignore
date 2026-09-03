@@ -22,6 +22,9 @@ dist/
 logs/
 models/
 
+# Antigravity workspace-local runtime config
+.agents/mcp_config.json
+
 # Environment / secrets
 .env
 .env.*

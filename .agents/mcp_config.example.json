@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "assistant-windows": {
+      "command": "target\\release\\assistant-mcp.exe",
+      "cwd": ".",
+      "env": {
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 Windows-first desktop AI assistant powered by **Google Antigravity + Gemini reasoning + MCP + Rust/Tauri**.
 
-The project is developed phase-by-phase: each subsystem is completed behind a stable interface before it is integrated into the full assistant.
+Development is phase-based: each subsystem is completed behind a stable interface before the next subsystem is integrated.
 
 ## Architecture
 
@@ -33,47 +33,58 @@ Windows Tool Runtime
 - Rust for assistant/runtime/system code.
 - TypeScript + React for the Tauri UI.
 - Tauri 2 for the Windows desktop shell.
-- Tokio for asynchronous runtime work.
+- Tokio for asynchronous Rust work.
 - Antigravity CLI Headless for the primary AI backend.
 - MCP for AI-to-tool integration.
 - `windows-rs` for Windows APIs.
 - CPAL/WASAPI + whisper.cpp for the later local voice pipeline.
 - SQLite for local persistent state.
 
-## Current status
+## Project status
 
 ### Phase 0 — Foundation ✅
 
-Implemented:
-
-- Rust workspace;
-- shared assistant state/session/event contracts;
-- assistant core state machine;
-- Antigravity streaming protocol model;
-- project/architecture documentation.
+- Rust workspace and common domain contracts.
+- Assistant Core state machine.
+- Antigravity streaming protocol model.
+- Architecture and project plan.
 
 ### Phase 1 — Antigravity Integration ✅
 
-Implemented:
+- Long-running `stream-json` process/session.
+- CLI health probing.
+- Stream event broadcasting.
+- Diagnostics and typed failure classification.
+- Explicit start/reset/restart lifecycle.
 
-- long-running `stream-json` Antigravity session;
-- local CLI availability probe;
-- broadcast delivery of Antigravity stream events;
-- bounded stderr diagnostics;
-- auth/quota/model/permission/process/transport error classification;
-- explicit start/reset/restart lifecycle;
-- safe session invalidation without automatically replaying side-effecting turns.
+### Phase 2 — Windows MCP Tools ✅
 
-Next: **Phase 2 — Windows MCP Tools**.
+Native Windows implementation and a separate `assistant-mcp.exe` stdio server now expose:
 
-The first Windows tool set will focus on deterministic operations such as volume, mute, application launch/active application, media controls, system info, and clipboard access.
+- `audio_get_volume`
+- `audio_set_volume`
+- `audio_set_mute`
+- `apps_open`
+- `apps_list`
+- `window_get_active`
+- `system_get_info`
+- `media_play_pause`
+- `media_next`
+- `media_previous`
+- `clipboard_read_text`
+- `clipboard_write_text`
+
+Public MCP names are also the keys used by the native risk catalogue, which prepares the next desktop permission layer.
+
+## Next phase
+
+**Phase 3 — Text Desktop MVP**
+
+Tauri 2 + React + TypeScript will provide the first usable desktop shell: tray, assistant overlay, text conversation, runtime health, settings, and permission surfaces. Voice remains deferred until the text/system integration is stable.
 
 ## Documentation
 
-- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — complete development plan and phase acceptance criteria.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — dependency/process/security boundaries.
-- [`docs/ANTIGRAVITY.md`](docs/ANTIGRAVITY.md) — Antigravity runtime/auth/protocol/recovery design.
-
-## Development policy
-
-The project does not reverse-engineer Google credentials and does not expose unrestricted shell execution to the AI. Google authentication remains owned by Antigravity CLI; Windows actions are exposed as explicit MCP tools with assistant-owned permission controls.
+- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`docs/ANTIGRAVITY.md`](docs/ANTIGRAVITY.md)
+- [`docs/MCP.md`](docs/MCP.md)
