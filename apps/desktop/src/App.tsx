@@ -459,7 +459,7 @@ export default function App() {
           >
             Wake {wake?.enabled ? "ON" : "OFF"}
           </button>
-          <ReadinessPanel />
+          <ReadinessPanel onWakeChanged={refreshWake} />
           <button type="button" className="secondary" disabled={busy} onClick={() => void refreshHealth()}>
             Kiểm tra
           </button>
