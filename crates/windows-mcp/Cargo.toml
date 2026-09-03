@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+permission-broker = { path = "../permission-broker" }
 permission-engine = { path = "../permission-engine" }
 rmcp.workspace = true
 schemars.workspace = true
