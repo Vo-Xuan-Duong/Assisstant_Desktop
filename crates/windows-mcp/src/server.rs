@@ -1,5 +1,6 @@
 mod system_tools;
 mod ui_tools;
+mod virtualized_tools;
 
 use rmcp::{
     handler::server::router::tool::ToolRouter,
@@ -21,7 +22,9 @@ impl Default for WindowsMcpServer {
     fn default() -> Self {
         Self {
             permissions: McpPermissionGateway::default(),
-            tool_router: Self::system_tool_router() + Self::ui_tool_router(),
+            tool_router: Self::system_tool_router()
+                + Self::ui_tool_router()
+                + Self::virtualized_tool_router(),
         }
     }
 }

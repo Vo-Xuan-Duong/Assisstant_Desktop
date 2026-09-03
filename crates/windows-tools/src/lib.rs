@@ -6,6 +6,7 @@ pub mod error;
 pub mod media;
 pub mod screen;
 pub mod system;
+pub mod virtualized;
 pub mod window;
 
 use assistant_common::ToolRisk;
@@ -130,6 +131,16 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
         name: "ui_scroll_into_view",
         risk: ToolRisk::Moderate,
         description: "Ask an explicitly inspected UI Automation ScrollItem element to move into its owning viewport.",
+    },
+    ToolDefinition {
+        name: "ui_virtualized_item_status",
+        risk: ToolRisk::Safe,
+        description: "Check whether an explicitly inspected UI Automation element exposes VirtualizedItemPattern.",
+    },
+    ToolDefinition {
+        name: "ui_realize",
+        risk: ToolRisk::Moderate,
+        description: "Ask an explicitly inspected UI Automation VirtualizedItem element to materialize through its provider.",
     },
 ];
 
