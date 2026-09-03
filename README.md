@@ -8,10 +8,10 @@ Development is phase-based: finish one bounded subsystem, static-review it, upda
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 13A — Runtime Resource Registry**
-- **Latest completed main commit:** `5c9338d1aab2259625318890a273bf3bf8854f03`
-- **Current branch:** `phase/13b-verified-resource-installer`
-- **Current phase:** Phase 13B — Verified Resource Installer
+- **Latest completed phase on `main`: Phase 13B — Verified Resource Installer**
+- **Latest completed main commit:** `f39648f8a803e1f4f5635bc356ff1c09a88c8d81`
+- **Current branch:** `phase/13c-wake-keyword-preparation`
+- **Current phase:** Phase 13C — Wake Keyword Preparation
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
@@ -41,16 +41,16 @@ Win32 / UIA / CoreAudio / GDI / Clipboard
 Windows
 ```
 
-Optional local voice resources are managed separately:
+Optional local resources are managed separately:
 
 ```text
 RuntimePaths
     ↓
 ResourceRegistry
     ↓
-Verified Resource Manifest
-    ↓
-Installer / Setup UI
+Backend Resource Catalog
+   ↙                  ↘
+Verified Download   Local Preparation
 ```
 
 ## Locked stack
@@ -66,6 +66,7 @@ Installer / Setup UI
 - Whisper — optional local STT.
 - Windows SAPI — local TTS.
 - sherpa-onnx — optional wake word.
+- SentencePiece — local GigaSpeech wake phrase tokenization when `wake-word` is enabled.
 - reqwest — verified resource download transport.
 - SHA-256 — resource integrity verification before install.
 
@@ -105,7 +106,8 @@ Installer / Setup UI
 | 12B — Runtime Paths & Packaging | ✅ | app-local-data runtime + bundled MCP sidecar |
 | 12C — Local Windows Verification Harness | ✅ | read-only prerequisite/runtime preflight |
 | 13A — Runtime Resource Registry | ✅ | unified Whisper/wake paths/status + setup UI |
-| **13B — Verified Resource Installer** | **🚧** | pinned manifest + verified Whisper install + progress UI |
+| 13B — Verified Resource Installer | ✅ | pinned manifest + verified Whisper install + progress UI |
+| **13C — Wake Keyword Preparation** | **🚧** | local SentencePiece tokenization + validated `keywords.txt` generation |
 
 ## Recent merge points
 
@@ -127,6 +129,7 @@ Installer / Setup UI
 12B  af9d712...  runtime paths + MCP sidecar packaging
 12C  46799a5...  local Windows verification harness
 13A  5c9338d...  runtime resource registry + setup UI
+13B  f39648f...  verified resource installer
 ```
 
 ## Current MCP capability surface
@@ -206,7 +209,7 @@ Antigravity uses `<app-local-data>/runtime` as its working directory. The deskto
 
 ## Runtime resources
 
-Resource paths and filesystem status come from one `ResourceRegistry` used by VoiceCapabilities, WakeService, Readiness and the Resources UI.
+One `ResourceRegistry` is reused by VoiceCapabilities, WakeService, Readiness and Resources UI.
 
 Default layout:
 
@@ -220,7 +223,8 @@ Default layout:
         ├── decoder-epoch-12-avg-2-chunk-16-left-64.onnx
         ├── joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx
         ├── tokens.txt
-        └── keywords.txt
+        ├── keywords.txt
+        └── bpe.model              # preparation-only
 ```
 
 Resource overrides must be absolute:
@@ -237,22 +241,26 @@ Open:
 Readiness → Resources
 ```
 
-## Phase 13B — Verified Resource Installer
+## Verified Whisper install
 
-The installer is backend-manifest driven. The frontend/model cannot provide arbitrary URLs, hashes or destinations.
+The backend manifest pins multilingual `ggml-base.bin`:
+
+```text
+expected bytes: 147951465
+sha256: 60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
+license: MIT
+```
+
+Trust flow:
 
 ```text
 resource_id
     ↓
-compiled trusted manifest
+trusted backend manifest
     ↓
-HTTPS download to unique .part
+HTTPS → unique .part
     ↓
-stream + SHA-256
-    ↓
-byte-count verification
-    ↓
-SHA-256 verification
+byte count + streaming SHA-256
     ↓
 flush / sync
     ↓
@@ -261,27 +269,53 @@ no-overwrite recheck
 atomic rename
 ```
 
-Whisper automatic install is enabled only for the pinned multilingual `ggml-base.bin` manifest:
+The frontend/Gemini cannot supply arbitrary URLs, hashes or install destinations.
+
+## Phase 13C — Wake Keyword Preparation
+
+The wake model archive remains manual because model-specific redistribution terms and a pinned archive digest are not yet locked to the verified-download standard.
+
+Phase 13C instead makes the application-specific keyword file locally:
 
 ```text
-expected bytes: 147951465
-sha256: 60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
-license: MIT
+bpe.model + tokens.txt
+        ↓
+user phrase: HEY ASSISTANT
+        ↓
+SentencePiece
+        ↓
+validate each piece against tokens.txt
+        ↓
+reject <unk> / unsupported pieces
+        ↓
+`<pieces> @HEY_ASSISTANT`
+        ↓
+keywords.txt.part
+        ↓
+flush / sync / no-overwrite
+        ↓
+keywords.txt
 ```
 
-Installer safety behavior:
+`bpe.model` is preparation-only; it does not affect wake runtime readiness after a valid `keywords.txt` exists.
 
-- arbitrary download URLs are not accepted from React or Gemini;
-- destination files are never overwritten;
-- one install per resource ID may run at a time;
-- partial downloads are UUID-named `.part` files;
-- oversized/short downloads fail;
-- SHA-256 mismatch fails;
-- failed finalization removes the partial file where possible;
-- progress stages are `starting / downloading / verified / installed / failed`;
-- successful install refreshes both Registry and Readiness.
+Current generator rules:
 
-Wake-word automatic install remains disabled. The current archive/checksum/license/keywords-generation contract must be pinned before an archive installer is allowed.
+- phrase is normalized to uppercase;
+- maximum 64 characters;
+- English ASCII letters, spaces and apostrophes only for the current GigaSpeech model;
+- no overwrite of existing `keywords.txt`;
+- no network request;
+- no MCP/Gemini/Antigravity call;
+- generated output uses a canonical `@PHRASE_LABEL`.
+
+Open:
+
+```text
+Readiness → Resources → Wake Word Resources
+```
+
+When `wake-word` is compiled and `bpe.model + tokens.txt` exist, the UI can generate the missing keyword file. The current WakeService is initialized at startup, so Phase 13C shows a restart notice after generation.
 
 ## Local Windows preflight
 
@@ -303,7 +337,7 @@ The in-app Readiness panel checks Antigravity, Windows MCP, Permission Broker, C
 
 ## Context / privacy
 
-Desktop context is collected on demand only. Screen and clipboard data are treated as untrusted context. Readiness/audit/verifier/resource output do not expose broker secrets, credentials, prompts, clipboard contents, screenshots, permission arguments or model contents.
+Desktop context is collected on demand only. Screen and clipboard data are treated as untrusted context. Readiness/audit/verifier/resource output do not expose broker secrets, credentials, prompts, clipboard contents, screenshots, permission arguments or model contents. Wake phrase preparation stays local.
 
 ## Development rules
 
@@ -320,7 +354,7 @@ Desktop context is collected on demand only. Screen and clipboard data are treat
 
 ## Next direction
 
-After Phase 13B is locked, proceed to **Phase 13C — Wake Resource Packaging/Installer Contract** only after checksum, redistribution terms, archive extraction behavior and tokenizer-based `keywords.txt` generation are explicit.
+After Phase 13C, the next bounded work is **wake phrase lifecycle/hot reload**: safely replacing an existing `keywords.txt`, restarting/reloading the background detector without restarting the whole desktop app, and persisting user-facing wake configuration. After that, remaining remote work should focus on settings persistence and release-readiness hardening rather than expanding tool surface.
 
 Actual compiler/runtime failures from the Windows local verification harness still take precedence over adding new computer-use capabilities.
 
@@ -332,6 +366,7 @@ Actual compiler/runtime failures from the Windows local verification harness sti
 - [`docs/MCP.md`](docs/MCP.md)
 - [`docs/VOICE_DESKTOP.md`](docs/VOICE_DESKTOP.md)
 - [`docs/WAKE_RUNTIME.md`](docs/WAKE_RUNTIME.md)
+- [`docs/WAKE_KEYWORD_PREPARATION.md`](docs/WAKE_KEYWORD_PREPARATION.md)
 - [`docs/UI_AUTOMATION_PATTERNS.md`](docs/UI_AUTOMATION_PATTERNS.md)
 - [`docs/PERMISSION_GATEWAY.md`](docs/PERMISSION_GATEWAY.md)
 - [`docs/RUNTIME_READINESS.md`](docs/RUNTIME_READINESS.md)
