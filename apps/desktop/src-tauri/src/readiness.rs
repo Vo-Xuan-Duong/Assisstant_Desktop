@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use super::{
     permission_desktop::PermissionDesktopService,
+    resource_registry::{ResourceState, RuntimeResourceStatus},
     runtime_paths::McpBinarySource,
     wake_desktop::WakeService,
     DesktopState,
@@ -50,8 +51,8 @@ pub async fn collect(
             detail: "Windows SAPI backend được compile vào desktop runtime.".into(),
             path: None,
         },
-        whisper_check(state),
-        wake_check(wake),
+        resource_check(state.resources.whisper_status()),
+        wake_check(state.resources.wake_status(), wake),
     ];
 
     let overall = if checks
@@ -250,55 +251,27 @@ fn context_storage_check(state: &DesktopState) -> ReadinessCheck {
     }
 }
 
-fn whisper_check(state: &DesktopState) -> ReadinessCheck {
-    #[cfg(feature = "voice-whisper")]
-    {
-        if state.voice.model_path.is_file() {
-            return ReadinessCheck {
-                id: "whisper",
-                label: "Local Whisper STT",
-                level: ReadinessLevel::Ready,
-                detail: "Feature `voice-whisper` đã bật và model file tồn tại.".into(),
-                path: Some(state.voice.model_path.display().to_string()),
-            };
-        }
-
-        return ReadinessCheck {
-            id: "whisper",
-            label: "Local Whisper STT",
-            level: ReadinessLevel::OptionalMissing,
-            detail: "Feature `voice-whisper` đã bật nhưng chưa có model. Text assistant và TTS vẫn dùng được.".into(),
-            path: Some(state.voice.model_path.display().to_string()),
-        };
-    }
-
-    #[cfg(not(feature = "voice-whisper"))]
-    {
-        let _ = state;
-        ReadinessCheck {
-            id: "whisper",
-            label: "Local Whisper STT",
-            level: ReadinessLevel::OptionalMissing,
-            detail: "Build chưa bật feature `voice-whisper`; text assistant vẫn dùng được.".into(),
-            path: None,
-        }
+fn resource_check(resource: RuntimeResourceStatus) -> ReadinessCheck {
+    ReadinessCheck {
+        id: resource.id,
+        label: resource.label,
+        level: match resource.state {
+            ResourceState::Ready => ReadinessLevel::Ready,
+            ResourceState::Missing | ResourceState::Incomplete | ResourceState::NotCompiled => {
+                ReadinessLevel::OptionalMissing
+            }
+        },
+        detail: resource.detail,
+        path: Some(resource.root_path),
     }
 }
 
-fn wake_check(wake: &WakeService) -> ReadinessCheck {
-    let status = wake.status();
-    if !status.compiled {
-        return ReadinessCheck {
-            id: "wake_word",
-            label: "Wake Word",
-            level: ReadinessLevel::OptionalMissing,
-            detail: status
-                .detail
-                .unwrap_or_else(|| "Build chưa bật feature `wake-word`.".into()),
-            path: None,
-        };
+fn wake_check(resource: RuntimeResourceStatus, wake: &WakeService) -> ReadinessCheck {
+    if resource.state != ResourceState::Ready {
+        return resource_check(resource);
     }
 
+    let status = wake.status();
     if !status.available {
         return ReadinessCheck {
             id: "wake_word",
@@ -306,8 +279,8 @@ fn wake_check(wake: &WakeService) -> ReadinessCheck {
             level: ReadinessLevel::OptionalMissing,
             detail: status
                 .detail
-                .unwrap_or_else(|| "Wake model/keywords chưa sẵn sàng.".into()),
-            path: status.model_dir,
+                .unwrap_or_else(|| "Wake resources đầy đủ nhưng detector runtime chưa khởi tạo được.".into()),
+            path: status.model_dir.or(Some(resource.root_path)),
         };
     }
 
@@ -320,6 +293,6 @@ fn wake_check(wake: &WakeService) -> ReadinessCheck {
         } else {
             "Wake runtime/resource sẵn sàng nhưng đang tắt theo cấu hình người dùng.".into()
         },
-        path: status.model_dir,
+        path: status.model_dir.or(Some(resource.root_path)),
     }
 }

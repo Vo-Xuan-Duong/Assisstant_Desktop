@@ -8,10 +8,10 @@ Development is phase-based: finish one bounded subsystem, static-review it, upda
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 12B — Runtime Paths & Packaging Hardening**
-- **Latest completed main commit:** `af9d712f545ea19ef5c2f7e9be5a1017a4555695`
-- **Current branch:** `phase/12c-local-verification-harness`
-- **Current phase:** Phase 12C — Local Windows Verification Harness
+- **Latest completed phase on `main`: Phase 12C — Local Windows Verification Harness**
+- **Latest completed main commit:** `46799a5c956dc4044bc763bf5270ca478833cc5c`
+- **Current branch:** `phase/13a-runtime-resource-registry`
+- **Current phase:** Phase 13A — Runtime Resource Registry & First-Run Setup Foundation
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
@@ -89,14 +89,12 @@ Windows
 | 11D — Monitor & Placement | ✅ | monitor geometry + move/resize |
 | 12A — Runtime Readiness | ✅ | readiness panel across runtime dependencies |
 | 12B — Runtime Paths & Packaging | ✅ | app-local-data runtime + bundled MCP sidecar |
-| **12C — Local Windows Verification Harness** | **🚧** | read-only prerequisite/runtime preflight for local verification |
+| 12C — Local Windows Verification Harness | ✅ | read-only prerequisite/runtime preflight |
+| **13A — Runtime Resource Registry** | **🚧** | unified Whisper/wake resource status + first-run setup panel |
 
 ## Recent merge points
 
 ```text
-8A   b4293b5...  UI Automation foundation
-8B   a73a85d...  UIA MCP tools
-8C   fb7051d...  rich UIA patterns
 9A   ae39077...  permission engine
 9B   a4b763e...  permission broker
 9C   ab8cf11...  permission UX + audit
@@ -112,6 +110,7 @@ Windows
 11D  5b1409d...  monitor discovery + placement
 12A  24b39fb...  runtime readiness diagnostics
 12B  af9d712...  runtime paths + MCP sidecar packaging
+12C  46799a5...  local Windows verification harness
 ```
 
 ## Current MCP capability surface
@@ -172,7 +171,7 @@ Sensitive approval is one-shot. Broker timeout, malformed policy, missing UI res
 
 ## Runtime / packaging contract
 
-Runtime data is no longer tied to repository root or process working directory.
+Runtime data is not tied to repository root or process working directory.
 
 ```text
 <app-local-data>/
@@ -187,9 +186,63 @@ Runtime data is no longer tied to repository root or process working directory.
 
 Antigravity uses `<app-local-data>/runtime` as its working directory. The desktop generates the MCP config with an absolute `assistant-mcp.exe` path. Tauri bundles `assistant-mcp` as an external sidecar, staged with the Rust target-triple suffix before dev/build.
 
-## Phase 12C — Local Windows Verification Harness
+## Phase 13A — Runtime Resource Registry
 
-Current branch adds a read-only PowerShell preflight script:
+Phase 13A makes one registry responsible for optional local voice resources:
+
+```text
+RuntimePaths
+    ↓
+ResourceRegistry
+    ├── Whisper model
+    └── Wake model + keywords
+          ↓
+Voice / WakeService / Readiness / Setup UI
+```
+
+Resource states:
+
+```text
+ready
+missing
+incomplete
+not_compiled
+```
+
+Default layout:
+
+```text
+<app-local-data>/models/
+├── whisper/
+│   └── ggml-base.bin
+└── wake/
+    └── sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/
+        ├── encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx
+        ├── decoder-epoch-12-avg-2-chunk-16-left-64.onnx
+        ├── joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx
+        ├── tokens.txt
+        └── keywords.txt
+```
+
+Open the in-app first-run view through:
+
+```text
+Readiness → Resources
+```
+
+It shows the exact required paths/files and can refresh status after files are copied into place.
+
+Phase 13A does **not** download resources. Before automatic download is enabled, Phase 13B must lock source URLs, immutable versions, SHA-256 checksums, licenses, extraction layout and retry/update policy.
+
+Resource path overrides must be absolute:
+
+```text
+ASSISTANT_WHISPER_MODEL
+ASSISTANT_WAKE_MODEL_DIR
+ASSISTANT_WAKE_KEYWORDS
+```
+
+## Local Windows preflight
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1
@@ -201,52 +254,15 @@ JSON output:
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1 -Json
 ```
 
-The verifier checks:
-
-```text
-Windows host
-repo structure
-rustc / cargo / Rust windows-msvc target
-pnpm
-Antigravity CLI (`agy`)
-MSVC/WebView2 hints
-MCP debug/release binaries
-Tauri target-triple staged sidecar
-app-local-data generated MCP config
-context directory
-permission policy JSON
-Whisper model (optional)
-wake model resources (optional)
-```
-
-Result levels:
-
-```text
-ready
-optional
-blocking
-info
-```
-
-Exit code is `1` only when at least one blocking prerequisite is found. The script **does not** build, run tests, start the app, invoke GitHub Actions, download models, or modify runtime policy.
-
-Suggested manual sequence after preflight:
-
-```powershell
-pnpm install
-pnpm --dir apps/desktop sidecar:stage:dev
-pnpm --dir apps/desktop tauri dev
-```
-
-These commands are printed only as guidance; the verifier does not execute them.
+The verifier is read-only and does not build, test, start the app, invoke Actions, download models or change runtime policy.
 
 ## Readiness model
 
-The in-app Readiness panel checks Antigravity, Windows MCP, Permission Broker, Context Storage, TTS, Whisper and Wake Word. Levels are `ready`, `optional_missing`, or `blocking`. The PowerShell harness is a separate **pre-start prerequisite check**, while the Readiness panel reports **live desktop runtime state**.
+The in-app Readiness panel checks Antigravity, Windows MCP, Permission Broker, Context Storage, TTS, Whisper and Wake Word. Whisper/wake resource checks now use the same ResourceRegistry contract as the actual voice/wake paths.
 
 ## Context / privacy
 
-Desktop context is collected on demand only. Screen and clipboard data are treated as untrusted context. Readiness/audit/verifier output do not expose broker secrets, credentials, prompts, clipboard contents, screenshots, permission arguments or audit payloads.
+Desktop context is collected on demand only. Screen and clipboard data are treated as untrusted context. Readiness/audit/verifier/resource output do not expose broker secrets, credentials, prompts, clipboard contents, screenshots, permission arguments or model contents.
 
 ## Development rules
 
@@ -261,9 +277,11 @@ Desktop context is collected on demand only. Screen and clipboard data are treat
 9. Squash-merge completed phases to `main`.
 10. **Update README before every phase merge.**
 
-## Next local milestone
+## Next direction
 
-After Phase 12C merges, the project should be run on the target Windows machine. Use the verifier first, then start Tauri locally. Actual compiler/runtime failures should drive the next integration-fix phase before adding more computer-use capabilities.
+After Phase 13A, proceed to **Phase 13B — Verified Resource Installer** only after the model sources/licenses/checksums are explicitly pinned. Until then, local resources are installed manually into the paths exposed by the registry.
+
+Actual compiler/runtime failures from the Windows local verification harness still take precedence over adding new computer-use capabilities.
 
 ## Documentation
 
@@ -278,3 +296,4 @@ After Phase 12C merges, the project should be run on the target Windows machine.
 - [`docs/RUNTIME_READINESS.md`](docs/RUNTIME_READINESS.md)
 - [`docs/RUNTIME_PATHS_PACKAGING.md`](docs/RUNTIME_PATHS_PACKAGING.md)
 - [`docs/LOCAL_WINDOWS_VERIFICATION.md`](docs/LOCAL_WINDOWS_VERIFICATION.md)
+- [`docs/RUNTIME_RESOURCES.md`](docs/RUNTIME_RESOURCES.md)

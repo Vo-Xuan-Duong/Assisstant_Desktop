@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { getRuntimeReadiness } from "./api";
+import ResourceSetupPanel from "./ResourceSetupPanel";
 import type { ReadinessLevel, RuntimeReadinessReport } from "./types";
 import "./readiness.css";
 
@@ -66,9 +67,12 @@ export default function ReadinessPanel() {
               <span className="section-label">RUNTIME READINESS</span>
               <strong>{summary(report)}</strong>
             </div>
-            <button type="button" className="readiness-refresh" disabled={loading} onClick={() => void refresh()}>
-              {loading ? "Đang kiểm tra" : "Kiểm tra lại"}
-            </button>
+            <div className="readiness-header-actions">
+              <ResourceSetupPanel />
+              <button type="button" className="readiness-refresh" disabled={loading} onClick={() => void refresh()}>
+                {loading ? "Đang kiểm tra" : "Kiểm tra lại"}
+              </button>
+            </div>
           </div>
 
           {report && (

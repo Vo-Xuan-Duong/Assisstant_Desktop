@@ -1,7 +1,8 @@
 use std::{path::PathBuf, sync::Mutex, time::Duration};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+
+use super::resource_registry::ResourceRegistry;
 
 #[cfg(feature = "wake-word")]
 use voice_runtime::{
@@ -33,18 +34,17 @@ pub struct WakeService {
 }
 
 impl WakeService {
-    pub fn setup(app: &AppHandle) -> Self {
+    pub fn setup(resources: &ResourceRegistry) -> Self {
         #[cfg(feature = "wake-word")]
         {
-            return Self::setup_sherpa(app);
+            return Self::setup_sherpa(resources);
         }
 
         #[cfg(not(feature = "wake-word"))]
         {
-            let _ = app;
             Self {
-                model_dir: None,
-                keywords_path: None,
+                model_dir: Some(resources.wake_model_dir().to_path_buf()),
+                keywords_path: Some(resources.wake_keywords_path().to_path_buf()),
                 detail: Mutex::new(Some(
                     "Bản build hiện tại chưa bật feature `wake-word`.".into(),
                 )),
@@ -53,31 +53,9 @@ impl WakeService {
     }
 
     #[cfg(feature = "wake-word")]
-    fn setup_sherpa(app: &AppHandle) -> Self {
-        let model_dir = std::env::var_os("ASSISTANT_WAKE_MODEL_DIR")
-            .map(PathBuf::from)
-            .or_else(|| {
-                app.path().app_local_data_dir().ok().map(|root| {
-                    root.join("models")
-                        .join("wake")
-                        .join("sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01")
-                })
-            });
-
-        let Some(model_dir) = model_dir else {
-            return Self {
-                handle: None,
-                model_dir: None,
-                keywords_path: None,
-                detail: Mutex::new(Some(
-                    "Không xác định được thư mục local-data cho wake model.".into(),
-                )),
-            };
-        };
-
-        let keywords_path = std::env::var_os("ASSISTANT_WAKE_KEYWORDS")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| model_dir.join("keywords.txt"));
+    fn setup_sherpa(resources: &ResourceRegistry) -> Self {
+        let model_dir = resources.wake_model_dir().to_path_buf();
+        let keywords_path = resources.wake_keywords_path().to_path_buf();
         let config = SherpaWakeConfig::gigaspeech_int8(&model_dir, &keywords_path);
 
         let detector = match SherpaWakeWordDetector::load(config) {
@@ -151,8 +129,11 @@ impl WakeService {
             available: false,
             enabled: false,
             state: "not_compiled".into(),
-            model_dir: None,
-            keywords_path: None,
+            model_dir: self.model_dir.as_ref().map(|path| path.display().to_string()),
+            keywords_path: self
+                .keywords_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
             detail: self.detail.lock().ok().and_then(|value| value.clone()),
         }
     }

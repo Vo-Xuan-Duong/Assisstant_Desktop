@@ -1,0 +1,121 @@
+.resource-root {
+  position: relative;
+}
+
+.resource-trigger,
+.resource-refresh {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  cursor: pointer;
+}
+
+.resource-trigger-warning {
+  border-color: rgba(255, 192, 90, 0.55);
+}
+
+.resource-panel {
+  position: fixed;
+  top: 88px;
+  right: 24px;
+  z-index: 920;
+  width: min(620px, calc(100vw - 48px));
+  max-height: calc(100vh - 112px);
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(18, 20, 28, 0.985);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.42);
+}
+
+.resource-header,
+.resource-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.resource-header strong,
+.resource-title strong {
+  display: block;
+}
+
+.resource-note,
+.resource-card p {
+  margin: 0.65rem 0;
+  opacity: 0.78;
+}
+
+.resource-list {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 0.9rem;
+}
+
+.resource-card {
+  padding: 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.resource-ready {
+  border-color: rgba(92, 211, 142, 0.25);
+}
+
+.resource-missing,
+.resource-incomplete {
+  border-color: rgba(255, 181, 71, 0.34);
+}
+
+.resource-not_compiled {
+  border-color: rgba(140, 154, 190, 0.24);
+}
+
+.resource-title span {
+  font-size: 0.76rem;
+  opacity: 0.72;
+}
+
+.resource-root-path,
+.resource-files code {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  font-size: 0.72rem;
+  opacity: 0.72;
+}
+
+.resource-files {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+}
+
+.resource-files > div {
+  display: grid;
+  gap: 0.2rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.resource-file-ready > span {
+  color: #8ad9aa;
+}
+
+.resource-file-missing > span,
+.resource-error {
+  color: #f5b76d;
+}
+
+@media (max-width: 600px) {
+  .resource-panel {
+    inset: 76px 12px 12px;
+    width: auto;
+    max-height: none;
+  }
+}

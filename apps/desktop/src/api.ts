@@ -5,6 +5,7 @@ import type {
   AudioLevel,
   RuntimeHealth,
   RuntimeReadinessReport,
+  RuntimeResourceSnapshot,
   VoiceCapabilities,
   VoiceTurnResult,
   WakeRuntimeEvent,
@@ -17,6 +18,10 @@ export function getRuntimeHealth(): Promise<RuntimeHealth> {
 
 export function getRuntimeReadiness(): Promise<RuntimeReadinessReport> {
   return invoke<RuntimeReadinessReport>("assistant_readiness");
+}
+
+export function getRuntimeResources(): Promise<RuntimeResourceSnapshot> {
+  return invoke<RuntimeResourceSnapshot>("assistant_resources");
 }
 
 export function submitPrompt(text: string): Promise<string> {

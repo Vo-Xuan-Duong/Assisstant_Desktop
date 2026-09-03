@@ -6,6 +6,7 @@
 .readiness-panel { position: absolute; top: calc(100% + 10px); right: 0; z-index: 850; width: min(620px, calc(100vw - 44px)); max-height: min(690px, calc(100vh - 120px)); overflow: auto; display: grid; gap: 14px; padding: 16px; border: 1px solid #323b50; border-radius: 16px; background: rgba(14, 17, 24, .98); box-shadow: 0 24px 80px rgba(0, 0, 0, .48); }
 .readiness-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .readiness-header > div { display: grid; gap: 4px; }
+.readiness-header .readiness-header-actions { display: flex; align-items: center; gap: 7px; }
 .readiness-header strong { font-size: 14px; }
 .readiness-refresh { border: 1px solid #354057; border-radius: 9px; background: #1a202c; color: #d7dfec; padding: 7px 9px; }
 .readiness-summary { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -27,4 +28,5 @@
 @media (max-width: 600px) {
   .readiness-panel { position: fixed; inset: 68px 12px 12px; width: auto; max-height: none; }
   .readiness-header { align-items: stretch; flex-direction: column; }
+  .readiness-header .readiness-header-actions { justify-content: flex-start; }
 }
