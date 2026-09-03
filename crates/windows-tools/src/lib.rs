@@ -4,6 +4,7 @@ pub mod automation;
 pub mod clipboard;
 pub mod error;
 pub mod media;
+pub mod monitor_layout;
 pub mod screen;
 pub mod system;
 pub mod virtualized;
@@ -50,6 +51,11 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
         description: "List running process executables and process ids.",
     },
     ToolDefinition {
+        name: "display_list",
+        risk: ToolRisk::Safe,
+        description: "List monitor bounds and work areas exposed by Windows.",
+    },
+    ToolDefinition {
         name: "window_get_active",
         risk: ToolRisk::Safe,
         description: "Read metadata about the current foreground window.",
@@ -63,6 +69,11 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
         name: "window_activate",
         risk: ToolRisk::Moderate,
         description: "Restore if needed and request foreground activation of an explicitly identified top-level Windows window.",
+    },
+    ToolDefinition {
+        name: "window_set_bounds",
+        risk: ToolRisk::Moderate,
+        description: "Move and resize an explicitly identified top-level Windows window while preserving focus and Z-order.",
     },
     ToolDefinition {
         name: "window_set_state",
