@@ -9,16 +9,16 @@ use windows::{
         UI::Accessibility::{
             CUIAutomation, ExpandCollapseState, ExpandCollapseState_Collapsed,
             ExpandCollapseState_Expanded, ExpandCollapseState_LeafNode,
-            ExpandCollapseState_PartiallyExpanded, IUIAutomation,
-            IUIAutomationCondition, IUIAutomationElement, IUIAutomationExpandCollapsePattern,
-            IUIAutomationGridItemPattern, IUIAutomationGridPattern, IUIAutomationInvokePattern,
-            IUIAutomationRangeValuePattern, IUIAutomationScrollItemPattern,
-            IUIAutomationScrollPattern, IUIAutomationSelectionItemPattern,
-            IUIAutomationTogglePattern, IUIAutomationValuePattern, ScrollAmount,
-            ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement, ScrollAmount_NoAmount,
-            ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement, ToggleState,
-            ToggleState_Indeterminate, ToggleState_Off, ToggleState_On, TreeScope_Children,
-            UIA_InvokePatternId, UIA_ValuePatternId,
+            ExpandCollapseState_PartiallyExpanded, IUIAutomation, IUIAutomationCondition,
+            IUIAutomationElement, IUIAutomationExpandCollapsePattern, IUIAutomationGridItemPattern,
+            IUIAutomationGridPattern, IUIAutomationInvokePattern, IUIAutomationRangeValuePattern,
+            IUIAutomationScrollItemPattern, IUIAutomationScrollPattern,
+            IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern,
+            IUIAutomationValuePattern, ScrollAmount, ScrollAmount_LargeDecrement,
+            ScrollAmount_LargeIncrement, ScrollAmount_NoAmount, ScrollAmount_SmallDecrement,
+            ScrollAmount_SmallIncrement, ToggleState, ToggleState_Indeterminate, ToggleState_Off,
+            ToggleState_On, TreeScope_Children, UIA_InvokePatternId, UIA_PATTERN_ID,
+            UIA_ValuePatternId,
         },
     },
 };
@@ -33,14 +33,14 @@ const HARD_MAX_NODES: usize = 500;
 // Microsoft UI Automation control-pattern identifiers. Keeping these local avoids
 // coupling pattern support to generated constant availability while matching the
 // stable UIAutomationClient.h values.
-const UIA_RANGE_VALUE_PATTERN_ID: i32 = 10003;
-const UIA_SCROLL_PATTERN_ID: i32 = 10004;
-const UIA_EXPAND_COLLAPSE_PATTERN_ID: i32 = 10005;
-const UIA_GRID_PATTERN_ID: i32 = 10006;
-const UIA_GRID_ITEM_PATTERN_ID: i32 = 10007;
-const UIA_SELECTION_ITEM_PATTERN_ID: i32 = 10010;
-const UIA_TOGGLE_PATTERN_ID: i32 = 10015;
-const UIA_SCROLL_ITEM_PATTERN_ID: i32 = 10017;
+const UIA_RANGE_VALUE_PATTERN_ID: UIA_PATTERN_ID = UIA_PATTERN_ID(10003);
+const UIA_SCROLL_PATTERN_ID: UIA_PATTERN_ID = UIA_PATTERN_ID(10004);
+const UIA_EXPAND_COLLAPSE_PATTERN_ID: UIA_PATTERN_ID = UIA_PATTERN_ID(10005);
+const UIA_GRID_PATTERN_ID: UIA_PATTERN_ID = UIA_PATTERN_ID(10006);
+const UIA_GRID_ITEM_PATTERN_ID: UIA_PATTERN_ID = UIA_PATTERN_ID(10007);
+const UIA_SELECTION_ITEM_PATTERN_ID: UIA_PATTERN_ID = UIA_PATTERN_ID(10010);
+const UIA_TOGGLE_PATTERN_ID: UIA_PATTERN_ID = UIA_PATTERN_ID(10015);
+const UIA_SCROLL_ITEM_PATTERN_ID: UIA_PATTERN_ID = UIA_PATTERN_ID(10017);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct UiRect {
@@ -431,7 +431,7 @@ impl AutomationClient {
         let com = ComGuard;
 
         let automation: IUIAutomation = unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL)? };
-        let root = unsafe { automation.ElementFromHandle(handle.hwnd().0)? };
+        let root = unsafe { automation.ElementFromHandle(handle.hwnd())? };
 
         Ok(Self {
             _com: com,
@@ -496,7 +496,9 @@ fn snapshot_element(
         localized_control_type: bstr_or_default(|| unsafe {
             element.CurrentLocalizedControlType()
         }),
-        control_type: unsafe { element.CurrentControlType() }.unwrap_or_default(),
+        control_type: unsafe { element.CurrentControlType() }
+            .map(|value| value.0)
+            .unwrap_or_default(),
         process_id: unsafe { element.CurrentProcessId() }.unwrap_or_default(),
         enabled: unsafe { element.CurrentIsEnabled() }
             .map(|value| value.as_bool())
@@ -548,17 +550,20 @@ fn snapshot_element(
         toggle_state: pattern::<IUIAutomationTogglePattern>(element, UIA_TOGGLE_PATTERN_ID)
             .and_then(|pattern| unsafe { pattern.CurrentToggleState().ok() })
             .map(normalize_toggle_state),
-        is_selected: pattern::<IUIAutomationSelectionItemPattern>(element, UIA_SELECTION_ITEM_PATTERN_ID)
-            .and_then(|pattern| unsafe { pattern.CurrentIsSelected().ok() })
-            .map(|value| value.as_bool()),
+        is_selected: pattern::<IUIAutomationSelectionItemPattern>(
+            element,
+            UIA_SELECTION_ITEM_PATTERN_ID,
+        )
+        .and_then(|pattern| unsafe { pattern.CurrentIsSelected().ok() })
+        .map(|value| value.as_bool()),
         expand_collapse_state: pattern::<IUIAutomationExpandCollapsePattern>(
             element,
             UIA_EXPAND_COLLAPSE_PATTERN_ID,
         )
         .and_then(|pattern| unsafe { pattern.CurrentExpandCollapseState().ok() })
         .map(normalize_expand_collapse_state),
-        scroll: pattern::<IUIAutomationScrollPattern>(element, UIA_SCROLL_PATTERN_ID)
-            .map(|pattern| UiScrollSnapshot {
+        scroll: pattern::<IUIAutomationScrollPattern>(element, UIA_SCROLL_PATTERN_ID).map(
+            |pattern| UiScrollSnapshot {
                 horizontally_scrollable: unsafe { pattern.CurrentHorizontallyScrollable() }
                     .map(|value| value.as_bool())
                     .unwrap_or(false),
@@ -567,9 +572,9 @@ fn snapshot_element(
                     .unwrap_or(false),
                 horizontal_percent: unsafe { pattern.CurrentHorizontalScrollPercent() }
                     .unwrap_or(-1.0),
-                vertical_percent: unsafe { pattern.CurrentVerticalScrollPercent() }
-                    .unwrap_or(-1.0),
-            }),
+                vertical_percent: unsafe { pattern.CurrentVerticalScrollPercent() }.unwrap_or(-1.0),
+            },
+        ),
     }
 }
 
@@ -599,7 +604,10 @@ fn normalize_expand_collapse_state(state: ExpandCollapseState) -> UiExpandCollap
     }
 }
 
-fn pattern<T: Interface>(element: &IUIAutomationElement, pattern_id: i32) -> Option<T> {
+fn pattern<T: Interface>(
+    element: &IUIAutomationElement,
+    pattern_id: UIA_PATTERN_ID,
+) -> Option<T> {
     unsafe { element.GetCurrentPattern(pattern_id) }
         .ok()
         .and_then(|pattern| pattern.cast::<T>().ok())
@@ -607,14 +615,17 @@ fn pattern<T: Interface>(element: &IUIAutomationElement, pattern_id: i32) -> Opt
 
 fn get_pattern<T: Interface>(
     element: &IUIAutomationElement,
-    pattern_id: i32,
+    pattern_id: UIA_PATTERN_ID,
     name: &str,
 ) -> ToolResult<T> {
     pattern::<T>(element, pattern_id)
         .ok_or_else(|| ToolError::Unsupported(format!("element does not expose {name}")))
 }
 
-fn supports_pattern<T: Interface>(element: &IUIAutomationElement, pattern_id: i32) -> bool {
+fn supports_pattern<T: Interface>(
+    element: &IUIAutomationElement,
+    pattern_id: UIA_PATTERN_ID,
+) -> bool {
     pattern::<T>(element, pattern_id).is_some()
 }
 
