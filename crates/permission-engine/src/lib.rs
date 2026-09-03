@@ -1,8 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use assistant_common::ToolRisk;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub const ENV_PERMISSION_POLICY_PATH: &str = "ASSISTANT_PERMISSION_POLICY_PATH";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +20,33 @@ pub struct PermissionEvaluation {
     pub risk: ToolRisk,
     pub decision: PermissionDecision,
     pub reason: String,
+}
+
+/// Persisted desktop-managed runtime overrides. Phase 9D deliberately supports
+/// overrides only for tools that are classified Moderate by the native tool
+/// catalogue. Safe/Sensitive/Blocked policy remains product-owned.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionOverrideSnapshot {
+    pub revision: u64,
+    #[serde(default)]
+    pub tools: BTreeMap<String, PermissionDecision>,
+}
+
+impl PermissionOverrideSnapshot {
+    pub fn decision_for(&self, tool_name: &str) -> Option<PermissionDecision> {
+        self.tools.get(tool_name).copied()
+    }
+
+    pub fn set(&mut self, tool_name: impl Into<String>, decision: PermissionDecision) {
+        self.tools.insert(tool_name.into(), decision);
+        self.revision = self.revision.saturating_add(1);
+    }
+
+    pub fn clear(&mut self, tool_name: &str) {
+        if self.tools.remove(tool_name).is_some() {
+            self.revision = self.revision.saturating_add(1);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,8 +85,6 @@ impl PermissionPolicy {
 
     pub fn decision_for(&self, tool_name: &str, risk: ToolRisk) -> PermissionDecision {
         if risk == ToolRisk::Blocked {
-            // Blocked is an absolute product boundary. A runtime override must
-            // never turn a Blocked primitive into an executable tool.
             return PermissionDecision::Deny;
         }
 

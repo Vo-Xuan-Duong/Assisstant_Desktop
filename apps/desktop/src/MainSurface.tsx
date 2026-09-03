@@ -1,6 +1,12 @@
 import App from "./App";
+import PermissionPolicyPanel from "./PermissionPolicyPanel";
 import "./styles.css";
 
 export default function MainSurface() {
-  return <App />;
+  return (
+    <>
+      <App />
+      <PermissionPolicyPanel />
+    </>
+  );
 }

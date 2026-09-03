@@ -28,6 +28,7 @@ assistant-common = { path = "../../../crates/common" }
 assistant-core = { path = "../../../crates/assistant-core" }
 context-engine = { path = "../../../crates/context-engine" }
 permission-broker = { path = "../../../crates/permission-broker" }
+permission-engine = { path = "../../../crates/permission-engine" }
 voice-runtime = { path = "../../../crates/voice-runtime" }
 windows-tools = { path = "../../../crates/windows-tools" }
 async-trait.workspace = true

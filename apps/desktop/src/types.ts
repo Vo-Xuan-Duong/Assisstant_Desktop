@@ -71,12 +71,26 @@ export type WakeRuntimeEvent =
   | { type: "error"; message: string };
 
 export type ToolRisk = "safe" | "moderate" | "sensitive" | "blocked";
+export type PermissionDecision = "allow" | "ask" | "deny";
 
 export interface PermissionRequest {
   request_id: string;
   tool_name: string;
   risk: ToolRisk;
   arguments: unknown;
+}
+
+export interface PermissionPolicyTool {
+  name: string;
+  description: string;
+  default_decision: PermissionDecision;
+  override_decision?: PermissionDecision | null;
+}
+
+export interface PermissionPolicyView {
+  revision: number;
+  load_error?: string | null;
+  tools: PermissionPolicyTool[];
 }
 
 export interface ChatMessage {
