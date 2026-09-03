@@ -1,4 +1,5 @@
 mod edge;
+mod wake_desktop;
 
 use std::sync::{Arc, Mutex};
 
@@ -32,6 +33,9 @@ use voice_runtime::{
     whisper::{WhisperConfig, WhisperRecognizer},
     MicrophoneConfig, MicrophoneStream,
 };
+#[cfg(feature = "wake-word")]
+use voice_runtime::wake_runtime::WakeRuntimeEvent;
+use wake_desktop::{WakeService, WakeStatus};
 use windows_tools::window::{self, WindowHandle};
 
 #[derive(Clone)]
@@ -112,6 +116,23 @@ async fn assistant_health(state: State<'_, DesktopState>) -> RuntimeHealth {
     }
 }
 
+#[tauri::command]
+async fn assistant_wake_status(wake: State<'_, WakeService>) -> WakeStatus {
+    wake.status()
+}
+
+#[tauri::command]
+async fn assistant_wake_set_enabled(
+    enabled: bool,
+    wake: State<'_, WakeService>,
+) -> Result<WakeStatus, String> {
+    wake.set_enabled(enabled).await?;
+    // Give the worker one scheduler turn to publish its new state before the
+    // command returns a UI snapshot.
+    tokio::task::yield_now().await;
+    Ok(wake.status())
+}
+
 async fn complete_prompt(prompt: &str, state: &DesktopState) -> Result<String, String> {
     if state.core.state().await == AssistantState::Error {
         state.core.recover().await.map_err(|error| error.to_string())?;
@@ -182,7 +203,11 @@ async fn assistant_voice_capabilities(state: State<'_, DesktopState>) -> VoiceCa
 }
 
 #[tauri::command]
-async fn assistant_speak(text: String, state: State<'_, DesktopState>) -> Result<(), String> {
+async fn assistant_speak(
+    text: String,
+    state: State<'_, DesktopState>,
+    wake: State<'_, WakeService>,
+) -> Result<(), String> {
     let text = text.trim();
     if text.is_empty() {
         return Err("Không có nội dung để đọc.".into());
@@ -191,17 +216,24 @@ async fn assistant_speak(text: String, state: State<'_, DesktopState>) -> Result
         return Err("Assistant đang bận với một tác vụ khác.".into());
     }
 
-    state
+    wake.suspend().await;
+    let begin = state
         .core
         .begin_speaking()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string());
+    if let Err(error) = begin {
+        wake.resume_after(std::time::Duration::from_millis(900));
+        return Err(error);
+    }
+
     let speak_result = state.tts.speak(text).await.map_err(|error| error.to_string());
     let finish_result = state
         .core
         .finish_speaking()
         .await
         .map_err(|error| error.to_string());
+    wake.resume_after(std::time::Duration::from_millis(900));
 
     speak_result?;
     finish_result
@@ -211,10 +243,11 @@ async fn assistant_speak(text: String, state: State<'_, DesktopState>) -> Result
 async fn assistant_voice_turn(
     app: AppHandle,
     state: State<'_, DesktopState>,
+    wake: State<'_, WakeService>,
 ) -> Result<VoiceTurnResult, String> {
     #[cfg(not(feature = "voice-whisper"))]
     {
-        let _ = (app, state);
+        let _ = (app, state, wake);
         Err(
             "Bản build hiện tại chưa bật feature `voice-whisper`. Text/TTS vẫn hoạt động bình thường."
                 .into(),
@@ -223,7 +256,6 @@ async fn assistant_voice_turn(
 
     #[cfg(feature = "voice-whisper")]
     {
-        let _turn = state.voice.turn_gate.lock().await;
         if state.core.state().await == AssistantState::Error {
             state.core.recover().await.map_err(|error| error.to_string())?;
         }
@@ -237,53 +269,62 @@ async fn assistant_voice_turn(
             ));
         }
 
-        state
-            .core
-            .begin_listening()
-            .await
-            .map_err(|error| error.to_string())?;
-
-        let utterance = match capture_one_utterance(&app).await {
-            Ok(utterance) => utterance,
-            Err(error) => return fail_listening(state.inner(), error).await,
-        };
-
-        let recognizer = match get_or_load_recognizer(state.inner()).await {
-            Ok(recognizer) => recognizer,
-            Err(error) => return fail_listening(state.inner(), error).await,
-        };
-
-        let transcript = match recognizer.transcribe(utterance).await {
-            Ok(transcript) if !transcript.is_empty() => transcript,
-            Ok(_) => {
-                return fail_listening(
-                    state.inner(),
-                    "Không nhận diện được nội dung giọng nói.".into(),
-                )
-                .await;
-            }
-            Err(error) => return fail_listening(state.inner(), error.to_string()).await,
-        };
-
-        // AssistantCore performs Listening -> Processing -> Idle for the AI turn.
-        let response = complete_prompt(&transcript.text, state.inner()).await?;
-
-        state
-            .core
-            .begin_speaking()
-            .await
-            .map_err(|error| error.to_string())?;
-        let tts_error = state.tts.speak(&response).await.err().map(|error| error.to_string());
-        if let Err(error) = state.core.finish_speaking().await {
-            warn!(%error, "failed to finish voice speaking state");
-        }
-
-        Ok(VoiceTurnResult {
-            transcript: transcript.text,
-            response,
-            tts_error,
-        })
+        wake.suspend().await;
+        let result = run_voice_turn_inner(&app, state.inner()).await;
+        wake.resume_after(std::time::Duration::from_millis(900));
+        result
     }
+}
+
+#[cfg(feature = "voice-whisper")]
+async fn run_voice_turn_inner(
+    app: &AppHandle,
+    state: &DesktopState,
+) -> Result<VoiceTurnResult, String> {
+    let _turn = state.voice.turn_gate.lock().await;
+
+    state
+        .core
+        .begin_listening()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let utterance = match capture_one_utterance(app).await {
+        Ok(utterance) => utterance,
+        Err(error) => return fail_listening(state, error).await,
+    };
+
+    let recognizer = match get_or_load_recognizer(state).await {
+        Ok(recognizer) => recognizer,
+        Err(error) => return fail_listening(state, error).await,
+    };
+
+    let transcript = match recognizer.transcribe(utterance).await {
+        Ok(transcript) if !transcript.is_empty() => transcript,
+        Ok(_) => {
+            return fail_listening(state, "Không nhận diện được nội dung giọng nói.".into()).await;
+        }
+        Err(error) => return fail_listening(state, error.to_string()).await,
+    };
+
+    // AssistantCore performs Listening -> Processing -> Idle for the AI turn.
+    let response = complete_prompt(&transcript.text, state).await?;
+
+    state
+        .core
+        .begin_speaking()
+        .await
+        .map_err(|error| error.to_string())?;
+    let tts_error = state.tts.speak(&response).await.err().map(|error| error.to_string());
+    if let Err(error) = state.core.finish_speaking().await {
+        warn!(%error, "failed to finish voice speaking state");
+    }
+
+    Ok(VoiceTurnResult {
+        transcript: transcript.text,
+        response,
+        tts_error,
+    })
 }
 
 #[cfg(feature = "voice-whisper")]
@@ -392,6 +433,35 @@ fn hide_main_window(app: &AppHandle) {
     }
 }
 
+#[cfg(feature = "wake-word")]
+fn setup_wake_events(app: &AppHandle) {
+    let wake = app.state::<WakeService>();
+    let Some(mut events) = wake.subscribe() else {
+        return;
+    };
+    let app = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok(event) => {
+                    let _ = app.emit("wake:event", &event);
+                    if matches!(event, WakeRuntimeEvent::Detected { .. }) {
+                        show_main_window(&app);
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!(skipped, "desktop wake event receiver lagged");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
+#[cfg(not(feature = "wake-word"))]
+fn setup_wake_events(_app: &AppHandle) {}
+
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Mở Assistant", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide", "Ẩn cửa sổ", true, None::<&str>)?;
@@ -482,8 +552,10 @@ pub fn run() {
                     turn_gate: AsyncMutex::new(()),
                 },
             });
+            app.manage(WakeService::setup(app.handle()));
 
             edge::setup(app.handle())?;
+            setup_wake_events(app.handle());
             setup_shortcut(app)?;
             setup_tray(app)?;
             Ok(())
@@ -499,6 +571,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             assistant_health,
+            assistant_wake_status,
+            assistant_wake_set_enabled,
             assistant_submit,
             assistant_voice_capabilities,
             assistant_voice_turn,
