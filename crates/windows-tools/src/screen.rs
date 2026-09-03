@@ -67,7 +67,7 @@ pub fn capture(handle: WindowHandle) -> ToolResult<ScreenFrame> {
             ));
         }
 
-        let source_dc = GetWindowDC(hwnd);
+        let source_dc = GetWindowDC(Some(hwnd));
         if source_dc.0.is_null() {
             return Err(ToolError::Unsupported(
                 "Windows did not provide a window device context".into(),
