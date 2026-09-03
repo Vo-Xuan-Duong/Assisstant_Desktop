@@ -69,8 +69,8 @@ pub fn write_text(text: &str) -> ToolResult<ClipboardWriteResult> {
     let _clipboard = ClipboardGuard::open()?;
 
     unsafe {
-        EmptyClipboard()?;
-
+        // Prepare the replacement before clearing the current clipboard so an
+        // allocation/lock failure does not unnecessarily destroy existing data.
         let memory = GlobalAlloc(GMEM_MOVEABLE, bytes)?;
         let destination = GlobalLock(memory) as *mut u16;
         if destination.is_null() {
@@ -83,10 +83,12 @@ pub fn write_text(text: &str) -> ToolResult<ClipboardWriteResult> {
         ptr::copy_nonoverlapping(encoded.as_ptr(), destination, encoded.len());
         let _ = GlobalUnlock(memory);
 
-        let transfer = SetClipboardData(
-            CF_UNICODETEXT.0 as u32,
-            Some(HANDLE(memory.0)),
-        );
+        if let Err(error) = EmptyClipboard() {
+            let _ = GlobalFree(Some(memory));
+            return Err(ToolError::Windows(error));
+        }
+
+        let transfer = SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(memory.0)));
 
         match transfer {
             Ok(_) => Ok(ClipboardWriteResult {
