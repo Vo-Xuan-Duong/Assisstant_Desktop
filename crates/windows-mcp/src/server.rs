@@ -356,7 +356,7 @@ impl WindowsMcpServer {
 
     #[tool(
         name = "ui_inspect",
-        description = "Inspect the Windows UI Automation Control View for a window. When Desktop Context provides active_window_handle for the user's referenced app, pass it explicitly; only omit window_handle when the actual foreground window is intentionally the target. Returns structural metadata, root_window_handle, child-index paths, and available pattern state (range/toggle/selection/expand/scroll) without reading arbitrary editable field values. Use this before any UI action and inspect again if a path becomes stale."
+        description = "Inspect the Windows UI Automation Control View for a window. When Desktop Context provides active_window_handle for the user's referenced app, pass it explicitly; only omit window_handle when the actual foreground window is intentionally the target. Returns structural metadata, root_window_handle, child-index paths, available pattern state (range/toggle/selection/expand/scroll), grid/grid-item coordinates, and ScrollItem capability without reading arbitrary editable field values. Use this before any UI action and inspect again if a path becomes stale."
     )]
     async fn ui_inspect(
         &self,
@@ -640,6 +640,38 @@ impl WindowsMcpServer {
             let window_before_action = window::get(handle).map_err(tool_error)?;
             automation::scroll(handle, &path, horizontal, vertical).map_err(tool_error)?;
             Ok(action_result(window_before_action, result_path, "scroll"))
+        })
+        .await?;
+        to_json(&result)
+    }
+
+    #[tool(
+        name = "ui_scroll_into_view",
+        description = "Bring an explicitly inspected element into its owning UI Automation scroll viewport using ScrollItemPattern. Inspect first and call only when supports_scroll_item=true. Pass the exact root_window_handle and path; stale paths fail. This does not synthesize wheel or mouse input."
+    )]
+    async fn ui_scroll_into_view(
+        &self,
+        Parameters(UiElementActionInput {
+            window_handle,
+            path,
+        }): Parameters<UiElementActionInput>,
+    ) -> Result<String, String> {
+        self.permissions
+            .authorize(
+                "ui_scroll_into_view",
+                json!({ "window_handle": window_handle, "path": &path }),
+            )
+            .await?;
+        let handle = explicit_window_handle(window_handle)?;
+        let result_path = path.clone();
+        let result = run_blocking(move || {
+            let window_before_action = window::get(handle).map_err(tool_error)?;
+            automation::scroll_into_view(handle, &path).map_err(tool_error)?;
+            Ok(action_result(
+                window_before_action,
+                result_path,
+                "scroll_into_view",
+            ))
         })
         .await?;
         to_json(&result)
