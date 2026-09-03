@@ -8,10 +8,10 @@ Development is phase-based: finish one bounded subsystem, static-review it, upda
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 13B — Verified Resource Installer**
-- **Latest completed main commit:** `f39648f8a803e1f4f5635bc356ff1c09a88c8d81`
-- **Current branch:** `phase/13c-wake-keyword-preparation`
-- **Current phase:** Phase 13C — Wake Keyword Preparation
+- **Latest completed phase on `main`: Phase 13C — Wake Keyword Preparation**
+- **Latest completed main commit:** `2b3395856297f574f7c67d9e11a55db04c33f510`
+- **Current branch:** `phase/13d-wake-hot-reload-settings`
+- **Current phase:** Phase 13D — Wake Phrase Lifecycle & Hot Reload
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
@@ -51,6 +51,8 @@ ResourceRegistry
 Backend Resource Catalog
    ↙                  ↘
 Verified Download   Local Preparation
+                         ↓
+                  Wake hot reload
 ```
 
 ## Locked stack
@@ -107,7 +109,8 @@ Verified Download   Local Preparation
 | 12C — Local Windows Verification Harness | ✅ | read-only prerequisite/runtime preflight |
 | 13A — Runtime Resource Registry | ✅ | unified Whisper/wake paths/status + setup UI |
 | 13B — Verified Resource Installer | ✅ | pinned manifest + verified Whisper install + progress UI |
-| **13C — Wake Keyword Preparation** | **🚧** | local SentencePiece tokenization + validated `keywords.txt` generation |
+| 13C — Wake Keyword Preparation | ✅ | local SentencePiece tokenization + validated `keywords.txt` generation |
+| **13D — Wake Lifecycle & Hot Reload** | **🚧** | transactional phrase replacement + detector hot reload + persisted wake settings |
 
 ## Recent merge points
 
@@ -130,6 +133,7 @@ Verified Download   Local Preparation
 12C  46799a5...  local Windows verification harness
 13A  5c9338d...  runtime resource registry + setup UI
 13B  f39648f...  verified resource installer
+13C  2b33958...  wake keyword preparation
 ```
 
 ## Current MCP capability surface
@@ -198,6 +202,8 @@ Runtime data is not tied to repository root or process working directory.
 ├── models/
 │   ├── whisper/
 │   └── wake/
+├── settings/
+│   └── wake.json
 ├── permissions/
 ├── audit/
 └── runtime/
@@ -271,51 +277,61 @@ atomic rename
 
 The frontend/Gemini cannot supply arbitrary URLs, hashes or install destinations.
 
-## Phase 13C — Wake Keyword Preparation
+## Wake keyword preparation and lifecycle
 
 The wake model archive remains manual because model-specific redistribution terms and a pinned archive digest are not yet locked to the verified-download standard.
 
-Phase 13C instead makes the application-specific keyword file locally:
+Application-specific wake configuration is local:
 
 ```text
 bpe.model + tokens.txt
         ↓
-user phrase: HEY ASSISTANT
+user phrase
         ↓
-SentencePiece
+SentencePiece + vocabulary validation
         ↓
-validate each piece against tokens.txt
+transactional keywords.txt replacement
         ↓
-reject <unk> / unsupported pieces
+load native replacement detector
         ↓
-`<pieces> @HEY_ASSISTANT`
-        ↓
-keywords.txt.part
-        ↓
-flush / sync / no-overwrite
-        ↓
-keywords.txt
+WakeRuntime hot reload
 ```
-
-`bpe.model` is preparation-only; it does not affect wake runtime readiness after a valid `keywords.txt` exists.
 
 Current generator rules:
 
-- phrase is normalized to uppercase;
+- phrase normalized to uppercase;
 - maximum 64 characters;
-- English ASCII letters, spaces and apostrophes only for the current GigaSpeech model;
-- no overwrite of existing `keywords.txt`;
+- English ASCII letters, spaces and apostrophes for the current GigaSpeech model;
+- reject `<unk>` and pieces absent from `tokens.txt`;
 - no network request;
 - no MCP/Gemini/Antigravity call;
-- generated output uses a canonical `@PHRASE_LABEL`.
+- canonical `@PHRASE_LABEL` output.
 
-Open:
+Phase 13D removes the restart requirement. Existing `keywords.txt` can be replaced transactionally:
 
 ```text
-Readiness → Resources → Wake Word Resources
+new .part
+  ↓
+old keywords → .bak
+  ↓
+new keywords → final path
+  ↓
+load native detector from final path
+  ↓
+hot reload succeeds? ── no → rollback .bak
+  ↓ yes
+remove .bak
 ```
 
-When `wake-word` is compiled and `bpe.model + tokens.txt` exist, the UI can generate the missing keyword file. The current WakeService is initialized at startup, so Phase 13C shows a restart notice after generation.
+WakeService owns a stable event relay, so it can also create a WakeRuntime later in the same application session if the desktop originally started with missing resources.
+
+Wake preferences are persisted to:
+
+```text
+<app-local-data>/settings/wake.json
+```
+
+containing user-facing `enabled` and `phrase` values. Explicit `ASSISTANT_WAKE_ENABLED` remains a startup override. A settings-write failure is reported as a warning but does not undo an already successful runtime update.
 
 ## Local Windows preflight
 
@@ -329,7 +345,7 @@ JSON output:
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1 -Json
 ```
 
-The verifier is read-only and does not build, test, start the app, invoke Actions, download models or change runtime policy.
+The verifier is read-only and now also reports wake `tokens.txt`, `keywords.txt`, preparation-only `bpe.model`, and persisted `settings/wake.json` state. It does not build, test, start the app, invoke Actions, download models or change runtime policy.
 
 ## Readiness model
 
@@ -337,7 +353,7 @@ The in-app Readiness panel checks Antigravity, Windows MCP, Permission Broker, C
 
 ## Context / privacy
 
-Desktop context is collected on demand only. Screen and clipboard data are treated as untrusted context. Readiness/audit/verifier/resource output do not expose broker secrets, credentials, prompts, clipboard contents, screenshots, permission arguments or model contents. Wake phrase preparation stays local.
+Desktop context is collected on demand only. Screen and clipboard data are treated as untrusted context. Readiness/audit/verifier/resource output do not expose broker secrets, credentials, prompts, clipboard contents, screenshots, permission arguments or model contents. Wake phrase preparation and hot reload stay local.
 
 ## Development rules
 
@@ -354,9 +370,9 @@ Desktop context is collected on demand only. Screen and clipboard data are treat
 
 ## Next direction
 
-After Phase 13C, the next bounded work is **wake phrase lifecycle/hot reload**: safely replacing an existing `keywords.txt`, restarting/reloading the background detector without restarting the whole desktop app, and persisting user-facing wake configuration. After that, remaining remote work should focus on settings persistence and release-readiness hardening rather than expanding tool surface.
+After Phase 13D, remaining remote development moves to **final integration/release-readiness hardening**, not new computer-use features. The goal is to audit package metadata, sidecar/resource contracts, local build/run commands, release checklist and known Windows-only verification gates.
 
-Actual compiler/runtime failures from the Windows local verification harness still take precedence over adding new computer-use capabilities.
+Actual compiler/runtime failures from the Windows local verification harness take precedence over adding any new capability.
 
 ## Documentation
 
@@ -367,6 +383,7 @@ Actual compiler/runtime failures from the Windows local verification harness sti
 - [`docs/VOICE_DESKTOP.md`](docs/VOICE_DESKTOP.md)
 - [`docs/WAKE_RUNTIME.md`](docs/WAKE_RUNTIME.md)
 - [`docs/WAKE_KEYWORD_PREPARATION.md`](docs/WAKE_KEYWORD_PREPARATION.md)
+- [`docs/WAKE_HOT_RELOAD.md`](docs/WAKE_HOT_RELOAD.md)
 - [`docs/UI_AUTOMATION_PATTERNS.md`](docs/UI_AUTOMATION_PATTERNS.md)
 - [`docs/PERMISSION_GATEWAY.md`](docs/PERMISSION_GATEWAY.md)
 - [`docs/RUNTIME_READINESS.md`](docs/RUNTIME_READINESS.md)

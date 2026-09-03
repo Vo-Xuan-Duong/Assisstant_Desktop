@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getResourceCatalog,
   getRuntimeResources,
+  getWakeStatus,
   installResource,
   onResourceInstallProgress,
 } from "./api";
@@ -19,6 +20,8 @@ const stateLabel: Record<ResourceState, string> = {
   incomplete: "Incomplete",
   not_compiled: "Not compiled",
 };
+
+const wakeModelFileNames = new Set(["encoder", "decoder", "joiner", "tokens"]);
 
 function formatBytes(value: number): string {
   if (value <= 0) return "Local generated";
@@ -51,12 +54,14 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
     setLoading(true);
     setError(null);
     try {
-      const [resources, manifests] = await Promise.all([
+      const [resources, manifests, wakeStatus] = await Promise.all([
         getRuntimeResources(),
         getResourceCatalog(),
+        getWakeStatus().catch(() => null),
       ]);
       setSnapshot(resources);
       setCatalog(manifests);
+      if (wakeStatus?.phrase) setWakePhrase(wakeStatus.phrase);
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -110,7 +115,7 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
         await refresh();
         await onResourcesChanged?.();
         if (resourceId === "wake_keywords") {
-          setNotice(`Đã tạo ${result.path}. Hãy khởi động lại ứng dụng để WakeService nạp keyword mới.`);
+          setNotice(`Đã cập nhật ${result.path} và nạp wake phrase vào runtime hiện tại.`);
         }
       } catch (cause) {
         setError(`Không thể xử lý ${resourceId}: ${String(cause)}`);
@@ -145,7 +150,7 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
           </div>
 
           <p className="resource-note">
-            Whisper có verified installer. Wake model archive vẫn cài thủ công; `keywords.txt` có thể được tạo local từ `bpe.model` và `tokens.txt`.
+            Whisper có verified installer. Wake model archive vẫn cài thủ công; wake phrase có thể được tạo hoặc cập nhật local và hot-reload ngay.
           </p>
 
           {notice && <p className="resource-notice">{notice}</p>}
@@ -167,6 +172,9 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
               );
 
               const wakeKeywordManifest = resource.id === "wake_word" ? manifestById.get("wake_keywords") : undefined;
+              const wakeRuntimeModelReady = resource.files
+                .filter((file) => wakeModelFileNames.has(file.name))
+                .every((file) => file.exists);
               const wakeTokensReady = resource.files.some((file) => file.name === "tokens" && file.exists);
               const wakeKeywordsReady = resource.files.some((file) => file.name === "keywords" && file.exists);
               const wakeBpeReady = resource.preparation_files.some((file) => file.name === "bpe_model" && file.exists);
@@ -174,9 +182,9 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
               const canPrepareWake = Boolean(
                 resource.id === "wake_word" &&
                   resource.compiled &&
+                  wakeRuntimeModelReady &&
                   wakeTokensReady &&
                   wakeBpeReady &&
-                  !wakeKeywordsReady &&
                   wakePhrase.trim() &&
                   !wakePreparing,
               );
@@ -255,13 +263,13 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
                   {wakeKeywordManifest && (
                     <div className="wake-keyword-preparation">
                       <div>
-                        <strong>Tạo wake phrase local</strong>
+                        <strong>Wake phrase local</strong>
                         <small>{wakeKeywordManifest.note}</small>
                       </div>
                       <input
                         value={wakePhrase}
                         maxLength={64}
-                        disabled={wakePreparing || wakeKeywordsReady}
+                        disabled={wakePreparing}
                         onChange={(event) => setWakePhrase(event.target.value)}
                         placeholder="HEY ASSISTANT"
                       />
@@ -271,13 +279,14 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
                         disabled={!canPrepareWake}
                         onClick={() => void startInstall("wake_keywords", wakePhrase)}
                       >
-                        {wakeKeywordsReady
-                          ? "keywords.txt đã có"
-                          : wakePreparing
-                            ? "Đang tạo"
-                            : "Tạo keywords.txt"}
+                        {wakePreparing
+                          ? "Đang cập nhật"
+                          : wakeKeywordsReady
+                            ? "Cập nhật + nạp ngay"
+                            : "Tạo + nạp ngay"}
                       </button>
                       {!resource.compiled && <small>Build cần bật feature `wake-word` để tokenize local.</small>}
+                      {!wakeRuntimeModelReady && <small>Wake model chưa đủ encoder/decoder/joiner/tokens để hot-load.</small>}
                       {!wakeBpeReady && <small>Thiếu `bpe.model` trong wake model directory.</small>}
                       {!wakeTokensReady && <small>Thiếu `tokens.txt` trong wake model directory.</small>}
                     </div>

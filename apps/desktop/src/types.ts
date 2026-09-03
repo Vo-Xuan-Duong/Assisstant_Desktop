@@ -127,6 +127,7 @@ export interface WakeStatus {
   state: WakeRuntimeState;
   model_dir?: string | null;
   keywords_path?: string | null;
+  phrase?: string | null;
   detail?: string | null;
 }
 

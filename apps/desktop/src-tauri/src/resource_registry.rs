@@ -40,6 +40,7 @@ pub struct RuntimeResourceSnapshot {
 
 #[derive(Debug, Clone)]
 pub struct ResourceRegistry {
+    app_local_data: PathBuf,
     whisper_model: PathBuf,
     wake_model_dir: PathBuf,
     wake_keywords: PathBuf,
@@ -66,6 +67,7 @@ impl ResourceRegistry {
         let wake_bpe_model = wake_model_dir.join("bpe.model");
 
         Ok(Self {
+            app_local_data: paths.app_local_data.clone(),
             whisper_model,
             wake_model_dir,
             wake_keywords,
@@ -91,6 +93,10 @@ impl ResourceRegistry {
 
     pub fn wake_tokens_path(&self) -> PathBuf {
         self.wake_model_dir.join("tokens.txt")
+    }
+
+    pub fn wake_settings_path(&self) -> PathBuf {
+        self.app_local_data.join("settings").join("wake.json")
     }
 
     pub fn snapshot(&self) -> RuntimeResourceSnapshot {

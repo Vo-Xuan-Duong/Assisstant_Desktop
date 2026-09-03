@@ -141,7 +141,11 @@ $RuntimeDir = Join-Path $AppLocalData "runtime"
 $GeneratedMcpConfig = Join-Path $RuntimeDir ".agents\mcp_config.json"
 $ContextDir = Join-Path $AppLocalData "context"
 $WhisperModel = Join-Path $AppLocalData "models\whisper\ggml-base.bin"
-$WakeDir = Join-Path $AppLocalData "models\wake"
+$WakeModelDir = Join-Path $AppLocalData "models\wake\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
+$WakeBpe = Join-Path $WakeModelDir "bpe.model"
+$WakeTokens = Join-Path $WakeModelDir "tokens.txt"
+$WakeKeywords = Join-Path $WakeModelDir "keywords.txt"
+$WakeSettings = Join-Path $AppLocalData "settings\wake.json"
 $PermissionPolicy = Join-Path $AppLocalData "permissions\policy.json"
 
 if (Test-Path $GeneratedMcpConfig) {
@@ -165,11 +169,37 @@ else {
     Add-Result "whisper_model" "optional" "Chưa có Whisper model mặc định; text assistant vẫn hoạt động." $WhisperModel
 }
 
-if (Test-Path $WakeDir) {
-    Add-Result "wake_models" "ready" "Wake model directory đã tồn tại." $WakeDir
+if (Test-Path $WakeModelDir) {
+    Add-Result "wake_models" "ready" "Wake model directory đã tồn tại." $WakeModelDir
 }
 else {
-    Add-Result "wake_models" "optional" "Wake resources chưa được cài; wake word là optional." $WakeDir
+    Add-Result "wake_models" "optional" "Wake resources chưa được cài; wake word là optional." $WakeModelDir
+}
+
+foreach ($wakeResource in @(
+    @{ id = "wake_tokens"; path = $WakeTokens; label = "tokens.txt" },
+    @{ id = "wake_keywords"; path = $WakeKeywords; label = "keywords.txt" },
+    @{ id = "wake_bpe"; path = $WakeBpe; label = "bpe.model (preparation-only)" }
+)) {
+    if (Test-Path $wakeResource.path) {
+        Add-Result $wakeResource.id "ready" "$($wakeResource.label) đã tồn tại." $wakeResource.path
+    }
+    else {
+        Add-Result $wakeResource.id "optional" "$($wakeResource.label) chưa tồn tại; wake vẫn là capability optional." $wakeResource.path
+    }
+}
+
+if (Test-Path $WakeSettings) {
+    try {
+        $wakeSettingsJson = Get-Content $WakeSettings -Raw | ConvertFrom-Json
+        Add-Result "wake_settings" "ready" "Wake settings parse được (enabled/phrase)." $WakeSettings
+    }
+    catch {
+        Add-Result "wake_settings" "optional" "Wake settings tồn tại nhưng JSON lỗi; desktop sẽ fallback an toàn và báo detail: $($_.Exception.Message)" $WakeSettings
+    }
+}
+else {
+    Add-Result "wake_settings" "info" "Wake settings chưa tồn tại; desktop sẽ dùng mặc định/env override cho tới khi user thay đổi wake configuration." $WakeSettings
 }
 
 if (Test-Path $PermissionPolicy) {

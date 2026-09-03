@@ -17,7 +17,11 @@ function summary(report: RuntimeReadinessReport | null): string {
   return "Full runtime sẵn sàng";
 }
 
-export default function ReadinessPanel() {
+interface ReadinessPanelProps {
+  onWakeChanged?: () => void | Promise<void>;
+}
+
+export default function ReadinessPanel({ onWakeChanged }: ReadinessPanelProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<RuntimeReadinessReport | null>(null);
@@ -34,6 +38,11 @@ export default function ReadinessPanel() {
       setLoading(false);
     }
   }, []);
+
+  const resourcesChanged = useCallback(async () => {
+    await refresh();
+    await onWakeChanged?.();
+  }, [onWakeChanged, refresh]);
 
   const toggle = useCallback(() => {
     setOpen((current) => {
@@ -68,7 +77,7 @@ export default function ReadinessPanel() {
               <strong>{summary(report)}</strong>
             </div>
             <div className="readiness-header-actions">
-              <ResourceSetupPanel onResourcesChanged={refresh} />
+              <ResourceSetupPanel onResourcesChanged={resourcesChanged} />
               <button type="button" className="readiness-refresh" disabled={loading} onClick={() => void refresh()}>
                 {loading ? "Đang kiểm tra" : "Kiểm tra lại"}
               </button>
