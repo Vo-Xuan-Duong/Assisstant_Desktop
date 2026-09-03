@@ -9,17 +9,6 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $BaseVerifier = Join-Path $PSScriptRoot "verify-release.ps1"
 $PackagePath = Join-Path $RepoRoot "package.json"
 
-if ($Json) {
-    & $BaseVerifier -PublicRelease -Json
-}
-else {
-    & $BaseVerifier -PublicRelease
-}
-
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
-}
-
 $package = Get-Content $PackagePath -Raw | ConvertFrom-Json
 $property = $package.scripts.PSObject.Properties["desktop:release:build:public"]
 if ($null -eq $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) {
@@ -37,4 +26,10 @@ if ($command -notmatch 'desktop:release:verify:public') {
 if (-not $Json) {
     Write-Host "Public build command is bound to the signed Tauri overlay." -ForegroundColor Green
 }
-exit 0
+
+if ($Json) {
+    & $BaseVerifier -PublicRelease -Json
+}
+else {
+    & $BaseVerifier -PublicRelease
+}
