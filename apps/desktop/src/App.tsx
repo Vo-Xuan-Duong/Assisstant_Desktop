@@ -2,11 +2,14 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import {
   getRuntimeHealth,
   getVoiceCapabilities,
+  getWakeStatus,
   onAssistantEvent,
   onVoiceLevel,
+  onWakeEvent,
   resetConversation,
   restartRuntime,
   runVoiceTurn,
+  setWakeEnabled,
   speakText,
   submitPrompt,
 } from "./api";
@@ -15,6 +18,7 @@ import type {
   ChatMessage,
   RuntimeHealth,
   VoiceCapabilities,
+  WakeStatus,
 } from "./types";
 
 const quickPrompts = [
@@ -31,12 +35,14 @@ export default function App() {
   const [assistantState, setAssistantState] = useState<AssistantState>("idle");
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
   const [voice, setVoice] = useState<VoiceCapabilities | null>(null);
+  const [wake, setWake] = useState<WakeStatus | null>(null);
   const [voiceLevel, setVoiceLevel] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([
     message("system", "Desktop runtime đã sẵn sàng. Antigravity sẽ được khởi tạo khi cần."),
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [wakeBusy, setWakeBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const refreshHealth = useCallback(async () => {
@@ -55,12 +61,28 @@ export default function App() {
     }
   }, []);
 
+  const refreshWake = useCallback(async () => {
+    try {
+      setWake(await getWakeStatus());
+    } catch (error) {
+      setWake({
+        compiled: false,
+        available: false,
+        enabled: false,
+        state: "unavailable",
+        detail: String(error),
+      });
+    }
+  }, []);
+
   useEffect(() => {
     void refreshHealth();
     void refreshVoice();
+    void refreshWake();
     let disposed = false;
     let unsubscribeAssistant: (() => void) | undefined;
     let unsubscribeLevel: (() => void) | undefined;
+    let unsubscribeWake: (() => void) | undefined;
 
     void onAssistantEvent((event) => {
       if (event.type === "state_changed") {
@@ -84,12 +106,39 @@ export default function App() {
       else unsubscribeLevel = unlisten;
     });
 
+    void onWakeEvent((event) => {
+      if (event.type === "state_changed") {
+        setWake((current) =>
+          current
+            ? {
+                ...current,
+                state: event.to,
+                enabled: !["disabled", "stopped"].includes(event.to),
+              }
+            : current,
+        );
+      }
+      if (event.type === "detected") {
+        setMessages((current) => [
+          ...current,
+          message("system", `Wake word phát hiện: ${event.detection.keyword}`),
+        ]);
+      }
+      if (event.type === "error") {
+        setWake((current) => (current ? { ...current, state: "error", detail: event.message } : current));
+      }
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unsubscribeWake = unlisten;
+    });
+
     return () => {
       disposed = true;
       unsubscribeAssistant?.();
       unsubscribeLevel?.();
+      unsubscribeWake?.();
     };
-  }, [refreshHealth, refreshVoice]);
+  }, [refreshHealth, refreshVoice, refreshWake]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -114,6 +163,17 @@ export default function App() {
     if (!voice.model_available) return `Thiếu Whisper model${voice.model_path ? `: ${voice.model_path}` : ""}`;
     return "Voice local sẵn sàng";
   }, [voice]);
+
+  const wakeHint = useMemo(() => {
+    if (!wake) return "Đang kiểm tra wake runtime";
+    if (!wake.compiled) return "Build chưa bật feature wake-word";
+    if (!wake.available) return wake.detail || "Wake-word model chưa sẵn sàng";
+    if (wake.state === "listening") return "Wake word đang nghe nền";
+    if (wake.state === "suspended") return "Wake word tạm dừng khi Assistant dùng microphone";
+    if (wake.state === "cooldown") return "Wake word đang cooldown";
+    if (wake.state === "error") return wake.detail || "Wake runtime gặp lỗi";
+    return wake.enabled ? "Wake word đang khởi tạo" : "Wake word đang tắt";
+  }, [wake]);
 
   const send = useCallback(
     async (text: string) => {
@@ -170,7 +230,24 @@ export default function App() {
       setVoiceLevel(0);
       await refreshHealth();
       await refreshVoice();
+      await refreshWake();
       setBusy(false);
+    }
+  }
+
+  async function onWakeToggle() {
+    if (!wake?.available || wakeBusy) return;
+    setWakeBusy(true);
+    try {
+      setWake(await setWakeEnabled(!wake.enabled));
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        message("system", `Không thể thay đổi wake word: ${String(error)}`),
+      ]);
+      await refreshWake();
+    } finally {
+      setWakeBusy(false);
     }
   }
 
@@ -188,6 +265,7 @@ export default function App() {
         message("system", `Không thể đọc phản hồi: ${String(error)}`),
       ]);
     } finally {
+      await refreshWake();
       setBusy(false);
     }
   }
@@ -237,8 +315,18 @@ export default function App() {
           <strong>{health?.detail || "Antigravity CLI"}</strong>
           <small>{health?.conversation_id ? `Conversation ${health.conversation_id}` : "Chưa có conversation active"}</small>
           <small className={voiceReady ? "voice-ready" : "voice-warning"}>{voiceHint}</small>
+          <small className={wake?.available ? "wake-ready" : "wake-warning"}>{wakeHint}</small>
         </div>
         <div className="runtime-actions">
+          <button
+            type="button"
+            className={`wake-toggle ${wake?.enabled ? "wake-toggle-on" : ""}`}
+            disabled={!wake?.available || wakeBusy}
+            title={wakeHint}
+            onClick={() => void onWakeToggle()}
+          >
+            Wake {wake?.enabled ? "ON" : "OFF"}
+          </button>
           <button type="button" className="secondary" disabled={busy} onClick={() => void refreshHealth()}>
             Kiểm tra
           </button>
