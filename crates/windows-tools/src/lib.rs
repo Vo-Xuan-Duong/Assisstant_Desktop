@@ -102,6 +102,11 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
         description: "Write text/value into an explicitly inspected Windows UI Automation control.",
     },
     ToolDefinition {
+        name: "ui_set_range_value",
+        risk: ToolRisk::Sensitive,
+        description: "Set a bounded numeric value on an explicitly inspected Windows UI Automation RangeValue control.",
+    },
+    ToolDefinition {
         name: "ui_toggle",
         risk: ToolRisk::Sensitive,
         description: "Toggle an explicitly inspected UI Automation checkbox or switch. The semantic setting change can be consequential.",
