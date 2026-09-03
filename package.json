@@ -1,0 +1,8 @@
+{
+  "name": "assisstant-desktop-workspace",
+  "private": true,
+  "scripts": {
+    "desktop:dev": "pnpm --filter @assisstant/desktop tauri dev",
+    "desktop:build": "pnpm --filter @assisstant/desktop tauri build"
+  }
+}
