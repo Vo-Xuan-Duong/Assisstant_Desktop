@@ -23,10 +23,12 @@ use resource_registry::{ResourceRegistry, ResourceState, RuntimeResourceSnapshot
 use runtime_paths::RuntimePaths;
 use serde::Serialize;
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, State, WindowEvent,
 };
+#[cfg(windows)]
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 use tauri_plugin_global_shortcut::{
     Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
 };
@@ -47,6 +49,8 @@ use voice_runtime::{
 use voice_runtime::wake_runtime::WakeRuntimeEvent;
 use wake_desktop::{WakeService, WakeStatus};
 use windows_tools::window::{self, WindowHandle};
+
+const AUTOSTART_BACKGROUND_ARG: &str = "--background";
 
 #[derive(Clone)]
 struct TauriEventSink {
@@ -443,6 +447,45 @@ fn hide_main_window(app: &AppHandle) {
     }
 }
 
+fn is_background_launch() -> bool {
+    std::env::args().any(|argument| argument == AUTOSTART_BACKGROUND_ARG)
+}
+
+fn autostart_enabled(app: &AppHandle) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        return app
+            .autolaunch()
+            .is_enabled()
+            .map_err(|error| format!("cannot read Windows autostart state: {error}"));
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Ok(false)
+    }
+}
+
+fn set_autostart_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let manager = app.autolaunch();
+        let result = if enabled {
+            manager.enable()
+        } else {
+            manager.disable()
+        };
+        return result.map_err(|error| format!("cannot update Windows autostart state: {error}"));
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (app, enabled);
+        Err("Windows autostart is only available on Windows builds.".to_owned())
+    }
+}
+
 #[cfg(feature = "wake-word")]
 fn setup_wake_events(app: &AppHandle) {
     let wake = app.state::<WakeService>();
@@ -475,16 +518,32 @@ fn setup_wake_events(_app: &AppHandle) {}
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Mở Assistant", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide", "Ẩn cửa sổ", true, None::<&str>)?;
+    let startup = CheckMenuItem::with_id(
+        app,
+        "startup",
+        "Khởi động cùng Windows",
+        cfg!(windows),
+        autostart_enabled(app.handle()).unwrap_or(false),
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "Thoát", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &hide, &startup, &quit])?;
+    let startup_item = startup.clone();
 
     TrayIconBuilder::new()
         .tooltip("Assisstant Desktop")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
+        .on_menu_event(move |app, event| match event.id.as_ref() {
             "show" => show_main_window(app),
             "hide" => hide_main_window(app),
+            "startup" => {
+                let checked = startup_item.is_checked().unwrap_or(false);
+                if let Err(error) = set_autostart_enabled(app, checked) {
+                    warn!(%error, "failed to update Windows autostart from tray");
+                    let _ = startup_item.set_checked(!checked);
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -528,7 +587,21 @@ pub fn run() {
         )
         .try_init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    #[cfg(windows)]
+    let builder = builder
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|argument| argument == AUTOSTART_BACKGROUND_ARG) {
+                show_main_window(app);
+            }
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![AUTOSTART_BACKGROUND_ARG]),
+        ));
+
+    builder
         .setup(|app| {
             let initial_source_window = current_external_window();
             let runtime_paths = RuntimePaths::prepare(app.handle()).map_err(std::io::Error::other)?;
@@ -581,6 +654,9 @@ pub fn run() {
             setup_wake_events(app.handle());
             setup_shortcut(app)?;
             setup_tray(app)?;
+            if is_background_launch() {
+                hide_main_window(app.handle());
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
