@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use permission_broker::{
-    bind_local, BrokerHandle, PermissionRequest, UserDecision,
+    bind_local, BrokerError, BrokerHandle, PermissionRequest, UserDecision,
 };
 use tauri::{AppHandle, Emitter, State};
 use tracing::warn;
@@ -14,9 +14,10 @@ pub struct PermissionDesktopService {
 }
 
 impl PermissionDesktopService {
-    pub fn setup(app: &AppHandle) -> Result<(Self, [(String, String); 2]), String> {
-        let (broker, mut requests) = tauri::async_runtime::block_on(bind_local(CONFIRMATION_TIMEOUT))
-            .map_err(|error| error.to_string())?;
+    pub fn setup(
+        app: &AppHandle,
+    ) -> Result<(Self, [(String, String); 2]), BrokerError> {
+        let (broker, mut requests) = tauri::async_runtime::block_on(bind_local(CONFIRMATION_TIMEOUT))?;
         let environment = broker.endpoint().environment();
 
         let app_handle = app.clone();
