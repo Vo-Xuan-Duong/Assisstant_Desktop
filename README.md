@@ -8,10 +8,10 @@ The project is developed phase-by-phase: each subsystem is given a stable contra
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 11A — UI Automation VirtualizedItem**
-- **Current development branch:** `phase/11b-window-management`
-- **Current phase:** Phase 11B — explicit window management
-- **Latest completed `main` commit:** `26c4d4853cbab1343c6163cb6a90600ef1cbe06c`
+- **Latest completed phase on `main`: Phase 11B — Window Management**
+- **Current development branch:** `phase/11c-window-discovery-activation`
+- **Current phase:** Phase 11C — Window Discovery & Activation
+- **Latest completed `main` commit:** `75826887e479e9276d4329ab4cae23a507ae95f8`
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
@@ -97,7 +97,8 @@ Wake word / Hotkey / Text
 | 10D — ScrollItem MCP | ✅ | `ui_scroll_into_view` through permission gateway |
 | 10E — MCP Router Modularization | ✅ | System/UI routers split without public contract changes |
 | 11A — VirtualizedItem | ✅ | Status + semantic `Realize()` with mandatory reinspection |
-| **11B — Window Management** | **🚧** | Minimize/maximize/restore + graceful close with stale-HWND guard |
+| 11B — Window Management | ✅ | Minimize/maximize/restore + graceful close with stale-HWND guard |
+| **11C — Window Discovery & Activation** | **🚧** | Bounded top-level window discovery + explicit foreground activation |
 
 ## Recent merge points
 
@@ -120,6 +121,7 @@ Phase 10C  c60382b...  Grid/GridItem + ScrollItem native
 Phase 10D  0760aeb...  ScrollItem MCP
 Phase 10E  9ad37fb...  MCP router modularization
 Phase 11A  26c4d48...  VirtualizedItem support
+Phase 11B  7582688...  Explicit window management
 ```
 
 ## Current Windows/MCP capability surface
@@ -132,6 +134,10 @@ Phase 11A  26c4d48...  VirtualizedItem support
 - `apps_open`
 - `apps_list`
 - `window_get_active`
+- `window_list` *(Phase 11C, in development)*
+- `window_activate` *(Phase 11C, in development)*
+- `window_set_state`
+- `window_close`
 - `system_get_info`
 - `media_play_pause`
 - `media_next`
@@ -156,21 +162,9 @@ Phase 11A  26c4d48...  VirtualizedItem support
 
 The UI Automation layer uses **explicit HWND + semantic element path** instead of pixel coordinates. Mutation tools resolve the element again immediately before execution and fail when the path is stale.
 
-## Phase 11B — Window Management
+## Window control contract
 
-The current branch adds explicit top-level window control:
-
-```text
-window_set_state
-  ├─ minimize
-  ├─ maximize
-  └─ restore
-
-window_close
-  └─ graceful WM_CLOSE
-```
-
-Every mutation requires:
+Window actions use an explicit identity pair:
 
 ```text
 window_handle
@@ -178,16 +172,42 @@ window_handle
 expected_process_id
 ```
 
-The process ID is checked again immediately before the Win32 action. This prevents a recycled HWND from silently retargeting a different process.
+The process ID is checked again immediately before mutation. This prevents a recycled HWND from silently retargeting a different process.
 
-`window_close` is a graceful close request only. It does **not** terminate or kill the owning process and therefore preserves normal application behavior such as unsaved-changes dialogs.
-
-Risk model:
+Current risk model:
 
 ```text
+window_list       → Safe
+window_activate   → Moderate
 window_set_state  → Moderate
 window_close      → Sensitive
 ```
+
+`window_close` posts `WM_CLOSE`; it does **not** terminate the process and preserves normal unsaved-changes/application shutdown behavior.
+
+## Phase 11C — Window Discovery & Activation
+
+The current branch adds:
+
+```text
+window_list
+    ↓
+visible titled top-level windows
+    ↓
+HWND + PID + title + executable + minimized + foreground
+
+window_activate(HWND, expected PID)
+    ↓
+validate current HWND owner
+    ↓
+restore if minimized
+    ↓
+SetForegroundWindow
+```
+
+`window_list` returns a bounded payload (default 80, hard maximum 200). The Win32 enumeration itself completes normally even after the payload cap is reached, avoiding false `EnumWindows` failure semantics.
+
+If Windows refuses `SetForegroundWindow` because of focus-stealing restrictions, the operation reports that refusal. The assistant does not fall back to Alt+Tab, synthetic keyboard input, or mouse clicks.
 
 ## Permission model
 
@@ -271,7 +291,7 @@ Screenshots are captured only when the user request needs screen context. Local 
 
 ## Next direction
 
-After Phase 11B is merged, development will continue with additional bounded Windows-assistant capabilities while preserving the same explicit-target and permission contracts. Raw mouse/keyboard automation remains deferred until semantic APIs are exhausted and a separate safety design is in place.
+After Phase 11C is locked, the next Windows-assistant capability will be selected as another bounded semantic phase. Raw mouse/keyboard automation remains deferred until semantic APIs are exhausted and a separate safety design is in place.
 
 ## Documentation
 
@@ -288,3 +308,4 @@ Key design documents live under [`docs/`](docs/), including:
 - [`docs/MCP_ROUTER_MODULARIZATION.md`](docs/MCP_ROUTER_MODULARIZATION.md)
 - [`docs/UI_AUTOMATION_VIRTUALIZED_ITEM.md`](docs/UI_AUTOMATION_VIRTUALIZED_ITEM.md)
 - [`docs/WINDOW_MANAGEMENT.md`](docs/WINDOW_MANAGEMENT.md)
+- [`docs/WINDOW_DISCOVERY_ACTIVATION.md`](docs/WINDOW_DISCOVERY_ACTIVATION.md)
