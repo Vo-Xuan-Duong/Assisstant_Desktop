@@ -30,6 +30,7 @@ pub struct RuntimeResourceStatus {
     pub root_path: String,
     pub detail: String,
     pub files: Vec<ResourceFileStatus>,
+    pub preparation_files: Vec<ResourceFileStatus>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,6 +43,7 @@ pub struct ResourceRegistry {
     whisper_model: PathBuf,
     wake_model_dir: PathBuf,
     wake_keywords: PathBuf,
+    wake_bpe_model: PathBuf,
 }
 
 impl ResourceRegistry {
@@ -61,11 +63,13 @@ impl ResourceRegistry {
             "ASSISTANT_WAKE_KEYWORDS",
             wake_model_dir.join("keywords.txt"),
         )?;
+        let wake_bpe_model = wake_model_dir.join("bpe.model");
 
         Ok(Self {
             whisper_model,
             wake_model_dir,
             wake_keywords,
+            wake_bpe_model,
         })
     }
 
@@ -79,6 +83,14 @@ impl ResourceRegistry {
 
     pub fn wake_keywords_path(&self) -> &Path {
         &self.wake_keywords
+    }
+
+    pub fn wake_bpe_model_path(&self) -> &Path {
+        &self.wake_bpe_model
+    }
+
+    pub fn wake_tokens_path(&self) -> PathBuf {
+        self.wake_model_dir.join("tokens.txt")
     }
 
     pub fn snapshot(&self) -> RuntimeResourceSnapshot {
@@ -120,6 +132,7 @@ impl ResourceRegistry {
                 path: self.whisper_model.display().to_string(),
                 exists,
             }],
+            preparation_files: Vec::new(),
         }
     }
 
@@ -154,12 +167,13 @@ impl ResourceRegistry {
                 ResourceState::Ready => "Sherpa wake-word model và keywords đều sẵn sàng.".into(),
                 ResourceState::Missing => "Chưa có wake-word resource nào tại model directory đã resolve.".into(),
                 ResourceState::Incomplete => format!(
-                    "Wake-word resources chưa đầy đủ: {present}/{} file đã có.",
+                    "Wake-word resources chưa đầy đủ: {present}/{} runtime file đã có.",
                     files.len()
                 ),
                 ResourceState::NotCompiled => "Build chưa bật feature `wake-word`; registry vẫn hiển thị layout để có thể chuẩn bị resource trước.".into(),
             },
             files,
+            preparation_files: vec![file_status("bpe_model", &self.wake_bpe_model)],
         }
     }
 }
