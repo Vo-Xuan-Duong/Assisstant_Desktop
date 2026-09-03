@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Mutex,
     time::Duration,
 };
@@ -204,8 +204,7 @@ impl WakeService {
 
         #[cfg(feature = "wake-word")]
         {
-            let handle = self.current_handle();
-            if let Some(handle) = handle {
+            if let Some(handle) = self.current_handle() {
                 let state = handle.state();
                 return WakeStatus {
                     compiled: true,
@@ -261,7 +260,8 @@ impl WakeService {
         {
             let handle = self.current_handle().ok_or_else(|| self.unavailable_message())?;
             handle.set_enabled(enabled).await?;
-            self.update_preferences(|preferences| preferences.enabled = enabled)?;
+            let persist = self.update_preferences(|preferences| preferences.enabled = enabled);
+            self.record_persistence_result(persist);
             return Ok(());
         }
 
@@ -304,10 +304,8 @@ impl WakeService {
             *slot = Some(handle);
         }
 
-        self.update_preferences(|preferences| preferences.phrase = Some(phrase))?;
-        if let Ok(mut detail) = self.detail.lock() {
-            *detail = None;
-        }
+        let persist = self.update_preferences(|preferences| preferences.phrase = Some(phrase));
+        self.record_persistence_result(persist);
         Ok(())
     }
 
@@ -377,6 +375,14 @@ impl WakeService {
             preferences.clone()
         };
         self.settings.save(&next)
+    }
+
+    fn record_persistence_result(&self, result: Result<(), String>) {
+        if let Ok(mut detail) = self.detail.lock() {
+            *detail = result
+                .err()
+                .map(|error| format!("Wake runtime updated, but settings persistence failed: {error}"));
+        }
     }
 
     fn unavailable_message(&self) -> String {
