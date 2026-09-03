@@ -142,32 +142,30 @@ impl ResourceInstaller {
             Ok(value) => value,
             Err(error) => {
                 let _ = fs::remove_file(&part).await;
-                emit_progress(
-                    app,
-                    manifest.id,
-                    "failed",
-                    0,
-                    manifest.expected_bytes,
-                    error.clone(),
-                );
+                emit_failed(app, manifest, error.clone());
                 return Err(error);
             }
         };
 
         if destination.exists() {
             let _ = fs::remove_file(&part).await;
-            return Err(format!(
+            let error = format!(
                 "destination appeared while download was running; refusing to overwrite: {}",
                 destination.display()
-            ));
+            );
+            emit_failed(app, manifest, error.clone());
+            return Err(error);
         }
 
-        fs::rename(&part, destination)
-            .await
-            .map_err(|error| {
-                let path = destination.display();
-                format!("verified download could not be atomically installed at {path}: {error}")
-            })?;
+        if let Err(error) = fs::rename(&part, destination).await {
+            let _ = fs::remove_file(&part).await;
+            let message = format!(
+                "verified download could not be atomically installed at {}: {error}",
+                destination.display()
+            );
+            emit_failed(app, manifest, message.clone());
+            return Err(message);
+        }
 
         emit_progress(
             app,
@@ -294,6 +292,17 @@ impl ResourceInstaller {
 
         Ok((downloaded, actual_sha256))
     }
+}
+
+fn emit_failed(app: &AppHandle, manifest: &ResourceInstallManifest, message: String) {
+    emit_progress(
+        app,
+        manifest.id,
+        "failed",
+        0,
+        manifest.expected_bytes,
+        message,
+    );
 }
 
 fn emit_progress(
