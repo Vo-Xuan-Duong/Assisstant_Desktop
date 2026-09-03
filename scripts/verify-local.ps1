@@ -10,6 +10,7 @@ $DesktopDir = Join-Path $RepoRoot "apps\desktop"
 $TauriDir = Join-Path $DesktopDir "src-tauri"
 $BundleIdentifier = "com.voduong.assisstantdesktop"
 $AppLocalData = Join-Path $env:LOCALAPPDATA $BundleIdentifier
+$IsWindowsHost = $env:OS -eq "Windows_NT"
 
 $Results = [System.Collections.Generic.List[object]]::new()
 
@@ -55,7 +56,7 @@ function Get-CommandInfo {
     return $command
 }
 
-if (-not $IsWindows) {
+if (-not $IsWindowsHost) {
     Add-Result "platform" "blocking" "Verification harness này chỉ hỗ trợ Windows."
 }
 else {
