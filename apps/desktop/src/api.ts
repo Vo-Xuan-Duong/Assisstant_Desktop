@@ -6,6 +6,8 @@ import type {
   RuntimeHealth,
   VoiceCapabilities,
   VoiceTurnResult,
+  WakeRuntimeEvent,
+  WakeStatus,
 } from "./types";
 
 export function getRuntimeHealth(): Promise<RuntimeHealth> {
@@ -28,6 +30,14 @@ export function speakText(text: string): Promise<void> {
   return invoke<void>("assistant_speak", { text });
 }
 
+export function getWakeStatus(): Promise<WakeStatus> {
+  return invoke<WakeStatus>("assistant_wake_status");
+}
+
+export function setWakeEnabled(enabled: boolean): Promise<WakeStatus> {
+  return invoke<WakeStatus>("assistant_wake_set_enabled", { enabled });
+}
+
 export function restartRuntime(): Promise<void> {
   return invoke<void>("assistant_restart");
 }
@@ -46,4 +56,10 @@ export function onVoiceLevel(
   handler: (level: AudioLevel) => void,
 ): Promise<UnlistenFn> {
   return listen<AudioLevel>("voice:level", ({ payload }) => handler(payload));
+}
+
+export function onWakeEvent(
+  handler: (event: WakeRuntimeEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<WakeRuntimeEvent>("wake:event", ({ payload }) => handler(payload));
 }

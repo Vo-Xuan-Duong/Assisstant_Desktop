@@ -9,6 +9,7 @@ repository.workspace = true
 [features]
 default = []
 voice-whisper = ["voice-runtime/whisper"]
+wake-word = ["voice-runtime/wake-sherpa"]
 
 [lib]
 name = "assisstant_desktop_lib"
