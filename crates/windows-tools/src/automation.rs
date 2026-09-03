@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use windows::{
     core::{Error as WindowsError, Interface},
     Win32::{
@@ -8,7 +8,11 @@ use windows::{
         },
         UI::Accessibility::{
             CUIAutomation, IUIAutomation, IUIAutomationCondition, IUIAutomationElement,
-            IUIAutomationInvokePattern, IUIAutomationValuePattern, TreeScope_Children,
+            IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
+            IUIAutomationScrollPattern, IUIAutomationSelectionItemPattern,
+            IUIAutomationTogglePattern, IUIAutomationValuePattern, ScrollAmount,
+            ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement, ScrollAmount_NoAmount,
+            ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement, TreeScope_Children,
             UIA_InvokePatternId, UIA_ValuePatternId,
         },
     },
@@ -20,6 +24,14 @@ const DEFAULT_MAX_DEPTH: u32 = 4;
 const DEFAULT_MAX_NODES: usize = 160;
 const HARD_MAX_DEPTH: u32 = 8;
 const HARD_MAX_NODES: usize = 500;
+
+// Microsoft UI Automation control-pattern identifiers. Keeping these local avoids
+// coupling pattern support to generated constant availability while matching the
+// stable UIAutomationClient.h values.
+const UIA_SCROLL_PATTERN_ID: i32 = 10004;
+const UIA_EXPAND_COLLAPSE_PATTERN_ID: i32 = 10005;
+const UIA_SELECTION_ITEM_PATTERN_ID: i32 = 10010;
+const UIA_TOGGLE_PATTERN_ID: i32 = 10015;
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct UiRect {
@@ -36,6 +48,36 @@ impl From<RECT> for UiRect {
             top: value.top,
             right: value.right,
             bottom: value.bottom,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct UiScrollSnapshot {
+    pub horizontally_scrollable: bool,
+    pub vertically_scrollable: bool,
+    pub horizontal_percent: f64,
+    pub vertical_percent: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiScrollAmount {
+    LargeDecrement,
+    SmallDecrement,
+    None,
+    LargeIncrement,
+    SmallIncrement,
+}
+
+impl UiScrollAmount {
+    fn native(self) -> ScrollAmount {
+        match self {
+            Self::LargeDecrement => ScrollAmount_LargeDecrement,
+            Self::SmallDecrement => ScrollAmount_SmallDecrement,
+            Self::None => ScrollAmount_NoAmount,
+            Self::LargeIncrement => ScrollAmount_LargeIncrement,
+            Self::SmallIncrement => ScrollAmount_SmallIncrement,
         }
     }
 }
@@ -59,6 +101,10 @@ pub struct UiElementSnapshot {
     pub bounds: Option<UiRect>,
     pub supports_invoke: bool,
     pub supports_value: bool,
+    pub toggle_state: Option<i32>,
+    pub is_selected: Option<bool>,
+    pub expand_collapse_state: Option<i32>,
+    pub scroll: Option<UiScrollSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -157,10 +203,7 @@ pub fn focus(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
 pub fn invoke(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
     let client = AutomationClient::new(handle)?;
     let element = client.resolve(path)?;
-    let pattern = unsafe { element.GetCurrentPattern(UIA_InvokePatternId)? };
-    let pattern: IUIAutomationInvokePattern = pattern
-        .cast()
-        .map_err(|_| ToolError::Unsupported("element does not expose InvokePattern".into()))?;
+    let pattern = get_pattern::<IUIAutomationInvokePattern>(&element, UIA_InvokePatternId, "InvokePattern")?;
     unsafe { pattern.Invoke()? };
     Ok(())
 }
@@ -175,10 +218,7 @@ pub fn set_value(handle: WindowHandle, path: &[u32], value: &str) -> ToolResult<
 
     let client = AutomationClient::new(handle)?;
     let element = client.resolve(path)?;
-    let pattern = unsafe { element.GetCurrentPattern(UIA_ValuePatternId)? };
-    let pattern: IUIAutomationValuePattern = pattern
-        .cast()
-        .map_err(|_| ToolError::Unsupported("element does not expose ValuePattern".into()))?;
+    let pattern = get_pattern::<IUIAutomationValuePattern>(&element, UIA_ValuePatternId, "ValuePattern")?;
 
     let read_only = unsafe { pattern.CurrentIsReadOnly()? }.as_bool();
     if read_only {
@@ -189,6 +229,76 @@ pub fn set_value(handle: WindowHandle, path: &[u32], value: &str) -> ToolResult<
 
     let value = windows::core::BSTR::from(value);
     unsafe { pattern.SetValue(&value)? };
+    Ok(())
+}
+
+/// Toggle a checkbox/switch-like element using UIA TogglePattern.
+pub fn toggle(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
+    let client = AutomationClient::new(handle)?;
+    let element = client.resolve(path)?;
+    let pattern = get_pattern::<IUIAutomationTogglePattern>(
+        &element,
+        UIA_TOGGLE_PATTERN_ID,
+        "TogglePattern",
+    )?;
+    unsafe { pattern.Toggle()? };
+    Ok(())
+}
+
+/// Select one item using UIA SelectionItemPattern. This intentionally uses
+/// `Select` rather than additive selection in the first public contract.
+pub fn select(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
+    let client = AutomationClient::new(handle)?;
+    let element = client.resolve(path)?;
+    let pattern = get_pattern::<IUIAutomationSelectionItemPattern>(
+        &element,
+        UIA_SELECTION_ITEM_PATTERN_ID,
+        "SelectionItemPattern",
+    )?;
+    unsafe { pattern.Select()? };
+    Ok(())
+}
+
+/// Expand or collapse an element through UIA ExpandCollapsePattern.
+pub fn set_expanded(handle: WindowHandle, path: &[u32], expanded: bool) -> ToolResult<()> {
+    let client = AutomationClient::new(handle)?;
+    let element = client.resolve(path)?;
+    let pattern = get_pattern::<IUIAutomationExpandCollapsePattern>(
+        &element,
+        UIA_EXPAND_COLLAPSE_PATTERN_ID,
+        "ExpandCollapsePattern",
+    )?;
+    unsafe {
+        if expanded {
+            pattern.Expand()?;
+        } else {
+            pattern.Collapse()?;
+        }
+    }
+    Ok(())
+}
+
+/// Scroll a UIA scroll container by discrete horizontal/vertical amounts.
+pub fn scroll(
+    handle: WindowHandle,
+    path: &[u32],
+    horizontal: UiScrollAmount,
+    vertical: UiScrollAmount,
+) -> ToolResult<()> {
+    if matches!(horizontal, UiScrollAmount::None) && matches!(vertical, UiScrollAmount::None) {
+        return Err(ToolError::InvalidArgument(
+            "at least one scroll axis must request a non-none amount".into(),
+        ));
+    }
+
+    let client = AutomationClient::new(handle)?;
+    let element = client.resolve(path)?;
+    let pattern = get_pattern::<IUIAutomationScrollPattern>(
+        &element,
+        UIA_SCROLL_PATTERN_ID,
+        "ScrollPattern",
+    )?;
+    unsafe { pattern.Scroll(horizontal.native(), vertical.native())? };
     Ok(())
 }
 
@@ -291,13 +401,49 @@ fn snapshot_element(
             .map(UiRect::from),
         supports_invoke: supports_pattern::<IUIAutomationInvokePattern>(element, UIA_InvokePatternId),
         supports_value: supports_pattern::<IUIAutomationValuePattern>(element, UIA_ValuePatternId),
+        toggle_state: pattern::<IUIAutomationTogglePattern>(element, UIA_TOGGLE_PATTERN_ID)
+            .and_then(|pattern| unsafe { pattern.CurrentToggleState().ok() }),
+        is_selected: pattern::<IUIAutomationSelectionItemPattern>(element, UIA_SELECTION_ITEM_PATTERN_ID)
+            .and_then(|pattern| unsafe { pattern.CurrentIsSelected().ok() })
+            .map(|value| value.as_bool()),
+        expand_collapse_state: pattern::<IUIAutomationExpandCollapsePattern>(
+            element,
+            UIA_EXPAND_COLLAPSE_PATTERN_ID,
+        )
+        .and_then(|pattern| unsafe { pattern.CurrentExpandCollapseState().ok() }),
+        scroll: pattern::<IUIAutomationScrollPattern>(element, UIA_SCROLL_PATTERN_ID)
+            .map(|pattern| UiScrollSnapshot {
+                horizontally_scrollable: unsafe { pattern.CurrentHorizontallyScrollable() }
+                    .map(|value| value.as_bool())
+                    .unwrap_or(false),
+                vertically_scrollable: unsafe { pattern.CurrentVerticallyScrollable() }
+                    .map(|value| value.as_bool())
+                    .unwrap_or(false),
+                horizontal_percent: unsafe { pattern.CurrentHorizontalScrollPercent() }
+                    .unwrap_or(-1.0),
+                vertical_percent: unsafe { pattern.CurrentVerticalScrollPercent() }
+                    .unwrap_or(-1.0),
+            }),
     }
 }
 
-fn supports_pattern<T: Interface>(element: &IUIAutomationElement, pattern_id: i32) -> bool {
+fn pattern<T: Interface>(element: &IUIAutomationElement, pattern_id: i32) -> Option<T> {
     unsafe { element.GetCurrentPattern(pattern_id) }
-        .and_then(|pattern| pattern.cast::<T>())
-        .is_ok()
+        .ok()
+        .and_then(|pattern| pattern.cast::<T>().ok())
+}
+
+fn get_pattern<T: Interface>(
+    element: &IUIAutomationElement,
+    pattern_id: i32,
+    name: &str,
+) -> ToolResult<T> {
+    pattern::<T>(element, pattern_id)
+        .ok_or_else(|| ToolError::Unsupported(format!("element does not expose {name}")))
+}
+
+fn supports_pattern<T: Interface>(element: &IUIAutomationElement, pattern_id: i32) -> bool {
+    pattern::<T>(element, pattern_id).is_some()
 }
 
 fn bstr_or_default(
