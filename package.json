@@ -5,10 +5,13 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
-    "desktop:dev": "pnpm --filter @assisstant/desktop tauri dev",
-    "desktop:build": "pnpm --filter @assisstant/desktop tauri build",
+    "desktop:assets:prepare": "powershell -ExecutionPolicy Bypass -File .\\scripts\\prepare-release.ps1 -AssetsOnly",
+    "desktop:dev": "pnpm desktop:assets:prepare && pnpm --filter @assisstant/desktop tauri dev",
+    "desktop:build": "pnpm desktop:assets:prepare && pnpm --filter @assisstant/desktop tauri build",
+    "desktop:release:prepare": "powershell -ExecutionPolicy Bypass -File .\\scripts\\prepare-release.ps1",
     "desktop:release:verify": "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-release.ps1",
     "desktop:release:verify:public": "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-release.ps1 -PublicRelease",
-    "desktop:release:build": "pnpm --filter @assisstant/desktop tauri build"
+    "desktop:release:build": "pnpm desktop:assets:prepare && pnpm desktop:release:verify && pnpm --filter @assisstant/desktop tauri build",
+    "desktop:release:build:public": "pnpm desktop:assets:prepare && pnpm desktop:release:verify:public && pnpm --filter @assisstant/desktop tauri build --config src-tauri/tauri.windows.signed.conf.json"
   }
 }
