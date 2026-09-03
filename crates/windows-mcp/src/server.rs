@@ -75,6 +75,17 @@ pub struct UiSetValueInput {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct UiSetRangeValueInput {
+    /// Exact root HWND returned by `ui_inspect`.
+    pub window_handle: i64,
+    /// Child-index path returned by the most recent `ui_inspect` snapshot.
+    pub path: Vec<u32>,
+    /// Desired finite numeric value. Inspect `range_value` first and keep the
+    /// value within its reported minimum/maximum bounds.
+    pub value: f64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UiSetExpandedInput {
     /// Exact root HWND returned by `ui_inspect`.
     pub window_handle: i64,
@@ -345,7 +356,7 @@ impl WindowsMcpServer {
 
     #[tool(
         name = "ui_inspect",
-        description = "Inspect the Windows UI Automation Control View for a window. When Desktop Context provides active_window_handle for the user's referenced app, pass it explicitly; only omit window_handle when the actual foreground window is intentionally the target. Returns structural metadata, root_window_handle, child-index paths, and available pattern state (toggle/selection/expand/scroll) without reading editable field values. Use this before any UI action and inspect again if a path becomes stale."
+        description = "Inspect the Windows UI Automation Control View for a window. When Desktop Context provides active_window_handle for the user's referenced app, pass it explicitly; only omit window_handle when the actual foreground window is intentionally the target. Returns structural metadata, root_window_handle, child-index paths, and available pattern state (range/toggle/selection/expand/scroll) without reading arbitrary editable field values. Use this before any UI action and inspect again if a path becomes stale."
     )]
     async fn ui_inspect(
         &self,
@@ -465,6 +476,43 @@ impl WindowsMcpServer {
             let window_before_action = window::get(handle).map_err(tool_error)?;
             automation::set_value(handle, &path, &value).map_err(tool_error)?;
             Ok(action_result(window_before_action, result_path, "set_value"))
+        })
+        .await?;
+        to_json(&result)
+    }
+
+    #[tool(
+        name = "ui_set_range_value",
+        description = "Set a bounded numeric value on an element from a recent ui_inspect snapshot using writable Windows UI Automation RangeValuePattern. Inspect first and use range_value.minimum, maximum and read_only. Pass the exact inspected root_window_handle and path; inspect again if stale. Sensitive actions require desktop confirmation."
+    )]
+    async fn ui_set_range_value(
+        &self,
+        Parameters(UiSetRangeValueInput {
+            window_handle,
+            path,
+            value,
+        }): Parameters<UiSetRangeValueInput>,
+    ) -> Result<String, String> {
+        self.permissions
+            .authorize(
+                "ui_set_range_value",
+                json!({
+                    "window_handle": window_handle,
+                    "path": &path,
+                    "value": value,
+                }),
+            )
+            .await?;
+        let handle = explicit_window_handle(window_handle)?;
+        let result_path = path.clone();
+        let result = run_blocking(move || {
+            let window_before_action = window::get(handle).map_err(tool_error)?;
+            automation::set_range_value(handle, &path, value).map_err(tool_error)?;
+            Ok(action_result(
+                window_before_action,
+                result_path,
+                "set_range_value",
+            ))
         })
         .await?;
         to_json(&result)
