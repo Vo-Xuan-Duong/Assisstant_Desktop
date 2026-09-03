@@ -27,8 +27,16 @@ const quickPrompts = [
   "Máy đang dùng bao nhiêu RAM?",
 ];
 
+const WAKE_TO_COMMAND_DELAY_MS = 180;
+
+type VoiceTurnOrigin = "manual" | "wake";
+
 function message(role: ChatMessage["role"], text: string): ChatMessage {
   return { id: crypto.randomUUID(), role, text };
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 export default function App() {
@@ -44,6 +52,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [wakeBusy, setWakeBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const busyRef = useRef(false);
+  const voiceReadyRef = useRef(false);
 
   const refreshHealth = useCallback(async () => {
     try {
@@ -75,10 +85,91 @@ export default function App() {
     }
   }, []);
 
+  const voiceReady = Boolean(voice?.whisper_compiled && voice.model_available);
+  const voiceHint = useMemo(() => {
+    if (!voice) return "Đang kiểm tra voice runtime";
+    if (!voice.whisper_compiled) return "Build chưa bật feature voice-whisper";
+    if (!voice.model_available) return `Thiếu Whisper model${voice.model_path ? `: ${voice.model_path}` : ""}`;
+    return "Voice local sẵn sàng";
+  }, [voice]);
+
+  const wakeHint = useMemo(() => {
+    if (!wake) return "Đang kiểm tra wake runtime";
+    if (!wake.compiled) return "Build chưa bật feature wake-word";
+    if (!wake.available) return wake.detail || "Wake-word model chưa sẵn sàng";
+    if (wake.state === "listening") return voiceReady ? "Wake word đang nghe nền · auto voice turn" : "Wake word đang nghe nền";
+    if (wake.state === "suspended") return "Wake word tạm dừng khi Assistant dùng microphone";
+    if (wake.state === "cooldown") return "Wake word đang cooldown";
+    if (wake.state === "error") return wake.detail || "Wake runtime gặp lỗi";
+    return wake.enabled ? "Wake word đang khởi tạo" : "Wake word đang tắt";
+  }, [voiceReady, wake]);
+
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
+
+  useEffect(() => {
+    voiceReadyRef.current = voiceReady;
+  }, [voiceReady]);
+
+  const performVoiceTurn = useCallback(
+    async (origin: VoiceTurnOrigin) => {
+      if (busyRef.current) return;
+      if (!voiceReadyRef.current) {
+        if (origin === "wake") {
+          setMessages((current) => [
+            ...current,
+            message("system", "Wake word đã kích hoạt nhưng Whisper voice chưa sẵn sàng."),
+          ]);
+        }
+        return;
+      }
+
+      busyRef.current = true;
+      setBusy(true);
+      setVoiceLevel(0);
+
+      if (origin === "wake") {
+        await delay(WAKE_TO_COMMAND_DELAY_MS);
+      }
+
+      try {
+        const result = await runVoiceTurn();
+        setMessages((current) => [
+          ...current,
+          message("user", result.transcript),
+          message("assistant", result.response),
+          ...(result.tts_error
+            ? [message("system", `TTS không thể phát phản hồi: ${result.tts_error}`)]
+            : []),
+        ]);
+      } catch (error) {
+        setMessages((current) => [
+          ...current,
+          message(
+            "system",
+            `${origin === "wake" ? "Wake voice turn" : "Voice turn"} thất bại: ${String(error)}`,
+          ),
+        ]);
+      } finally {
+        setVoiceLevel(0);
+        await refreshHealth();
+        await refreshVoice();
+        await refreshWake();
+        busyRef.current = false;
+        setBusy(false);
+      }
+    },
+    [refreshHealth, refreshVoice, refreshWake],
+  );
+
   useEffect(() => {
     void refreshHealth();
     void refreshVoice();
     void refreshWake();
+  }, [refreshHealth, refreshVoice, refreshWake]);
+
+  useEffect(() => {
     let disposed = false;
     let unsubscribeAssistant: (() => void) | undefined;
     let unsubscribeLevel: (() => void) | undefined;
@@ -119,10 +210,10 @@ export default function App() {
         );
       }
       if (event.type === "detected") {
-        setMessages((current) => [
-          ...current,
-          message("system", `Wake word phát hiện: ${event.detection.keyword}`),
-        ]);
+        // The hidden main WebView remains alive while the app is in the tray, so
+        // it can start the exact same backend voice-turn command used by the Mic
+        // button. No second wake-specific STT/AI pipeline is introduced.
+        void performVoiceTurn("wake");
       }
       if (event.type === "error") {
         setWake((current) => (current ? { ...current, state: "error", detail: event.message } : current));
@@ -138,7 +229,7 @@ export default function App() {
       unsubscribeLevel?.();
       unsubscribeWake?.();
     };
-  }, [refreshHealth, refreshVoice, refreshWake]);
+  }, [performVoiceTurn]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -156,32 +247,14 @@ export default function App() {
     return "Sẵn sàng";
   }, [assistantState, health]);
 
-  const voiceReady = Boolean(voice?.whisper_compiled && voice.model_available);
-  const voiceHint = useMemo(() => {
-    if (!voice) return "Đang kiểm tra voice runtime";
-    if (!voice.whisper_compiled) return "Build chưa bật feature voice-whisper";
-    if (!voice.model_available) return `Thiếu Whisper model${voice.model_path ? `: ${voice.model_path}` : ""}`;
-    return "Voice local sẵn sàng";
-  }, [voice]);
-
-  const wakeHint = useMemo(() => {
-    if (!wake) return "Đang kiểm tra wake runtime";
-    if (!wake.compiled) return "Build chưa bật feature wake-word";
-    if (!wake.available) return wake.detail || "Wake-word model chưa sẵn sàng";
-    if (wake.state === "listening") return "Wake word đang nghe nền";
-    if (wake.state === "suspended") return "Wake word tạm dừng khi Assistant dùng microphone";
-    if (wake.state === "cooldown") return "Wake word đang cooldown";
-    if (wake.state === "error") return wake.detail || "Wake runtime gặp lỗi";
-    return wake.enabled ? "Wake word đang khởi tạo" : "Wake word đang tắt";
-  }, [wake]);
-
   const send = useCallback(
     async (text: string) => {
       const prompt = text.trim();
-      if (!prompt || busy) return;
+      if (!prompt || busyRef.current) return;
 
       setMessages((current) => [...current, message("user", prompt)]);
       setInput("");
+      busyRef.current = true;
       setBusy(true);
 
       try {
@@ -195,44 +268,16 @@ export default function App() {
         ]);
         await refreshHealth();
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     },
-    [busy, refreshHealth],
+    [refreshHealth],
   );
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     await send(input);
-  }
-
-  async function onVoiceTurn() {
-    if (busy || !voiceReady) return;
-    setBusy(true);
-    setVoiceLevel(0);
-
-    try {
-      const result = await runVoiceTurn();
-      setMessages((current) => [
-        ...current,
-        message("user", result.transcript),
-        message("assistant", result.response),
-        ...(result.tts_error
-          ? [message("system", `TTS không thể phát phản hồi: ${result.tts_error}`)]
-          : []),
-      ]);
-    } catch (error) {
-      setMessages((current) => [
-        ...current,
-        message("system", `Voice turn thất bại: ${String(error)}`),
-      ]);
-    } finally {
-      setVoiceLevel(0);
-      await refreshHealth();
-      await refreshVoice();
-      await refreshWake();
-      setBusy(false);
-    }
   }
 
   async function onWakeToggle() {
@@ -252,10 +297,11 @@ export default function App() {
   }
 
   async function onSpeakLast() {
-    if (busy || !voice?.tts_available) return;
+    if (busyRef.current || !voice?.tts_available) return;
     const lastAssistant = [...messages].reverse().find((item) => item.role === "assistant");
     if (!lastAssistant) return;
 
+    busyRef.current = true;
     setBusy(true);
     try {
       await speakText(lastAssistant.text);
@@ -266,11 +312,14 @@ export default function App() {
       ]);
     } finally {
       await refreshWake();
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
   async function onRestart() {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await restartRuntime();
@@ -280,11 +329,14 @@ export default function App() {
       setMessages((current) => [...current, message("system", `Restart thất bại: ${String(error)}`)]);
     } finally {
       await refreshHealth();
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
   async function onNewConversation() {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await resetConversation();
@@ -292,6 +344,7 @@ export default function App() {
       setMessages([message("system", "Đã tạo phiên hội thoại mới.")]);
     } finally {
       await refreshHealth();
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -391,7 +444,7 @@ export default function App() {
             title={voiceHint}
             aria-label="Bắt đầu voice turn"
             disabled={busy || !voiceReady}
-            onClick={() => void onVoiceTurn()}
+            onClick={() => void performVoiceTurn("manual")}
           >
             Mic
           </button>
@@ -402,7 +455,7 @@ export default function App() {
       </form>
 
       <footer>
-        <span>Alt + Space để mở Assistant</span>
+        <span>Alt + Space hoặc wake word để gọi Assistant</span>
         <button
           type="button"
           className="footer-action"
