@@ -1,8 +1,15 @@
-use std::{path::PathBuf, process::Stdio};
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    process::Stdio,
+    sync::Arc,
+};
 
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStdin, ChildStdout, Command},
+    sync::{broadcast, Mutex},
+    task::JoinHandle,
 };
 use tracing::{debug, warn};
 
@@ -10,6 +17,8 @@ use crate::{
     protocol::{ResultPayload, StreamEvent, UserInputEvent},
     BridgeError,
 };
+
+const MAX_DIAGNOSTIC_LINES: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct AntigravityConfig {
@@ -42,7 +51,7 @@ impl AntigravityConfig {
             .arg("stream-json")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
 
         if let Some(model) = &self.model {
@@ -74,19 +83,56 @@ pub struct AntigravitySession {
     stdin: ChildStdin,
     stdout: Lines<BufReader<ChildStdout>>,
     conversation_id: Option<String>,
+    diagnostics: Arc<Mutex<VecDeque<String>>>,
+    events: Option<broadcast::Sender<StreamEvent>>,
+    stderr_task: JoinHandle<()>,
 }
 
 impl AntigravitySession {
     pub async fn spawn(config: &AntigravityConfig) -> Result<Self, BridgeError> {
+        Self::spawn_with_events(config, None).await
+    }
+
+    pub async fn spawn_with_events(
+        config: &AntigravityConfig,
+        events: Option<broadcast::Sender<StreamEvent>>,
+    ) -> Result<Self, BridgeError> {
         let mut child = config.command().spawn().map_err(BridgeError::Spawn)?;
         let stdin = child.stdin.take().ok_or(BridgeError::MissingStdin)?;
         let stdout = child.stdout.take().ok_or(BridgeError::MissingStdout)?;
+        let stderr = child.stderr.take().ok_or(BridgeError::MissingStderr)?;
+
+        let diagnostics = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_DIAGNOSTIC_LINES)));
+        let diagnostics_writer = Arc::clone(&diagnostics);
+        let stderr_task = tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        debug!(diagnostic = %line, "Antigravity diagnostic");
+                        let mut buffer = diagnostics_writer.lock().await;
+                        if buffer.len() == MAX_DIAGNOSTIC_LINES {
+                            buffer.pop_front();
+                        }
+                        buffer.push_back(line);
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        warn!(%error, "failed reading Antigravity stderr");
+                        break;
+                    }
+                }
+            }
+        });
 
         Ok(Self {
             child,
             stdin,
             stdout: BufReader::new(stdout).lines(),
             conversation_id: None,
+            diagnostics,
+            events,
+            stderr_task,
         })
     }
 
@@ -94,9 +140,17 @@ impl AntigravitySession {
         self.conversation_id.as_deref()
     }
 
+    pub async fn diagnostics(&self) -> Vec<String> {
+        self.diagnostics.lock().await.iter().cloned().collect()
+    }
+
     pub async fn ask(&mut self, prompt: &str) -> Result<TurnResult, BridgeError> {
         if prompt.trim().is_empty() {
             return Err(BridgeError::EmptyPrompt);
+        }
+
+        if let Some(status) = self.child.try_wait()? {
+            return Err(self.session_closed(status.code()).await);
         }
 
         let line = serde_json::to_string(&UserInputEvent::new(prompt))?;
@@ -112,10 +166,14 @@ impl AntigravitySession {
             let event: StreamEvent = match serde_json::from_str(&line) {
                 Ok(event) => event,
                 Err(error) => {
-                    warn!(%error, raw = %line, "ignoring malformed Antigravity stdout event");
+                    warn!(%error, "ignoring malformed Antigravity stdout event");
                     continue;
                 }
             };
+
+            if let Some(events) = &self.events {
+                let _ = events.send(event.clone());
+            }
 
             match event {
                 StreamEvent::Init {
@@ -161,12 +219,23 @@ impl AntigravitySession {
         }
 
         let status = self.child.try_wait()?;
-        Err(BridgeError::SessionClosed(status.and_then(|status| status.code())))
+        Err(self
+            .session_closed(status.and_then(|status| status.code()))
+            .await)
     }
 
     pub async fn shutdown(mut self) -> Result<(), BridgeError> {
-        self.stdin.shutdown().await?;
-        let _ = self.child.wait().await?;
+        let _ = self.stdin.shutdown().await;
+        let wait_result = self.child.wait().await;
+        self.stderr_task.abort();
+        wait_result?;
         Ok(())
+    }
+
+    async fn session_closed(&self, code: Option<i32>) -> BridgeError {
+        BridgeError::SessionClosed {
+            code,
+            diagnostics: self.diagnostics().await,
+        }
     }
 }
