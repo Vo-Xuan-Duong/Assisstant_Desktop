@@ -37,27 +37,32 @@ if (-not $certificate) {
 if (-not $certificate.HasPrivateKey) {
     throw "The selected code-signing certificate does not expose a private key."
 }
+if ($certificate.NotAfter -le (Get-Date)) {
+    throw "The selected code-signing certificate expired at $($certificate.NotAfter.ToString('u'))."
+}
 
 $signTool = Get-Command signtool.exe -ErrorAction SilentlyContinue
-if (-not $signTool) {
-    $kitsRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
-    if (Test-Path $kitsRoot) {
-        $candidate = Get-ChildItem $kitsRoot -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending |
-            ForEach-Object { Join-Path $_.FullName "x64\signtool.exe" } |
-            Where-Object { Test-Path $_ -PathType Leaf } |
-            Select-Object -First 1
-        if ($candidate) {
-            $signTool = Get-Item $candidate
+$signToolPath = $null
+if ($signTool) {
+    $signToolPath = $signTool.Source
+}
+else {
+    $programFilesX86 = ${env:ProgramFiles(x86)}
+    if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) {
+        $kitsRoot = Join-Path $programFilesX86 "Windows Kits\10\bin"
+        if (Test-Path $kitsRoot) {
+            $signToolPath = Get-ChildItem $kitsRoot -Directory -ErrorAction SilentlyContinue |
+                Sort-Object Name -Descending |
+                ForEach-Object { Join-Path $_.FullName "x64\signtool.exe" } |
+                Where-Object { Test-Path $_ -PathType Leaf } |
+                Select-Object -First 1
         }
     }
 }
 
-if (-not $signTool) {
+if ([string]::IsNullOrWhiteSpace([string]$signToolPath)) {
     throw "signtool.exe was not found. Install the Windows SDK / Visual Studio Build Tools and ensure SignTool is available."
 }
-
-$signToolPath = if ($signTool.Source) { $signTool.Source } else { $signTool.FullName }
 
 Write-Host "Signing $Path" -ForegroundColor Cyan
 & $signToolPath sign /sha1 $thumbprint /s My /fd SHA256 /tr $timestampUrl /td SHA256 /v $Path
