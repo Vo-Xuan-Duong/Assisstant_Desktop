@@ -11,7 +11,8 @@ use windows::{
             ExpandCollapseState_Expanded, ExpandCollapseState_LeafNode,
             ExpandCollapseState_PartiallyExpanded, IUIAutomation,
             IUIAutomationCondition, IUIAutomationElement, IUIAutomationExpandCollapsePattern,
-            IUIAutomationInvokePattern, IUIAutomationRangeValuePattern,
+            IUIAutomationGridItemPattern, IUIAutomationGridPattern, IUIAutomationInvokePattern,
+            IUIAutomationRangeValuePattern, IUIAutomationScrollItemPattern,
             IUIAutomationScrollPattern, IUIAutomationSelectionItemPattern,
             IUIAutomationTogglePattern, IUIAutomationValuePattern, ScrollAmount,
             ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement, ScrollAmount_NoAmount,
@@ -35,8 +36,11 @@ const HARD_MAX_NODES: usize = 500;
 const UIA_RANGE_VALUE_PATTERN_ID: i32 = 10003;
 const UIA_SCROLL_PATTERN_ID: i32 = 10004;
 const UIA_EXPAND_COLLAPSE_PATTERN_ID: i32 = 10005;
+const UIA_GRID_PATTERN_ID: i32 = 10006;
+const UIA_GRID_ITEM_PATTERN_ID: i32 = 10007;
 const UIA_SELECTION_ITEM_PATTERN_ID: i32 = 10010;
 const UIA_TOGGLE_PATTERN_ID: i32 = 10015;
+const UIA_SCROLL_ITEM_PATTERN_ID: i32 = 10017;
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct UiRect {
@@ -73,6 +77,20 @@ pub struct UiRangeValueSnapshot {
     pub small_change: f64,
     pub large_change: f64,
     pub read_only: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct UiGridSnapshot {
+    pub row_count: i32,
+    pub column_count: i32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct UiGridItemSnapshot {
+    pub row: i32,
+    pub column: i32,
+    pub row_span: i32,
+    pub column_span: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,7 +153,10 @@ pub struct UiElementSnapshot {
     pub bounds: Option<UiRect>,
     pub supports_invoke: bool,
     pub supports_value: bool,
+    pub supports_scroll_item: bool,
     pub range_value: Option<UiRangeValueSnapshot>,
+    pub grid: Option<UiGridSnapshot>,
+    pub grid_item: Option<UiGridItemSnapshot>,
     pub toggle_state: Option<UiToggleState>,
     pub is_selected: Option<bool>,
     pub expand_collapse_state: Option<UiExpandCollapseState>,
@@ -180,8 +201,8 @@ impl UiInspectOptions {
 ///
 /// This intentionally does not read ValuePattern text. The tree is structural
 /// context only; field content is retrieved or modified only through an explicit
-/// action in a later layer. Numeric RangeValue state is exposed because it is
-/// bounded control state, not arbitrary editable text.
+/// action in a later layer. Numeric RangeValue state and grid coordinates are
+/// exposed because they are bounded structural control state, not arbitrary text.
 pub fn inspect(handle: WindowHandle, options: UiInspectOptions) -> ToolResult<UiTreeSnapshot> {
     let options = options.normalized();
     let client = AutomationClient::new(handle)?;
@@ -380,6 +401,21 @@ pub fn scroll(
     Ok(())
 }
 
+/// Ask the element's owning scroll container to bring the item into its viewport.
+/// UI Automation chooses the final position inside the viewport; no coordinates
+/// or raw wheel input are synthesized.
+pub fn scroll_into_view(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
+    let client = AutomationClient::new(handle)?;
+    let element = client.resolve(path)?;
+    let pattern = get_pattern::<IUIAutomationScrollItemPattern>(
+        &element,
+        UIA_SCROLL_ITEM_PATTERN_ID,
+        "ScrollItemPattern",
+    )?;
+    unsafe { pattern.ScrollIntoView()? };
+    Ok(())
+}
+
 struct AutomationClient {
     _com: ComGuard,
     automation: IUIAutomation,
@@ -479,6 +515,10 @@ fn snapshot_element(
             .map(UiRect::from),
         supports_invoke: supports_pattern::<IUIAutomationInvokePattern>(element, UIA_InvokePatternId),
         supports_value: supports_pattern::<IUIAutomationValuePattern>(element, UIA_ValuePatternId),
+        supports_scroll_item: supports_pattern::<IUIAutomationScrollItemPattern>(
+            element,
+            UIA_SCROLL_ITEM_PATTERN_ID,
+        ),
         range_value: pattern::<IUIAutomationRangeValuePattern>(element, UIA_RANGE_VALUE_PATTERN_ID)
             .and_then(|pattern| {
                 Some(UiRangeValueSnapshot {
@@ -488,6 +528,21 @@ fn snapshot_element(
                     small_change: unsafe { pattern.CurrentSmallChange().ok()? },
                     large_change: unsafe { pattern.CurrentLargeChange().ok()? },
                     read_only: unsafe { pattern.CurrentIsReadOnly().ok()? }.as_bool(),
+                })
+            }),
+        grid: pattern::<IUIAutomationGridPattern>(element, UIA_GRID_PATTERN_ID).and_then(|pattern| {
+            Some(UiGridSnapshot {
+                row_count: unsafe { pattern.CurrentRowCount().ok()? },
+                column_count: unsafe { pattern.CurrentColumnCount().ok()? },
+            })
+        }),
+        grid_item: pattern::<IUIAutomationGridItemPattern>(element, UIA_GRID_ITEM_PATTERN_ID)
+            .and_then(|pattern| {
+                Some(UiGridItemSnapshot {
+                    row: unsafe { pattern.CurrentRow().ok()? },
+                    column: unsafe { pattern.CurrentColumn().ok()? },
+                    row_span: unsafe { pattern.CurrentRowSpan().ok()? },
+                    column_span: unsafe { pattern.CurrentColumnSpan().ok()? },
                 })
             }),
         toggle_state: pattern::<IUIAutomationTogglePattern>(element, UIA_TOGGLE_PATTERN_ID)
