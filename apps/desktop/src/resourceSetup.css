@@ -17,17 +17,17 @@
 }
 
 .resource-panel {
-  position: absolute;
-  top: calc(100% + 0.65rem);
-  right: 0;
-  z-index: 42;
-  width: min(560px, 84vw);
-  max-height: 68vh;
+  position: fixed;
+  top: 88px;
+  right: 24px;
+  z-index: 920;
+  width: min(620px, calc(100vw - 48px));
+  max-height: calc(100vh - 112px);
   overflow: auto;
   padding: 1rem;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 16px;
-  background: rgba(18, 20, 28, 0.98);
+  background: rgba(18, 20, 28, 0.985);
   box-shadow: 0 22px 70px rgba(0, 0, 0, 0.42);
 }
 
@@ -110,4 +110,12 @@
 .resource-file-missing > span,
 .resource-error {
   color: #f5b76d;
+}
+
+@media (max-width: 600px) {
+  .resource-panel {
+    inset: 76px 12px 12px;
+    width: auto;
+    max-height: none;
+  }
 }
