@@ -8,10 +8,9 @@ Development is phase-based: finish one bounded subsystem, static-review it, upda
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 14A — Windows Startup & Single Instance**
-- **Latest completed main commit:** `1e20daf634274a423f36e10da5a2e8d3cebfce45`
-- **Current branch:** `phase/14b-release-readiness`
-- **Current phase:** Phase 14B — Release Readiness (remote hardening complete; local release gates remain)
+- **Latest completed phase on `main`: Phase 14B — Release Readiness**
+- **Latest completed phase commit:** `718f290a66336111486ff22baf121c4fccdc3e63`
+- **Current development state:** remote roadmap complete; local Windows verification and public-release gates remain
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
@@ -141,6 +140,7 @@ Verified Download   Local Preparation
 13C  2b33958...  wake keyword preparation
 13D  0fe3d38...  wake lifecycle + hot reload
 14A  1e20daf...  Windows startup + single instance
+14B  718f290...  Windows release-readiness hardening
 ```
 
 ## Current MCP capability surface
@@ -431,7 +431,7 @@ Desktop context is collected on demand only. Screen and clipboard data are treat
 
 ## Next direction
 
-After Phase 14B, the planned remote feature roadmap is complete. Further work is driven by **local Windows verification findings** and the external release gates above, not by adding new computer-use capabilities.
+The planned remote feature roadmap is complete. Further work is driven by **local Windows verification findings** and the external release gates above, not by adding new computer-use capabilities.
 
 Compiler/runtime/install failures found locally take precedence over release publication.
 
