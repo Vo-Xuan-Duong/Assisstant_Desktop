@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.voduong.assisstantdesktop",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm sidecar:stage:dev && pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm sidecar:stage:release && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -30,6 +30,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": [
+      "binaries/assistant-mcp"
+    ],
     "shortDescription": "Windows AI assistant powered by Antigravity and MCP"
   }
 }

@@ -1,22 +1,14 @@
-use std::{
-    collections::HashMap,
-    env,
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-};
+use std::{fs, io::Write};
 
 use antigravity_bridge::CliHealth;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use super::{
     permission_desktop::PermissionDesktopService,
+    runtime_paths::McpBinarySource,
     wake_desktop::WakeService,
     DesktopState,
 };
-
-const DEFAULT_MCP_CONFIG: &str = ".agents/mcp_config.json";
-const WINDOWS_MCP_SERVER_NAME: &str = "assistant-windows";
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -41,38 +33,26 @@ pub struct RuntimeReadinessReport {
     pub checks: Vec<ReadinessCheck>,
 }
 
-#[derive(Debug, Deserialize)]
-struct McpConfigFile {
-    #[serde(rename = "mcpServers")]
-    mcp_servers: HashMap<String, McpServerConfig>,
-}
-
-#[derive(Debug, Deserialize)]
-struct McpServerConfig {
-    command: String,
-    cwd: Option<String>,
-}
-
 pub async fn collect(
     state: &DesktopState,
     permission: &PermissionDesktopService,
     wake: &WakeService,
 ) -> RuntimeReadinessReport {
-    let mut checks = Vec::with_capacity(7);
-
-    checks.push(antigravity_check(state).await);
-    checks.push(mcp_check());
-    checks.push(permission_check(permission).await);
-    checks.push(context_storage_check(state));
-    checks.push(ReadinessCheck {
-        id: "tts",
-        label: "Windows TTS",
-        level: ReadinessLevel::Ready,
-        detail: "Windows SAPI backend được compile vào desktop runtime.".into(),
-        path: None,
-    });
-    checks.push(whisper_check(state));
-    checks.push(wake_check(wake));
+    let checks = vec![
+        antigravity_check(state).await,
+        mcp_check(state),
+        permission_check(permission).await,
+        context_storage_check(state),
+        ReadinessCheck {
+            id: "tts",
+            label: "Windows TTS",
+            level: ReadinessLevel::Ready,
+            detail: "Windows SAPI backend được compile vào desktop runtime.".into(),
+            path: None,
+        },
+        whisper_check(state),
+        wake_check(wake),
+    ];
 
     let overall = if checks
         .iter()
@@ -97,8 +77,13 @@ async fn antigravity_check(state: &DesktopState) -> ReadinessCheck {
             id: "antigravity",
             label: "Antigravity CLI",
             level: ReadinessLevel::Ready,
-            detail: detail.unwrap_or_else(|| "Antigravity CLI khả dụng.".into()),
-            path: None,
+            detail: detail.unwrap_or_else(|| {
+                format!(
+                    "Antigravity CLI khả dụng; runtime cwd={}",
+                    state.runtime_paths.runtime_dir.display()
+                )
+            }),
+            path: Some(state.runtime_paths.runtime_dir.display().to_string()),
         },
         CliHealth::Missing => ReadinessCheck {
             id: "antigravity",
@@ -117,73 +102,41 @@ async fn antigravity_check(state: &DesktopState) -> ReadinessCheck {
     }
 }
 
-fn mcp_check() -> ReadinessCheck {
-    let current_dir = match env::current_dir() {
-        Ok(path) => path,
-        Err(error) => {
-            return ReadinessCheck {
-                id: "windows_mcp",
-                label: "Windows MCP",
-                level: ReadinessLevel::Blocking,
-                detail: format!("Không xác định được working directory: {error}"),
-                path: None,
-            };
-        }
-    };
+fn mcp_check(state: &DesktopState) -> ReadinessCheck {
+    let paths = &state.runtime_paths;
 
-    let config_path = env::var_os("ASSISTANT_MCP_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_MCP_CONFIG));
-    let config_path = absolutize(&current_dir, config_path);
+    if !paths.mcp_config_path.is_file() {
+        return ReadinessCheck {
+            id: "windows_mcp",
+            label: "Windows MCP",
+            level: ReadinessLevel::Blocking,
+            detail: "Runtime MCP config chưa tồn tại trong app-local-data.".into(),
+            path: Some(paths.mcp_config_path.display().to_string()),
+        };
+    }
 
-    let bytes = match fs::read(&config_path) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            return ReadinessCheck {
-                id: "windows_mcp",
-                label: "Windows MCP",
-                level: ReadinessLevel::Blocking,
-                detail: format!(
-                    "Không đọc được MCP config. Có thể override bằng ASSISTANT_MCP_CONFIG: {error}"
-                ),
-                path: Some(config_path.display().to_string()),
-            };
-        }
-    };
+    if let Err(error) = fs::read(&paths.mcp_config_path)
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).map_err(std::io::Error::other))
+    {
+        return ReadinessCheck {
+            id: "windows_mcp",
+            label: "Windows MCP",
+            level: ReadinessLevel::Blocking,
+            detail: format!("Generated MCP config không đọc/parse được: {error}"),
+            path: Some(paths.mcp_config_path.display().to_string()),
+        };
+    }
 
-    let config = match serde_json::from_slice::<McpConfigFile>(&bytes) {
-        Ok(config) => config,
-        Err(error) => {
-            return ReadinessCheck {
-                id: "windows_mcp",
-                label: "Windows MCP",
-                level: ReadinessLevel::Blocking,
-                detail: format!("MCP config không hợp lệ: {error}"),
-                path: Some(config_path.display().to_string()),
-            };
-        }
-    };
-
-    let Some(server) = config.mcp_servers.get(WINDOWS_MCP_SERVER_NAME) else {
+    if !paths.mcp_binary_path.is_file() {
         return ReadinessCheck {
             id: "windows_mcp",
             label: "Windows MCP",
             level: ReadinessLevel::Blocking,
             detail: format!(
-                "MCP config không có server `{WINDOWS_MCP_SERVER_NAME}`."
+                "Không tìm thấy assistant-mcp sidecar tại runtime path (source={}).",
+                source_name(paths.mcp_binary_source)
             ),
-            path: Some(config_path.display().to_string()),
-        };
-    };
-
-    let command_path = resolve_mcp_command(&current_dir, server);
-    if !command_path.is_file() {
-        return ReadinessCheck {
-            id: "windows_mcp",
-            label: "Windows MCP",
-            level: ReadinessLevel::Blocking,
-            detail: "MCP config đã có nhưng chưa tìm thấy `assistant-mcp.exe`. Build release binary trước khi chạy full computer-use.".into(),
-            path: Some(command_path.display().to_string()),
+            path: Some(paths.mcp_binary_path.display().to_string()),
         };
     }
 
@@ -192,10 +145,20 @@ fn mcp_check() -> ReadinessCheck {
         label: "Windows MCP",
         level: ReadinessLevel::Ready,
         detail: format!(
-            "Đã tìm thấy `{WINDOWS_MCP_SERVER_NAME}` và executable được cấu hình. Config: {}",
-            config_path.display()
+            "MCP config được sinh trong app-local-data; assistant-mcp source={}",
+            source_name(paths.mcp_binary_source)
         ),
-        path: Some(command_path.display().to_string()),
+        path: Some(paths.mcp_binary_path.display().to_string()),
+    }
+}
+
+fn source_name(source: McpBinarySource) -> &'static str {
+    match source {
+        McpBinarySource::Environment => "environment_override",
+        McpBinarySource::BundledSidecar => "bundled_sidecar",
+        McpBinarySource::DevDebug => "dev_debug",
+        McpBinarySource::DevRelease => "dev_release",
+        McpBinarySource::ExpectedBundled => "expected_bundled_missing",
     }
 }
 
@@ -234,21 +197,9 @@ async fn permission_check(permission: &PermissionDesktopService) -> ReadinessChe
 }
 
 fn context_storage_check(state: &DesktopState) -> ReadinessCheck {
-    let current_dir = match env::current_dir() {
-        Ok(path) => path,
-        Err(error) => {
-            return ReadinessCheck {
-                id: "context_storage",
-                label: "Context Storage",
-                level: ReadinessLevel::Blocking,
-                detail: format!("Không xác định được working directory: {error}"),
-                path: None,
-            };
-        }
-    };
-    let artifact_dir = absolutize(&current_dir, state.context.artifact_dir().to_path_buf());
+    let artifact_dir = state.context.artifact_dir();
 
-    if let Err(error) = fs::create_dir_all(&artifact_dir) {
+    if let Err(error) = fs::create_dir_all(artifact_dir) {
         return ReadinessCheck {
             id: "context_storage",
             label: "Context Storage",
@@ -294,7 +245,7 @@ fn context_storage_check(state: &DesktopState) -> ReadinessCheck {
         id: "context_storage",
         label: "Context Storage",
         level: ReadinessLevel::Ready,
-        detail: "Context artifact directory tồn tại và writable. Hiện path vẫn phụ thuộc working directory; migration sang app-local-data nên được xử lý ở phase hardening riêng.".into(),
+        detail: "Context artifacts dùng app-local-data và directory hiện writable.".into(),
         path: Some(artifact_dir.display().to_string()),
     }
 }
@@ -360,40 +311,15 @@ fn wake_check(wake: &WakeService) -> ReadinessCheck {
         };
     }
 
-    let enabled_detail = if status.enabled {
-        format!("Wake runtime khả dụng; state={}", status.state)
-    } else {
-        "Wake runtime/resource sẵn sàng nhưng đang tắt theo cấu hình người dùng.".into()
-    };
-
     ReadinessCheck {
         id: "wake_word",
         label: "Wake Word",
         level: ReadinessLevel::Ready,
-        detail: enabled_detail,
+        detail: if status.enabled {
+            format!("Wake runtime khả dụng; state={}", status.state)
+        } else {
+            "Wake runtime/resource sẵn sàng nhưng đang tắt theo cấu hình người dùng.".into()
+        },
         path: status.model_dir,
-    }
-}
-
-fn resolve_mcp_command(current_dir: &Path, server: &McpServerConfig) -> PathBuf {
-    let command = PathBuf::from(&server.command);
-    if command.is_absolute() {
-        return command;
-    }
-
-    let cwd = server
-        .cwd
-        .as_ref()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let cwd = absolutize(current_dir, cwd);
-    cwd.join(command)
-}
-
-fn absolutize(base: &Path, path: PathBuf) -> PathBuf {
-    if path.is_absolute() {
-        path
-    } else {
-        base.join(path)
     }
 }

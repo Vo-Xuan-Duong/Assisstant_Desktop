@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "assistant-windows": {
-      "command": "target\\release\\assistant-mcp.exe",
-      "cwd": ".",
+      "command": "C:\\Path\\To\\Assisstant Desktop\\assistant-mcp.exe",
+      "cwd": "C:\\Users\\<user>\\AppData\\Local\\com.voduong.assisstantdesktop\\runtime",
       "env": {
         "RUST_LOG": "info"
       }
