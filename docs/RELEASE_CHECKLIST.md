@@ -24,7 +24,7 @@ The packaged desktop must include the `assistant-mcp` external sidecar. The exis
 ## Required local environment
 
 - Windows 10/11 x64 with the MSVC Rust toolchain.
-- Rust compatible with workspace `rust-version = 1.85`.
+- Rust `1.85.0`, pinned by `rust-toolchain.toml` and matching the workspace release baseline.
 - Node.js `20.19+` or `22.12+`.
 - pnpm.
 - Microsoft Edge WebView2 runtime / installer prerequisites.
@@ -36,6 +36,8 @@ The packaged desktop must include the `assistant-mcp` external sidecar. The exis
 Before a release candidate is built, all of these must be true:
 
 - `LICENSE` exists and matches the workspace MIT declaration.
+- `rust-toolchain.toml` remains pinned to Rust `1.85.0` for this release baseline.
+- `Cargo.lock` is generated, reviewed and committed.
 - `pnpm-lock.yaml` is generated, reviewed and committed.
 - a branded Windows icon is approved and committed at `apps/desktop/src-tauri/icons/icon.ico` together with the normal Tauri icon set used by packaging.
 - `tauri.windows.conf.json` enables `voice-whisper` and `wake-word`.
@@ -81,21 +83,22 @@ Also verify:
 - readiness/resource panels;
 - runtime paths under app-local-data after install.
 
-## Dependency lockfile
+## Dependency lockfiles
 
-The repository currently does not generate a lockfile remotely. Create it on the release workstation:
+The repository does not generate dependency lockfiles remotely. Create them on the release workstation:
 
 ```powershell
+cargo generate-lockfile
 pnpm install --lockfile-only
 ```
 
-Review `pnpm-lock.yaml`, then commit it. Subsequent release dependency installs should use the frozen lockfile:
+Review both `Cargo.lock` and `pnpm-lock.yaml`, then commit them. Subsequent frontend release dependency installs should use the frozen pnpm lockfile:
 
 ```powershell
 pnpm install --frozen-lockfile
 ```
 
-A public release must not be cut while the release verifier reports the lockfile as blocking.
+Cargo automatically consumes the committed `Cargo.lock` for the workspace application build. A release must not be cut while either lockfile is reported as blocking.
 
 ## Release icon
 
@@ -188,8 +191,9 @@ Never reuse a version/tag for different binaries.
 These are not safely inventable during remote code development and must be supplied/approved locally before the first public release:
 
 1. final application icon/branding;
-2. generated and reviewed `pnpm-lock.yaml`;
-3. real Windows code-signing identity/configuration;
-4. full compile/runtime/install verification on Windows.
+2. generated and reviewed `Cargo.lock`;
+3. generated and reviewed `pnpm-lock.yaml`;
+4. real Windows code-signing identity/configuration;
+5. full compile/runtime/install verification on Windows.
 
 Compiler/runtime findings discovered during these checks override this checklist and should be fixed before adding further product capability.
