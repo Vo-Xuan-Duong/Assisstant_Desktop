@@ -1,8 +1,7 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::sync::{Arc, Mutex};
+
+#[cfg(feature = "voice-whisper")]
+use std::{path::PathBuf, time::Duration};
 
 use antigravity_bridge::{AntigravityClient, AntigravityConfig, CliHealth};
 use assistant_common::{AssistantEvent, AssistantState, SessionId, UserRequest};
@@ -18,18 +17,18 @@ use tauri::{
 use tauri_plugin_global_shortcut::{
     Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
 };
-use tokio::sync::{Mutex as AsyncMutex, RwLock};
+use tokio::sync::RwLock;
+#[cfg(feature = "voice-whisper")]
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, warn};
 use tracing_subscriber::EnvFilter;
-use voice_runtime::{
-    tts::{TextToSpeech, WindowsSapiTts},
-    vad::{UtteranceSegmenter, VadEvent},
-    MicrophoneConfig, MicrophoneStream,
-};
+use voice_runtime::tts::{TextToSpeech, WindowsSapiTts};
 #[cfg(feature = "voice-whisper")]
 use voice_runtime::{
     stt::SpeechRecognizer,
+    vad::{Utterance, UtteranceSegmenter, VadEvent},
     whisper::{WhisperConfig, WhisperRecognizer},
+    MicrophoneConfig, MicrophoneStream,
 };
 use windows_tools::window::{self, WindowHandle};
 
@@ -153,8 +152,7 @@ async fn assistant_submit(text: String, state: State<'_, DesktopState>) -> Resul
     if prompt.is_empty() {
         return Err("Yêu cầu không được để trống.".into());
     }
-
-    complete_prompt(prompt, &state).await
+    complete_prompt(prompt, state.inner()).await
 }
 
 #[tauri::command]
@@ -187,21 +185,24 @@ async fn assistant_speak(text: String, state: State<'_, DesktopState>) -> Result
     if text.is_empty() {
         return Err("Không có nội dung để đọc.".into());
     }
+    if state.core.state().await != AssistantState::Idle {
+        return Err("Assistant đang bận với một tác vụ khác.".into());
+    }
 
     state
         .core
         .begin_speaking()
         .await
         .map_err(|error| error.to_string())?;
-    let result = state.tts.speak(text).await.map_err(|error| error.to_string());
-    let finish = state
+    let speak_result = state.tts.speak(text).await.map_err(|error| error.to_string());
+    let finish_result = state
         .core
         .finish_speaking()
         .await
         .map_err(|error| error.to_string());
 
-    result?;
-    finish
+    speak_result?;
+    finish_result
 }
 
 #[tauri::command]
@@ -212,10 +213,10 @@ async fn assistant_voice_turn(
     #[cfg(not(feature = "voice-whisper"))]
     {
         let _ = (app, state);
-        return Err(
+        Err(
             "Bản build hiện tại chưa bật feature `voice-whisper`. Text/TTS vẫn hoạt động bình thường."
                 .into(),
-        );
+        )
     }
 
     #[cfg(feature = "voice-whisper")]
@@ -240,41 +241,30 @@ async fn assistant_voice_turn(
             .await
             .map_err(|error| error.to_string())?;
 
-        let capture_result = capture_one_utterance(&app).await;
-        let utterance = match capture_result {
+        let utterance = match capture_one_utterance(&app).await {
             Ok(utterance) => utterance,
-            Err(error) => {
-                let _ = state.core.cancel_listening().await;
-                return Err(error);
-            }
+            Err(error) => return fail_listening(state.inner(), error).await,
         };
 
-        let recognizer = {
-            let mut slot = state.voice.recognizer.lock().await;
-            if slot.is_none() {
-                let mut config = WhisperConfig::new(state.voice.model_path.clone());
-                config.language = Some("vi".into());
-                *slot = Some(WhisperRecognizer::load(config).map_err(|error| error.to_string())?);
-            }
-            slot.as_ref()
-                .expect("recognizer initialized above")
-                .clone()
+        let recognizer = match get_or_load_recognizer(state.inner()).await {
+            Ok(recognizer) => recognizer,
+            Err(error) => return fail_listening(state.inner(), error).await,
         };
 
         let transcript = match recognizer.transcribe(utterance).await {
             Ok(transcript) if !transcript.is_empty() => transcript,
             Ok(_) => {
-                let _ = state.core.cancel_listening().await;
-                return Err("Không nhận diện được nội dung giọng nói.".into());
+                return fail_listening(
+                    state.inner(),
+                    "Không nhận diện được nội dung giọng nói.".into(),
+                )
+                .await;
             }
-            Err(error) => {
-                let _ = state.core.cancel_listening().await;
-                return Err(error.to_string());
-            }
+            Err(error) => return fail_listening(state.inner(), error.to_string()).await,
         };
 
-        // AssistantCore transitions Listening -> Processing for this call.
-        let response = complete_prompt(&transcript.text, &state).await?;
+        // AssistantCore performs Listening -> Processing -> Idle for the AI turn.
+        let response = complete_prompt(&transcript.text, state.inner()).await?;
 
         state
             .core
@@ -295,7 +285,29 @@ async fn assistant_voice_turn(
 }
 
 #[cfg(feature = "voice-whisper")]
-async fn capture_one_utterance(app: &AppHandle) -> Result<voice_runtime::vad::Utterance, String> {
+async fn fail_listening<T>(state: &DesktopState, message: String) -> Result<T, String> {
+    if let Err(error) = state.core.cancel_listening().await {
+        warn!(%error, "failed to cancel listening state after voice failure");
+    }
+    Err(message)
+}
+
+#[cfg(feature = "voice-whisper")]
+async fn get_or_load_recognizer(state: &DesktopState) -> Result<WhisperRecognizer, String> {
+    let mut slot = state.voice.recognizer.lock().await;
+    if let Some(recognizer) = slot.as_ref() {
+        return Ok(recognizer.clone());
+    }
+
+    let mut config = WhisperConfig::new(state.voice.model_path.clone());
+    config.language = Some("vi".into());
+    let recognizer = WhisperRecognizer::load(config).map_err(|error| error.to_string())?;
+    *slot = Some(recognizer.clone());
+    Ok(recognizer)
+}
+
+#[cfg(feature = "voice-whisper")]
+async fn capture_one_utterance(app: &AppHandle) -> Result<Utterance, String> {
     let mut microphone = MicrophoneStream::open_default(MicrophoneConfig::default())
         .map_err(|error| error.to_string())?;
     let mut segmenter = UtteranceSegmenter::default();
@@ -353,10 +365,7 @@ fn remember_source_window(app: &AppHandle) {
 }
 
 fn show_main_window(app: &AppHandle) {
-    // Preserve the application the user was looking at before our UI steals focus.
-    // Only its handle is stored here; no pixels or clipboard data are collected.
     remember_source_window(app);
-
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
@@ -428,8 +437,6 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
-            // During setup the webview has not yet necessarily taken foreground focus,
-            // so this also gives the first interaction a useful source window.
             let initial_source_window = current_external_window();
             let client = Arc::new(AntigravityClient::new(AntigravityConfig::default()));
             let sink = Arc::new(TauriEventSink {
