@@ -2,7 +2,10 @@ use std::{fs::File, io::BufWriter, path::PathBuf};
 
 use serde::Serialize;
 use tracing::debug;
-use windows_tools::{clipboard, screen, window};
+use windows_tools::{
+    clipboard, screen,
+    window::{self, WindowHandle},
+};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct ContextIntent {
@@ -212,13 +215,21 @@ impl ContextEngine {
     }
 
     pub async fn collect_for(&self, request: &str) -> ContextSnapshot {
+        self.collect_for_window(request, None).await
+    }
+
+    pub async fn collect_for_window(
+        &self,
+        request: &str,
+        source_window: Option<WindowHandle>,
+    ) -> ContextSnapshot {
         let intent = self.infer(request);
         if !intent.needs_context() {
             return ContextSnapshot::empty(intent);
         }
 
         let config = self.config.clone();
-        match tokio::task::spawn_blocking(move || collect_blocking(intent, &config)).await {
+        match tokio::task::spawn_blocking(move || collect_blocking(intent, &config, source_window)).await {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 let mut snapshot = ContextSnapshot::empty(intent);
@@ -237,11 +248,19 @@ impl Default for ContextEngine {
     }
 }
 
-fn collect_blocking(intent: ContextIntent, config: &ContextConfig) -> ContextSnapshot {
+fn collect_blocking(
+    intent: ContextIntent,
+    config: &ContextConfig,
+    source_window: Option<WindowHandle>,
+) -> ContextSnapshot {
     let mut snapshot = ContextSnapshot::empty(intent);
 
     if intent.active_window && config.policy.allow_active_window {
-        match window::get_active() {
+        let result = match source_window {
+            Some(handle) => window::get(handle),
+            None => window::get_active(),
+        };
+        match result {
             Ok(active) => {
                 snapshot.active_window = Some(ActiveWindowContext {
                     title: active.title,
@@ -265,7 +284,7 @@ fn collect_blocking(intent: ContextIntent, config: &ContextConfig) -> ContextSna
     }
 
     if intent.screen && config.policy.allow_screen_capture {
-        match capture_screen_artifact(config) {
+        match capture_screen_artifact(config, source_window) {
             Ok(artifact) => snapshot.screen = Some(artifact),
             Err(error) => snapshot
                 .warnings
@@ -277,8 +296,16 @@ fn collect_blocking(intent: ContextIntent, config: &ContextConfig) -> ContextSna
     snapshot
 }
 
-fn capture_screen_artifact(config: &ContextConfig) -> Result<ScreenArtifact, String> {
-    let frame = screen::capture_active_window().map_err(|error| error.to_string())?;
+fn capture_screen_artifact(
+    config: &ContextConfig,
+    source_window: Option<WindowHandle>,
+) -> Result<ScreenArtifact, String> {
+    let frame = match source_window {
+        Some(handle) => screen::capture(handle),
+        None => screen::capture_active_window(),
+    }
+    .map_err(|error| error.to_string())?;
+
     std::fs::create_dir_all(&config.artifact_dir).map_err(|error| error.to_string())?;
 
     // One request is processed at a time by AssistantCore, so reusing one file
@@ -293,9 +320,7 @@ fn capture_screen_artifact(config: &ContextConfig) -> Result<ScreenArtifact, Str
     std::fs::rename(&temporary_path, &final_path).map_err(|error| error.to_string())?;
 
     Ok(ScreenArtifact {
-        path: final_path
-            .canonicalize()
-            .unwrap_or(final_path),
+        path: final_path.canonicalize().unwrap_or(final_path),
         width: frame.width,
         height: frame.height,
     })
