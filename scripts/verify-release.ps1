@@ -50,6 +50,24 @@ function Read-JsonFile {
     }
 }
 
+function Get-OptionalProperty {
+    param(
+        [object]$Object,
+        [string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
 function Require-File {
     param(
         [string]$Id,
@@ -132,7 +150,8 @@ if ($tauri) {
         Add-Result "app_version" "blocking" "Tauri app version is not a release semantic version: $version"
     }
 
-    if ($tauri.bundle.createUpdaterArtifacts -eq $true) {
+    $createUpdaterArtifacts = Get-OptionalProperty $tauri.bundle "createUpdaterArtifacts"
+    if ($createUpdaterArtifacts -eq $true) {
         Add-Result "updater_artifacts" "optional" "Updater artifacts are enabled; verify updater signing key and endpoint policy before publishing."
     }
     else {
@@ -173,7 +192,8 @@ if ($windows) {
         Add-Result "publisher" "ready" "Windows bundle publisher is configured: $($windows.bundle.publisher)"
     }
 
-    $hasSignCommand = $null -ne $windows.bundle.windows.signCommand -and -not [string]::IsNullOrWhiteSpace([string]$windows.bundle.windows.signCommand)
+    $signCommand = Get-OptionalProperty $windows.bundle.windows "signCommand"
+    $hasSignCommand = -not [string]::IsNullOrWhiteSpace([string]$signCommand)
     if ($PublicRelease) {
         if ($hasSignCommand) {
             Add-Result "code_signing" "ready" "A Windows signCommand is configured. Verify its certificate/account separately before publishing."
