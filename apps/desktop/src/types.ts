@@ -39,19 +39,35 @@ export interface AudioLevel {
   peak: number;
 }
 
+export type WakeRuntimeState =
+  | "not_compiled"
+  | "unavailable"
+  | "disabled"
+  | "starting"
+  | "listening"
+  | "suspended"
+  | "cooldown"
+  | "error"
+  | "stopped";
+
 export interface WakeStatus {
   compiled: boolean;
   available: boolean;
   enabled: boolean;
-  state: string;
+  state: WakeRuntimeState;
   model_dir?: string | null;
   keywords_path?: string | null;
   detail?: string | null;
 }
 
+export interface WakeDetection {
+  keyword: string;
+  start_time_seconds: number;
+}
+
 export type WakeRuntimeEvent =
-  | { type: "state_changed"; from: string; to: string }
-  | { type: "detected"; detection: { keyword: string; start_time_seconds: number } }
+  | { type: "state_changed"; from: WakeRuntimeState; to: WakeRuntimeState }
+  | { type: "detected"; detection: WakeDetection }
   | { type: "error"; message: string };
 
 export interface ChatMessage {
