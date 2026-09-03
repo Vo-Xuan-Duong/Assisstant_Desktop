@@ -56,6 +56,9 @@ jobs:
         shell: powershell
         run: pnpm desktop:assets:prepare
 
+      - name: Stage MCP sidecar
+        run: pnpm --dir apps/desktop sidecar:stage:dev
+
       - name: Check Rust formatting
         continue-on-error: true
         run: cargo fmt --all -- --check
