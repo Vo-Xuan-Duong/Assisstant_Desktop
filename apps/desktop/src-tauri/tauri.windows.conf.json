@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "features": [
+      "voice-whisper",
+      "wake-word"
+    ]
+  },
+  "bundle": {
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "Vo Xuan Duong",
+    "copyright": "Copyright © 2026 Vo Xuan Duong",
+    "longDescription": "Windows-first desktop AI assistant powered by Antigravity, Gemini and a permission-gated MCP runtime.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}
