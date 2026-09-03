@@ -1,0 +1,152 @@
+.permission-policy-shell {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.permission-policy-shell > * { pointer-events: auto; }
+
+.permission-policy-trigger {
+  border: 1px solid #3a4358;
+  border-radius: 999px;
+  padding: 8px 12px;
+  color: #dce4f4;
+  background: rgba(18, 22, 31, .96);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, .28);
+  font-size: 12px;
+}
+
+.permission-policy-panel {
+  width: min(440px, calc(100vw - 36px));
+  max-height: min(620px, calc(100vh - 90px));
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(120px, 1fr) auto;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #30394d;
+  border-radius: 16px;
+  background: rgba(14, 17, 24, .985);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .48);
+}
+
+.permission-policy-panel header,
+.permission-policy-panel footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.permission-policy-panel header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.permission-policy-panel header span {
+  color: #78849a;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .13em;
+}
+
+.permission-policy-panel header strong { font-size: 15px; }
+
+.permission-policy-panel header button,
+.permission-policy-panel footer button {
+  border: 1px solid #343d51;
+  border-radius: 9px;
+  padding: 5px 9px;
+  color: #cfd7e6;
+  background: #181d27;
+}
+
+.permission-policy-note,
+.permission-policy-error,
+.permission-policy-loading {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.permission-policy-note { color: #8793a9; }
+.permission-policy-error { color: #f0a2a2; }
+.permission-policy-loading { color: #77839a; }
+
+.permission-policy-list {
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  padding-right: 3px;
+  scrollbar-width: thin;
+}
+
+.permission-policy-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #242b3a;
+  border-radius: 12px;
+  background: #141923;
+}
+
+.permission-policy-row > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.permission-policy-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.permission-policy-row small {
+  color: #7e899e;
+  line-height: 1.35;
+}
+
+.permission-policy-row span {
+  color: #9aa7bd;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.permission-policy-row select {
+  width: 100%;
+  border: 1px solid #354057;
+  border-radius: 9px;
+  padding: 8px;
+  color: #e2e8f4;
+  background: #1b2130;
+}
+
+.permission-policy-panel footer {
+  color: #6f7b91;
+  font-size: 10px;
+}
+
+@media (max-width: 560px) {
+  .permission-policy-shell {
+    right: 10px;
+    bottom: 10px;
+  }
+
+  .permission-policy-panel {
+    width: calc(100vw - 20px);
+  }
+
+  .permission-policy-row {
+    grid-template-columns: 1fr;
+  }
+}
