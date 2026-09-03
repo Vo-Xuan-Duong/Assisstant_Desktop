@@ -1,5 +1,6 @@
 pub mod apps;
 pub mod audio;
+pub mod clipboard;
 pub mod error;
 pub mod media;
 pub mod system;
@@ -61,6 +62,16 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
         name: "media.previous",
         risk: ToolRisk::Moderate,
         description: "Send the Windows previous-track media key.",
+    },
+    ToolDefinition {
+        name: "clipboard.read_text",
+        risk: ToolRisk::Moderate,
+        description: "Read Unicode text from the Windows clipboard. Clipboard data may be sensitive.",
+    },
+    ToolDefinition {
+        name: "clipboard.write_text",
+        risk: ToolRisk::Moderate,
+        description: "Replace Windows clipboard content with Unicode text.",
     },
 ];
 
