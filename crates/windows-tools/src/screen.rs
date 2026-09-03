@@ -7,10 +7,13 @@ use windows::Win32::{
         DIB_RGB_COLORS, DeleteDC, DeleteObject, GetWindowDC, HDC, HGDIOBJ, ReleaseDC, SRCCOPY,
         SelectObject,
     },
-    UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect},
+    UI::WindowsAndMessaging::GetWindowRect,
 };
 
-use crate::{ToolError, ToolResult};
+use crate::{
+    window::{self, WindowHandle},
+    ToolError, ToolResult,
+};
 
 #[derive(Debug, Clone)]
 pub struct ScreenFrame {
@@ -44,10 +47,14 @@ impl Drop for MemoryDc {
 }
 
 pub fn capture_active_window() -> ToolResult<ScreenFrame> {
+    capture(window::get_active_handle()?)
+}
+
+pub fn capture(handle: WindowHandle) -> ToolResult<ScreenFrame> {
     unsafe {
-        let hwnd = GetForegroundWindow();
+        let hwnd = handle.hwnd();
         if hwnd.0.is_null() {
-            return Err(ToolError::NotFound("no foreground window".into()));
+            return Err(ToolError::NotFound("window handle is empty".into()));
         }
 
         let mut rect = Default::default();
@@ -56,14 +63,14 @@ pub fn capture_active_window() -> ToolResult<ScreenFrame> {
         let height = rect.bottom - rect.top;
         if width <= 0 || height <= 0 {
             return Err(ToolError::Unsupported(
-                "foreground window has an empty capture rectangle".into(),
+                "window has an empty capture rectangle".into(),
             ));
         }
 
         let source_dc = GetWindowDC(hwnd);
         if source_dc.0.is_null() {
             return Err(ToolError::Unsupported(
-                "Windows did not provide a foreground-window device context".into(),
+                "Windows did not provide a window device context".into(),
             ));
         }
         let _source_guard = WindowDc {
@@ -80,7 +87,7 @@ pub fn capture_active_window() -> ToolResult<ScreenFrame> {
         let _memory_guard = MemoryDc(memory_dc);
 
         // Negative height creates a top-down DIB, which avoids a vertical flip later.
-        let mut bitmap_info = BITMAPINFO {
+        let bitmap_info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: size_of::<BITMAPINFOHEADER>() as u32,
                 biWidth: width,
