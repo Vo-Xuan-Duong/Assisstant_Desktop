@@ -375,7 +375,7 @@ fn setup_policy_events(app: &AppHandle, service: &PermissionDesktopService) {
     let set_app = app.clone();
     let set_service = service.clone();
     app.listen(POLICY_SET_EVENT, move |event| {
-        let request = serde_json::from_str::<PermissionPolicySetEvent>(event.payload());
+        let request = serde_json::from_str::<PermissionPolicySetEvent>(&event.data);
         let app = set_app.clone();
         let service = set_service.clone();
         tauri::async_runtime::spawn(async move {
