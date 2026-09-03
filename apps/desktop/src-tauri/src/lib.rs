@@ -1,6 +1,9 @@
 mod edge;
 mod permission_desktop;
 mod readiness;
+mod resource_api;
+mod resource_installer;
+mod resource_manifest;
 mod resource_registry;
 mod runtime_paths;
 mod wake_desktop;
@@ -593,6 +596,8 @@ pub fn run() {
             assistant_health,
             assistant_readiness,
             assistant_resources,
+            resource_api::assistant_resource_catalog,
+            resource_api::assistant_resource_install,
             assistant_wake_status,
             assistant_wake_set_enabled,
             assistant_submit,
