@@ -30,12 +30,11 @@ execFileSync("cargo", cargoArgs, {
   stdio: "inherit",
 });
 
-const source = path.join(
-  repoRoot,
-  "target",
-  requestedProfile,
-  "assistant-mcp.exe",
-);
+const configuredTargetDir = process.env.CARGO_TARGET_DIR;
+const targetDir = configuredTargetDir
+  ? path.resolve(repoRoot, configuredTargetDir)
+  : path.join(repoRoot, "target");
+const source = path.join(targetDir, requestedProfile, "assistant-mcp.exe");
 if (!existsSync(source)) {
   throw new Error(`Expected sidecar binary was not produced: ${source}`);
 }
