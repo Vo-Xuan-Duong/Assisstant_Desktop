@@ -14,11 +14,11 @@ use windows::{
             IUIAutomationGridItemPattern, IUIAutomationGridPattern, IUIAutomationInvokePattern,
             IUIAutomationRangeValuePattern, IUIAutomationScrollItemPattern,
             IUIAutomationScrollPattern, IUIAutomationSelectionItemPattern,
-            IUIAutomationTogglePattern, IUIAutomationValuePattern, ScrollAmount,
-            ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement, ScrollAmount_NoAmount,
-            ScrollAmount_SmallDecrement, ScrollAmount_SmallIncrement, ToggleState,
-            ToggleState_Indeterminate, ToggleState_Off, ToggleState_On, TreeScope_Children,
-            UIA_InvokePatternId, UIA_ValuePatternId,
+            IUIAutomationTogglePattern, IUIAutomationValuePattern,
+            IUIAutomationVirtualizedItemPattern, ScrollAmount, ScrollAmount_LargeDecrement,
+            ScrollAmount_LargeIncrement, ScrollAmount_NoAmount, ScrollAmount_SmallDecrement,
+            ScrollAmount_SmallIncrement, ToggleState, ToggleState_Indeterminate, ToggleState_Off,
+            ToggleState_On, TreeScope_Children, UIA_InvokePatternId, UIA_ValuePatternId,
         },
     },
 };
@@ -41,6 +41,7 @@ const UIA_GRID_ITEM_PATTERN_ID: i32 = 10007;
 const UIA_SELECTION_ITEM_PATTERN_ID: i32 = 10010;
 const UIA_TOGGLE_PATTERN_ID: i32 = 10015;
 const UIA_SCROLL_ITEM_PATTERN_ID: i32 = 10017;
+const UIA_VIRTUALIZED_ITEM_PATTERN_ID: i32 = 10020;
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct UiRect {
@@ -154,6 +155,7 @@ pub struct UiElementSnapshot {
     pub supports_invoke: bool,
     pub supports_value: bool,
     pub supports_scroll_item: bool,
+    pub supports_virtualized_item: bool,
     pub range_value: Option<UiRangeValueSnapshot>,
     pub grid: Option<UiGridSnapshot>,
     pub grid_item: Option<UiGridItemSnapshot>,
@@ -416,6 +418,20 @@ pub fn scroll_into_view(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
     Ok(())
 }
 
+/// Materialize a virtualized UIA item through VirtualizedItemPattern. This does
+/// not select, focus or invoke the item; it asks the provider to fully realize it.
+pub fn realize(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
+    let client = AutomationClient::new(handle)?;
+    let element = client.resolve(path)?;
+    let pattern = get_pattern::<IUIAutomationVirtualizedItemPattern>(
+        &element,
+        UIA_VIRTUALIZED_ITEM_PATTERN_ID,
+        "VirtualizedItemPattern",
+    )?;
+    unsafe { pattern.Realize()? };
+    Ok(())
+}
+
 struct AutomationClient {
     _com: ComGuard,
     automation: IUIAutomation,
@@ -519,6 +535,10 @@ fn snapshot_element(
             element,
             UIA_SCROLL_ITEM_PATTERN_ID,
         ),
+        supports_virtualized_item: supports_pattern::<IUIAutomationVirtualizedItemPattern>(
+            element,
+            UIA_VIRTUALIZED_ITEM_PATTERN_ID,
+        ),
         range_value: pattern::<IUIAutomationRangeValuePattern>(element, UIA_RANGE_VALUE_PATTERN_ID)
             .and_then(|pattern| {
                 Some(UiRangeValueSnapshot {
@@ -621,6 +641,7 @@ fn supports_pattern<T: Interface>(element: &IUIAutomationElement, pattern_id: i3
 fn bstr_or_default(
     getter: impl FnOnce() -> windows::core::Result<windows::core::BSTR>,
 ) -> String {
+    getter.map(|_| windows::core::BSTR::new());
     getter().map(|value| value.to_string()).unwrap_or_default()
 }
 
