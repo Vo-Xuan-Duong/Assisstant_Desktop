@@ -1,6 +1,6 @@
 # Runtime Resources
 
-Phase 13A introduced one source of truth for optional local AI resources. Phase 13B adds a verified installer on top of that registry without weakening the existing path/status contract.
+Phase 13A introduced one source of truth for optional local AI resources. Phase 13B adds a verified installer for pinned resources. Phase 13C adds local wake keyword preparation without relaxing the wake archive trust boundary.
 
 ## Architecture
 
@@ -9,18 +9,18 @@ RuntimePaths
     ↓
 ResourceRegistry
     ├── Whisper path/status
-    └── Wake model/keywords paths/status
+    └── Wake runtime + preparation paths/status
            ↓
-    ┌──────┼───────────────┐
-    ↓      ↓               ↓
-Voice   WakeService     Readiness / Setup UI
-                           ↓
-                  Resource install catalog
-                           ↓
-                  Verified installer
+    ┌──────┼────────────────────┐
+    ↓      ↓                    ↓
+Voice   WakeService      Readiness / Setup UI
+                              ↓
+                     Resource action catalog
+                        ↙             ↘
+               Verified download   Local generation
 ```
 
-The frontend never supplies an arbitrary download URL. It requests installation by trusted resource ID; backend code resolves that ID through a compiled manifest.
+The frontend never supplies an arbitrary download URL, hash or destination. It requests a backend-defined resource/action ID.
 
 ## Resource states
 
@@ -31,12 +31,12 @@ incomplete
 not_compiled
 ```
 
-- `ready` — the build feature is enabled and all required files exist.
-- `missing` — the feature is enabled but the required resource is absent.
-- `incomplete` — a multi-file resource contains only some required files.
+- `ready` — the build feature is enabled and all runtime-required files exist.
+- `missing` — the feature is enabled but the required runtime resource is absent.
+- `incomplete` — a multi-file resource contains only some runtime-required files.
 - `not_compiled` — the current build does not enable that optional feature. Paths remain visible so resources may be prepared before rebuilding.
 
-Readiness maps optional missing/not-compiled resources to `optional_missing`; text assistant operation remains available.
+Preparation-only files do not change runtime readiness.
 
 ## Default local-data layout
 
@@ -51,10 +51,11 @@ Readiness maps optional missing/not-compiled resources to `optional_missing`; te
             ├── decoder-epoch-12-avg-2-chunk-16-left-64.onnx
             ├── joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx
             ├── tokens.txt
-            └── keywords.txt
+            ├── keywords.txt
+            └── bpe.model              # preparation-only
 ```
 
-The wake layout comes from the same `SherpaWakeConfig::gigaspeech_int8(...)` contract used by the detector. `keywords.txt` must be generated against the selected tokenizer/model; it is not merely a plain wake phrase.
+Runtime wake readiness requires encoder/decoder/joiner/tokens/keywords. `bpe.model` is needed only to create or later replace a keyword file.
 
 ## Environment overrides
 
@@ -72,15 +73,15 @@ Overrides must be absolute paths. Relative values are rejected during desktop se
 assistant_resources
 ```
 
-returns resource state and exact local paths only. It does not read model contents or send model data to Gemini.
+returns runtime resource state, exact paths and preparation-file state. It does not read model contents or send model data to Gemini.
 
-## Verified installer catalog
+## Backend resource catalog
 
 ```text
 assistant_resource_catalog
 ```
 
-returns backend-owned manifests containing:
+returns backend-owned manifests/actions containing:
 
 ```text
 id
@@ -95,19 +96,17 @@ sha256
 note
 ```
 
-The catalog is informational on the frontend. The install command accepts only a `resource_id`:
+The install/action command is still backend-ID based:
 
 ```text
-assistant_resource_install(resource_id)
+assistant_resource_install(resource_id, phrase?)
 ```
 
-There is no command argument for a custom URL, hash, destination or expected size.
+`phrase` is consumed only by the local `wake_keywords` action. There is no argument for a custom URL, checksum, destination or expected size.
 
-## Whisper automatic install
+## Whisper verified install
 
-Phase 13B enables automatic install only for the pinned multilingual Whisper base model used by the application.
-
-Pinned manifest:
+Phase 13B enables automatic install only for the pinned multilingual Whisper base model.
 
 ```text
 resource id: whisper
@@ -118,8 +117,6 @@ sha256: 60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
 license: MIT
 ```
 
-The source revision and URL are compiled into `resource_manifest.rs`.
-
 Install flow:
 
 ```text
@@ -129,38 +126,91 @@ trusted backend manifest
    ↓
 HTTPS request
    ↓
-unique .part file in destination directory
+unique .part file
    ↓
 stream bytes + SHA-256
    ↓
-expected byte-count check
-   ↓
-SHA-256 check
+byte-count + SHA-256 verification
    ↓
 flush + sync_all
    ↓
-re-check destination does not already exist
+no-overwrite recheck
    ↓
 atomic rename
-   ↓
-registry refresh
 ```
 
-Important behavior:
+Safety behavior:
 
 - existing destination files are never overwritten;
 - one install per resource ID may run at a time;
-- partial files use a random UUID name;
-- downloads exceeding the pinned size fail immediately;
-- final byte size must equal the manifest size;
-- SHA-256 must exactly match the manifest;
-- failed downloads/finalization remove the `.part` file where possible;
-- destination creation races fail closed rather than overwrite a file;
+- partial files use random UUID names;
+- oversized/short downloads fail;
+- SHA-256 mismatch fails;
+- failed downloads/finalization remove `.part` where possible;
 - verified installation occurs only after final rename succeeds.
+
+## Wake model archive remains manual
+
+The wake archive manifest remains:
+
+```text
+installable = false
+```
+
+Automatic archive download/extraction stays disabled because the model-specific redistribution/license and pinned archive digest are not yet held to the same verified standard as Whisper.
+
+A future archive installer must not infer permission to redistribute a model merely from the sherpa-onnx code license.
+
+## Phase 13C — local wake keyword preparation
+
+Phase 13C adds the virtual resource action:
+
+```text
+wake_keywords
+```
+
+It performs no network request.
+
+Required preparation inputs:
+
+```text
+bpe.model
+tokens.txt
+```
+
+Generation flow:
+
+```text
+user phrase
+   ↓
+normalize / validate
+   ↓
+SentencePiece using local bpe.model
+   ↓
+reject <unk>
+   ↓
+validate every piece against local tokens.txt
+   ↓
+construct `<pieces> @CANONICAL_LABEL`
+   ↓
+unique keywords.txt.part
+   ↓
+write + flush + sync_all
+   ↓
+no-overwrite recheck
+   ↓
+rename to keywords.txt
+```
+
+Current phrase constraints are intentionally aligned with the English GigaSpeech wake model: ASCII letters, spaces and apostrophes, at most 64 characters.
+
+`bpe.model` is shown in the Resource UI as a preparation file. Its absence does not make an already configured wake runtime unavailable if `keywords.txt` already exists.
+
+Phase 13C refuses to overwrite an existing `keywords.txt`. Replacing a configured phrase and hot-reloading WakeService are deferred to the next bounded phase.
 
 ## Progress event
 
-The backend emits:
+Verified network installs emit:
 
 ```text
 resource:install_progress
@@ -176,24 +226,7 @@ installed
 failed
 ```
 
-The Resources panel displays progress and refreshes both Resource Registry and Readiness after a successful installation.
-
-## Wake-word auto-install remains disabled
-
-The wake manifest is intentionally present but has:
-
-```text
-installable = false
-```
-
-Reasons:
-
-1. the existing GigaSpeech archive checksum/redistribution contract has not yet been pinned to the same standard as Whisper;
-2. wake installation is archive-based rather than single-file;
-3. `keywords.txt` is application-specific and must be generated using the model tokenizer;
-4. changing to a newer wake model should be an explicit runtime migration, not an implicit download substitution.
-
-Until those items are resolved, the Resources panel shows the expected wake files and reports `Manual install required`.
+The local `wake_keywords` action returns synchronously through the same resource action result and then refreshes Registry/Readiness.
 
 ## First-run UI
 
@@ -203,45 +236,49 @@ Open:
 Readiness → Resources
 ```
 
-For each resource it displays:
+For Whisper it displays the pinned source/version/license/size and verified-install progress.
 
-- registry state;
-- local root and file paths;
-- manifest version;
-- expected size;
-- license;
-- upstream source page;
-- install policy;
-- live verified-download progress when supported.
+For Wake Word it displays:
 
-A resource whose file already exists is never offered for automatic overwrite, even if the current build feature is disabled.
+- runtime-required files;
+- preparation-only `bpe.model`;
+- archive policy (`Manual install required`);
+- a local wake phrase field;
+- `Tạo keywords.txt` when the tokenizer resources are available and the destination does not already exist.
+
+After keyword creation the UI shows that an application restart is currently required for WakeService to initialize with the new file.
 
 ## Privacy and security boundary
 
 The resource subsystem does not expose prompts, credentials, broker secrets, screenshots, clipboard contents or permission arguments.
 
-Automatic download trust is anchored in backend code, not model output or frontend input. The model/Gemini cannot choose a resource URL or checksum through these commands.
+Wake phrase preparation is local-only and is not an MCP/Gemini/Antigravity tool. The phrase is tokenized on the device against local model files.
 
 ## Local verification checklist
 
 Registry:
 
 1. Open Readiness → Resources with no models installed.
-2. Confirm Whisper and wake paths use app-local-data.
-3. Add only one wake file and confirm wake becomes `incomplete` when the feature is compiled.
-4. Add all required wake files and confirm it becomes `ready`.
-5. Launch from a different working directory and confirm paths remain stable.
-6. Set a relative resource override and confirm setup rejects it.
+2. Confirm Whisper/wake paths use app-local-data.
+3. Confirm partial wake runtime files produce `incomplete` when compiled.
+4. Confirm `bpe.model` alone does not change runtime readiness.
+5. Launch from another working directory and confirm paths remain stable.
 
 Verified Whisper installer:
 
 1. Ensure `ggml-base.bin` is absent.
-2. Open Resources and confirm Whisper shows `Tải và xác minh`.
-3. Start installation and confirm progress moves through download/verification/install stages.
-4. Confirm the final path is the registry Whisper path and no `.part` file remains.
-5. Confirm Registry and Readiness refresh to Ready when `voice-whisper` is compiled.
-6. Repeat install with the final file present and confirm overwrite is refused/disabled.
-7. Interrupt network access during download and confirm no final model file is created.
-8. Confirm wake word still has no automatic install action.
+2. Start `Tải và xác minh` and observe download/verification/install stages.
+3. Confirm final path is correct and no `.part` remains.
+4. Confirm Registry/Readiness refresh to Ready when `voice-whisper` is compiled.
+5. Confirm overwrite is refused when the final file already exists.
+
+Wake keyword preparation:
+
+1. Install/copy the wake model manually, including `tokens.txt` and `bpe.model`, but omit `keywords.txt`.
+2. Enter `HEY ASSISTANT` in Resources and create the keyword file.
+3. Confirm the generated line contains BPE pieces followed by `@HEY_ASSISTANT`.
+4. Confirm unsupported characters or unknown tokenizer pieces are rejected.
+5. Confirm a second create attempt refuses to overwrite the file.
+6. Restart the desktop and verify WakeService recognizes the generated resource.
 
 Remote development still does not execute native builds, tests, runtime downloads or GitHub Actions.
