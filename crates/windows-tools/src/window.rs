@@ -3,12 +3,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
 };
 
-use crate::{ToolError, ToolResult};
+use crate::{apps, ToolError, ToolResult};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ActiveWindow {
     pub title: String,
     pub process_id: u32,
+    pub executable: Option<String>,
 }
 
 pub fn get_active() -> ToolResult<ActiveWindow> {
@@ -29,6 +30,12 @@ pub fn get_active() -> ToolResult<ActiveWindow> {
             String::new()
         };
 
-        Ok(ActiveWindow { title, process_id })
+        let executable = apps::executable_for_process(process_id)?;
+
+        Ok(ActiveWindow {
+            title,
+            process_id,
+            executable,
+        })
     }
 }
