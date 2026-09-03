@@ -6,7 +6,12 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 
-use windows_tools::{apps, audio, clipboard, media, system, window, ToolError};
+use windows_tools::{
+    apps, audio, automation, clipboard, media, system, window,
+    automation::{UiInspectOptions, UiTreeSnapshot},
+    window::{ActiveWindow, WindowHandle},
+    ToolError,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct WindowsMcpServer;
@@ -35,12 +40,97 @@ pub struct ClipboardWriteInput {
     pub text: String,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct UiInspectInput {
+    /// Optional HWND supplied by Desktop Context or a previous inspection. When
+    /// omitted, inspect the current foreground window.
+    pub window_handle: Option<i64>,
+    /// Maximum UI Automation tree depth. Defaults to 4 and is hard-capped natively.
+    pub max_depth: Option<u32>,
+    /// Maximum number of returned UI elements. Defaults to 160 and is hard-capped natively.
+    pub max_nodes: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct UiElementActionInput {
+    /// Exact root HWND returned by `ui_inspect`. Actions require an explicit
+    /// inspected window handle so a foreground-window change cannot retarget them.
+    pub window_handle: i64,
+    /// Child-index path returned by the most recent `ui_inspect` snapshot.
+    pub path: Vec<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct UiSetValueInput {
+    /// Exact root HWND returned by `ui_inspect`.
+    pub window_handle: i64,
+    /// Child-index path returned by the most recent `ui_inspect` snapshot.
+    pub path: Vec<u32>,
+    /// Text/value to assign to a writable UI Automation ValuePattern element.
+    pub value: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UiInspectResult {
+    window: ActiveWindow,
+    tree: UiTreeSnapshot,
+}
+
+#[derive(Debug, Serialize)]
+struct UiActionResult {
+    ok: bool,
+    action: &'static str,
+    /// Snapshot of the target root before the action. Invoke can legitimately
+    /// close or replace its window, so post-action HWND lookup is not required.
+    window_before_action: ActiveWindow,
+    path: Vec<u32>,
+}
+
 fn to_json<T: Serialize>(value: &T) -> Result<String, String> {
     serde_json::to_string(value).map_err(|error| format!("failed to serialize tool result: {error}"))
 }
 
 fn tool_error(error: ToolError) -> String {
     error.to_string()
+}
+
+fn explicit_window_handle(raw: i64) -> Result<WindowHandle, String> {
+    let raw = isize::try_from(raw)
+        .map_err(|_| "window_handle is outside the native Windows handle range".to_owned())?;
+    if raw == 0 {
+        return Err("window_handle must not be zero".to_owned());
+    }
+    Ok(WindowHandle(raw))
+}
+
+fn inspect_window_handle(raw: Option<i64>) -> Result<WindowHandle, String> {
+    match raw {
+        Some(raw) => explicit_window_handle(raw),
+        None => window::get_active_handle().map_err(tool_error),
+    }
+}
+
+async fn run_blocking<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| format!("Windows UI Automation worker failed: {error}"))?
+}
+
+fn action_result(
+    window_before_action: ActiveWindow,
+    path: Vec<u32>,
+    action: &'static str,
+) -> UiActionResult {
+    UiActionResult {
+        ok: true,
+        action,
+        window_before_action,
+        path,
+    }
 }
 
 #[tool_router(server_handler)]
@@ -173,5 +263,100 @@ impl WindowsMcpServer {
         clipboard::write_text(&text)
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
+    }
+
+    #[tool(
+        name = "ui_inspect",
+        description = "Inspect the Windows UI Automation Control View for a window. When Desktop Context provides active_window_handle for the user's referenced app, pass it explicitly; only omit window_handle when the actual foreground window is intentionally the target. Returns structural metadata, root_window_handle, and child-index paths without reading editable field values. Use this before ui_focus/ui_invoke/ui_set_value and inspect again if a path becomes stale."
+    )]
+    async fn ui_inspect(
+        &self,
+        Parameters(UiInspectInput {
+            window_handle,
+            max_depth,
+            max_nodes,
+        }): Parameters<UiInspectInput>,
+    ) -> Result<String, String> {
+        let handle = inspect_window_handle(window_handle)?;
+        let options = UiInspectOptions {
+            max_depth: max_depth.unwrap_or(4),
+            max_nodes: max_nodes.unwrap_or(160) as usize,
+        };
+
+        let result = run_blocking(move || {
+            let window = window::get(handle).map_err(tool_error)?;
+            let tree = automation::inspect(handle, options).map_err(tool_error)?;
+            Ok(UiInspectResult { window, tree })
+        })
+        .await?;
+
+        to_json(&result)
+    }
+
+    #[tool(
+        name = "ui_focus",
+        description = "Focus an element from a recent ui_inspect snapshot. Pass the exact root_window_handle returned by ui_inspect and the element path. The operation fails if the path is stale; inspect again instead of guessing."
+    )]
+    async fn ui_focus(
+        &self,
+        Parameters(UiElementActionInput {
+            window_handle,
+            path,
+        }): Parameters<UiElementActionInput>,
+    ) -> Result<String, String> {
+        let handle = explicit_window_handle(window_handle)?;
+        let result_path = path.clone();
+        let result = run_blocking(move || {
+            let window_before_action = window::get(handle).map_err(tool_error)?;
+            automation::focus(handle, &path).map_err(tool_error)?;
+            Ok(action_result(window_before_action, result_path, "focus"))
+        })
+        .await?;
+        to_json(&result)
+    }
+
+    #[tool(
+        name = "ui_invoke",
+        description = "Invoke an element from a recent ui_inspect snapshot using Windows UI Automation InvokePattern. Use only when the inspected element reports supports_invoke=true. This does not synthesize a mouse click. Pass the exact inspected root_window_handle and path; inspect again if stale."
+    )]
+    async fn ui_invoke(
+        &self,
+        Parameters(UiElementActionInput {
+            window_handle,
+            path,
+        }): Parameters<UiElementActionInput>,
+    ) -> Result<String, String> {
+        let handle = explicit_window_handle(window_handle)?;
+        let result_path = path.clone();
+        let result = run_blocking(move || {
+            let window_before_action = window::get(handle).map_err(tool_error)?;
+            automation::invoke(handle, &path).map_err(tool_error)?;
+            Ok(action_result(window_before_action, result_path, "invoke"))
+        })
+        .await?;
+        to_json(&result)
+    }
+
+    #[tool(
+        name = "ui_set_value",
+        description = "Set text/value on an element from a recent ui_inspect snapshot using a writable Windows UI Automation ValuePattern. Use only when supports_value=true and the user request requires editing that control. Never infer passwords or secrets. Pass the exact inspected root_window_handle and path; inspect again if stale."
+    )]
+    async fn ui_set_value(
+        &self,
+        Parameters(UiSetValueInput {
+            window_handle,
+            path,
+            value,
+        }): Parameters<UiSetValueInput>,
+    ) -> Result<String, String> {
+        let handle = explicit_window_handle(window_handle)?;
+        let result_path = path.clone();
+        let result = run_blocking(move || {
+            let window_before_action = window::get(handle).map_err(tool_error)?;
+            automation::set_value(handle, &path, &value).map_err(tool_error)?;
+            Ok(action_result(window_before_action, result_path, "set_value"))
+        })
+        .await?;
+        to_json(&result)
     }
 }

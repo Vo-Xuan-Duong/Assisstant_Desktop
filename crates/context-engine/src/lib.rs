@@ -47,7 +47,34 @@ impl ContextIntent {
             ],
         );
 
+        let ui_interaction = contains_any(
+            &text,
+            &[
+                "nhấn nút",
+                "bấm nút",
+                "bấm vào",
+                "click vào",
+                "click the",
+                "press the button",
+                "điền vào",
+                "nhập vào ô",
+                "nhập vào trường",
+                "fill in",
+                "type into",
+                "chọn mục",
+                "chọn nút",
+                "select the",
+                "focus vào",
+                "focus the",
+                "menu này",
+                "nút này",
+                "ô này",
+                "field này",
+            ],
+        );
+
         let active_window = screen
+            || ui_interaction
             || contains_any(
                 &text,
                 &[
@@ -123,6 +150,9 @@ impl Default for ContextConfig {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ActiveWindowContext {
+    /// Transient HWND captured before the Assistant takes foreground focus. It is
+    /// useful for deterministic MCP/UI Automation targeting within this request.
+    pub window_handle: i64,
     pub title: String,
     pub process_id: u32,
     pub executable: Option<String>,
@@ -172,11 +202,15 @@ impl ContextSnapshot {
         ];
 
         if let Some(active) = &self.active_window {
+            lines.push(format!("active_window_handle: {}", active.window_handle));
             lines.push(format!("active_window_title: {:?}", active.title));
             lines.push(format!("active_process_id: {}", active.process_id));
             if let Some(executable) = &active.executable {
                 lines.push(format!("active_executable: {:?}", executable));
             }
+            lines.push(
+                "When a Windows UI Automation tool is needed for this referenced application, pass active_window_handle explicitly instead of relying on the current foreground window.".to_owned(),
+            );
         }
 
         if let Some(text) = &self.clipboard_text {
@@ -256,13 +290,15 @@ fn collect_blocking(
     let mut snapshot = ContextSnapshot::empty(intent);
 
     if intent.active_window && config.policy.allow_active_window {
-        let result = match source_window {
-            Some(handle) => window::get(handle),
-            None => window::get_active(),
+        let handle = match source_window {
+            Some(handle) => Ok(handle),
+            None => window::get_active_handle(),
         };
-        match result {
-            Ok(active) => {
+
+        match handle.and_then(|handle| window::get(handle).map(|active| (handle, active))) {
+            Ok((handle, active)) => {
                 snapshot.active_window = Some(ActiveWindowContext {
+                    window_handle: handle.0 as i64,
                     title: active.title,
                     process_id: active.process_id,
                     executable: active.executable,
@@ -365,5 +401,13 @@ mod tests {
         let intent = ContextIntent::infer("Giải thích nội dung tôi vừa copy");
         assert!(intent.clipboard);
         assert!(!intent.screen);
+    }
+
+    #[test]
+    fn ui_interaction_requests_source_window_context() {
+        let intent = ContextIntent::infer("Bấm nút Retry giúp tôi");
+        assert!(intent.active_window);
+        assert!(!intent.screen);
+        assert!(!intent.clipboard);
     }
 }
