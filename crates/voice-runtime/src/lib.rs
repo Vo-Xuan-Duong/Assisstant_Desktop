@@ -5,6 +5,8 @@ pub mod wake;
 pub mod wake_runtime;
 #[cfg(feature = "wake-sherpa")]
 pub mod sherpa_wake;
+#[cfg(feature = "wake-sherpa")]
+pub mod wake_keywords;
 #[cfg(feature = "whisper")]
 pub mod whisper;
 
@@ -224,6 +226,52 @@ fn build_input_stream(
         SampleFormat::U64 => build_typed_stream::<u64>(device, config, sender, dropped_chunks, last_error),
         unsupported => Err(VoiceError::UnsupportedSampleFormat(unsupported.to_string())),
     }
+}
+
+fn build_typed_stream<T>(
+    device: &cpal::Device,
+    config: StreamConfig,
+    sample_format: SampleFormat,
+    sender: mpsc::Sender<AudioChunk>,
+    dropped_chunks: Arc<AtomicU64>,
+    last_error: Arc<Mutex<Option<String>>>,
+) -> Result<Stream, VoiceError>
+where
+    T: SizedSample + Copy + Send + 'static,
+    f32: FromSample<T>,
+{
+    let channels = usize::from(config.channels);
+    let sample_rate = config.sample_rate;
+    let callback_error = Arc::clone(&last_error);
+
+    let stream = device.build_input_stream::<T, _, _>(
+        config,
+        move |data: &[T], _| {
+            let samples = downmix_to_mono(data, channels);
+            if samples.is_empty() {
+                return;
+            }
+
+            let level = AudioLevel::from_samples(&samples);
+            let chunk = AudioChunk {
+                samples,
+                sample_rate,
+                level,
+            };
+
+            if sender.try_send(chunk).is_err() {
+                dropped_chunks.fetch_add(1, Ordering::Relaxed);
+            }
+        },
+        move |error| {
+            if let Ok(mut slot) = callback_error.lock() {
+                *slot = Some(error.to_string());
+            }
+        },
+        None,
+    )?;
+
+    Ok(stream)
 }
 
 fn build_typed_stream<T>(
