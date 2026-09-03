@@ -63,6 +63,15 @@ pub struct PermissionPolicyView {
     pub tools: Vec<PermissionPolicyToolView>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct PermissionServiceStatus {
+    pub broker_bound: bool,
+    pub policy_path: String,
+    pub audit_path: String,
+    pub policy_load_error: Option<String>,
+    pub pending_requests: usize,
+}
+
 #[derive(Debug, Deserialize)]
 struct PermissionPolicySetEvent {
     tool_name: String,
@@ -117,6 +126,19 @@ impl PermissionDesktopService {
 
         setup_policy_events(app, &service);
         Ok((service, environment))
+    }
+
+    pub(crate) async fn readiness_status(&self) -> PermissionServiceStatus {
+        PermissionServiceStatus {
+            // Reaching this service means bind_local succeeded during Tauri setup.
+            // The broker secret/address remains private and is intentionally not
+            // exposed through diagnostics.
+            broker_bound: true,
+            policy_path: self.policy_path.display().to_string(),
+            audit_path: self.audit_path.display().to_string(),
+            policy_load_error: self.policy_load_error.lock().await.clone(),
+            pending_requests: self.pending.lock().await.len(),
+        }
     }
 
     async fn handle_request(&self, app: &AppHandle, request: PermissionRequest) {

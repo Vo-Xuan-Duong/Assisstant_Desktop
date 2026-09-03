@@ -1,4 +1,4 @@
-use std::{fs::File, io::BufWriter, path::PathBuf};
+use std::{fs::File, io::BufWriter, path::{Path, PathBuf}};
 
 use serde::Serialize;
 use tracing::debug;
@@ -242,6 +242,13 @@ pub struct ContextEngine {
 impl ContextEngine {
     pub fn new(config: ContextConfig) -> Self {
         Self { config }
+    }
+
+    /// Local directory used for the one-at-a-time screen context artifact.
+    /// Exposed for diagnostics only; callers must not infer screenshot content
+    /// from this path or read the artifact unless a user request needs it.
+    pub fn artifact_dir(&self) -> &Path {
+        &self.config.artifact_dir
     }
 
     pub fn infer(&self, request: &str) -> ContextIntent {

@@ -21,6 +21,21 @@ export interface RuntimeHealth {
   conversation_id?: string | null;
 }
 
+export type ReadinessLevel = "ready" | "optional_missing" | "blocking";
+
+export interface ReadinessCheck {
+  id: string;
+  label: string;
+  level: ReadinessLevel;
+  detail: string;
+  path?: string | null;
+}
+
+export interface RuntimeReadinessReport {
+  overall: ReadinessLevel;
+  checks: ReadinessCheck[];
+}
+
 export interface VoiceCapabilities {
   tts_available: boolean;
   whisper_compiled: boolean;

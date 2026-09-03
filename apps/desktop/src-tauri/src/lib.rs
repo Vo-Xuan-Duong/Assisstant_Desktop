@@ -1,5 +1,6 @@
 mod edge;
 mod permission_desktop;
+mod readiness;
 mod wake_desktop;
 
 use std::sync::{Arc, Mutex};
@@ -116,6 +117,15 @@ async fn assistant_health(state: State<'_, DesktopState>) -> RuntimeHealth {
             conversation_id,
         },
     }
+}
+
+#[tauri::command]
+async fn assistant_readiness(
+    state: State<'_, DesktopState>,
+    permission: State<'_, PermissionDesktopService>,
+    wake: State<'_, WakeService>,
+) -> readiness::RuntimeReadinessReport {
+    readiness::collect(state.inner(), permission.inner(), wake.inner()).await
 }
 
 #[tauri::command]
@@ -580,6 +590,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             assistant_health,
+            assistant_readiness,
             assistant_wake_status,
             assistant_wake_set_enabled,
             assistant_submit,
