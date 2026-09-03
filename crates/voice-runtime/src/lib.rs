@@ -1,6 +1,9 @@
 pub mod stt;
 pub mod tts;
 pub mod vad;
+pub mod wake;
+#[cfg(feature = "wake-sherpa")]
+pub mod sherpa_wake;
 #[cfg(feature = "whisper")]
 pub mod whisper;
 
