@@ -33,9 +33,10 @@ struct EnumerationState {
 
 /// Enumerate visible top-level application windows with non-empty titles.
 ///
-/// Enumeration is bounded so one MCP call cannot return an unbounded desktop
-/// window set. The returned HWND + process_id pair can be reused by the explicit
-/// window mutation tools, which revalidate ownership immediately before acting.
+/// The returned payload is bounded so one MCP call cannot return an unbounded
+/// desktop window set. Enumeration itself is allowed to complete successfully
+/// even after the payload cap is reached because returning FALSE from the Win32
+/// callback would make `EnumWindows` report a failed enumeration.
 pub fn list_top_level(max_windows: Option<usize>) -> ToolResult<Vec<TopLevelWindow>> {
     let max_windows = max_windows
         .unwrap_or(DEFAULT_MAX_WINDOWS)
@@ -99,8 +100,12 @@ pub fn activate(
 
 unsafe extern "system" fn enum_window_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let state = unsafe { &mut *(lparam.0 as *mut EnumerationState) };
+
+    // Keep the callback successful after reaching the payload cap. EnumWindows
+    // interprets FALSE as early termination/failure, while we only want to stop
+    // collecting additional records.
     if state.windows.len() >= state.max_windows {
-        return BOOL(0);
+        return BOOL(1);
     }
 
     if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
@@ -125,9 +130,5 @@ unsafe extern "system" fn enum_window_callback(hwnd: HWND, lparam: LPARAM) -> BO
         foreground: hwnd == state.foreground,
     });
 
-    if state.windows.len() >= state.max_windows {
-        BOOL(0)
-    } else {
-        BOOL(1)
-    }
+    BOOL(1)
 }
