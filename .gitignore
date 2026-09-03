@@ -13,6 +13,8 @@ dist/
 *.exe
 *.dll
 *.dmp
+# Generated from tracked icons/icon.ico.b64 by scripts/prepare-release.ps1
+/apps/desktop/src-tauri/icons/icon.ico
 
 # Local runtime state
 .assistant/

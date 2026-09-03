@@ -10,6 +10,9 @@
     "targets": [
       "nsis"
     ],
+    "icon": [
+      "icons/icon.ico"
+    ],
     "publisher": "Vo Xuan Duong",
     "copyright": "Copyright © 2026 Vo Xuan Duong",
     "longDescription": "Windows-first desktop AI assistant powered by Antigravity, Gemini and a permission-gated MCP runtime.",
