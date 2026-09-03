@@ -4,14 +4,14 @@ Windows-first desktop AI assistant powered by **Google Antigravity + Gemini + MC
 
 Development is phase-based: finish one bounded subsystem, static-review it, update this README, then squash-merge to `main` before expanding the next subsystem.
 
-> Current remote verification policy: **do not run GitHub Actions or runtime tests**. Native Windows build/runtime verification is intentionally deferred to the local machine.
+> Current remote verification policy: **do not run GitHub Actions, tests, or native runtime builds remotely**. Native Windows verification is performed later on the local machine.
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 12A — Runtime Readiness Diagnostics**
-- **Latest completed main commit:** `24b39fb8bb34370f46e231b0b8b010e8d121b8c1`
-- **Current branch:** `phase/12b-runtime-paths-packaging`
-- **Current phase:** Phase 12B — Runtime Paths & Packaging Hardening
+- **Latest completed phase on `main`: Phase 12B — Runtime Paths & Packaging Hardening**
+- **Latest completed main commit:** `af9d712f545ea19ef5c2f7e9be5a1017a4555695`
+- **Current branch:** `phase/12c-local-verification-harness`
+- **Current phase:** Phase 12C — Local Windows Verification Harness
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
@@ -88,7 +88,8 @@ Windows
 | 11C — Window Discovery & Activation | ✅ | bounded window list + activate |
 | 11D — Monitor & Placement | ✅ | monitor geometry + move/resize |
 | 12A — Runtime Readiness | ✅ | readiness panel across runtime dependencies |
-| **12B — Runtime Paths & Packaging** | **🚧** | app-local-data runtime + bundled MCP sidecar |
+| 12B — Runtime Paths & Packaging | ✅ | app-local-data runtime + bundled MCP sidecar |
+| **12C — Local Windows Verification Harness** | **🚧** | read-only prerequisite/runtime preflight for local verification |
 
 ## Recent merge points
 
@@ -110,6 +111,7 @@ Windows
 11C  0f5aead...  window discovery + activation
 11D  5b1409d...  monitor discovery + placement
 12A  24b39fb...  runtime readiness diagnostics
+12B  af9d712...  runtime paths + MCP sidecar packaging
 ```
 
 ## Current MCP capability surface
@@ -168,11 +170,9 @@ Unknown    → Deny
 
 Sensitive approval is one-shot. Broker timeout, malformed policy, missing UI response or broker failure never becomes implicit Allow.
 
-## Phase 12B — Runtime Paths & Packaging Hardening
+## Runtime / packaging contract
 
-Phase 12B removes repository-root and current-working-directory assumptions.
-
-Runtime layout:
+Runtime data is no longer tied to repository root or process working directory.
 
 ```text
 <app-local-data>/
@@ -185,79 +185,68 @@ Runtime layout:
         └── mcp_config.json
 ```
 
-Desktop startup now:
+Antigravity uses `<app-local-data>/runtime` as its working directory. The desktop generates the MCP config with an absolute `assistant-mcp.exe` path. Tauri bundles `assistant-mcp` as an external sidecar, staged with the Rust target-triple suffix before dev/build.
 
-```text
-resolve RuntimePaths
-      ↓
-generate runtime/.agents/mcp_config.json
-      ↓
-resolve assistant-mcp.exe
-      ↓
-set Antigravity working_directory = runtime/
-      ↓
-create ContextEngine with app-local-data/context
+## Phase 12C — Local Windows Verification Harness
+
+Current branch adds a read-only PowerShell preflight script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1
 ```
 
-MCP binary resolution order:
+JSON output:
 
-```text
-ASSISTANT_MCP_BINARY
-      ↓
-Tauri bundled sidecar
-      ↓
-dev target/debug
-      ↓
-dev target/release
-      ↓
-expected bundled path for readiness diagnostics
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1 -Json
 ```
 
-Tauri config uses:
+The verifier checks:
 
 ```text
-bundle.externalBin = binaries/assistant-mcp
+Windows host
+repo structure
+rustc / cargo / Rust windows-msvc target
+pnpm
+Antigravity CLI (`agy`)
+MSVC/WebView2 hints
+MCP debug/release binaries
+Tauri target-triple staged sidecar
+app-local-data generated MCP config
+context directory
+permission policy JSON
+Whisper model (optional)
+wake model resources (optional)
 ```
 
-Before Tauri dev/build, `apps/desktop/scripts/stage-sidecar.mjs` builds `windows-mcp`, obtains the Rust host target triple, and stages:
+Result levels:
 
 ```text
-src-tauri/binaries/assistant-mcp-<target-triple>.exe
+ready
+optional
+blocking
+info
 ```
 
-Generated executables remain ignored by Git. Runtime `.agents/mcp_config.json` is no longer tracked; `.agents/mcp_config.example.json` is documentation-only.
+Exit code is `1` only when at least one blocking prerequisite is found. The script **does not** build, run tests, start the app, invoke GitHub Actions, download models, or modify runtime policy.
 
-Context screenshots now live under `<app-local-data>/context` instead of a working-directory-relative `.assistant/context` folder.
+Suggested manual sequence after preflight:
 
-Supported path overrides:
-
-```text
-ASSISTANT_RUNTIME_DIR
-ASSISTANT_MCP_BINARY
-ASSISTANT_WHISPER_MODEL
-ASSISTANT_WAKE_MODEL_DIR
-ASSISTANT_WAKE_KEYWORDS
+```powershell
+pnpm install
+pnpm --dir apps/desktop sidecar:stage:dev
+pnpm --dir apps/desktop tauri dev
 ```
+
+These commands are printed only as guidance; the verifier does not execute them.
 
 ## Readiness model
 
-The desktop Readiness panel checks:
-
-```text
-Antigravity CLI
-Windows MCP
-Permission Broker
-Context Storage
-Windows TTS
-Local Whisper STT
-Wake Word
-```
-
-Levels are `ready`, `optional_missing`, or `blocking`. Phase 12B checks the generated app-local-data MCP config and resolved sidecar path rather than a repository-local config.
+The in-app Readiness panel checks Antigravity, Windows MCP, Permission Broker, Context Storage, TTS, Whisper and Wake Word. Levels are `ready`, `optional_missing`, or `blocking`. The PowerShell harness is a separate **pre-start prerequisite check**, while the Readiness panel reports **live desktop runtime state**.
 
 ## Context / privacy
 
-Desktop context is collected on demand only. Screen and clipboard data are treated as untrusted context. Readiness/audit do not expose broker secrets, credentials, prompts, clipboard contents, screenshots, permission arguments or audit payloads.
+Desktop context is collected on demand only. Screen and clipboard data are treated as untrusted context. Readiness/audit/verifier output do not expose broker secrets, credentials, prompts, clipboard contents, screenshots, permission arguments or audit payloads.
 
 ## Development rules
 
@@ -268,20 +257,13 @@ Desktop context is collected on demand only. Screen and clipboard data are treat
 5. Prefer semantic Windows/UIA APIs over raw input.
 6. Fail closed for unknown tools, stale targets, broker errors and malformed policy.
 7. Static-review APIs before merge.
-8. Do not run GitHub Actions/runtime tests during remote development.
+8. Do not run GitHub Actions/tests/native runtime builds during remote development.
 9. Squash-merge completed phases to `main`.
 10. **Update README before every phase merge.**
 
-## Next direction
+## Next local milestone
 
-After Phase 12B, priority shifts to **local release verification and integration fixes** rather than rapidly expanding tool count:
-
-- verify Windows build;
-- verify Tauri sidecar bundle/install layout;
-- verify generated runtime MCP config;
-- verify packaged Antigravity session/auth behavior;
-- verify Whisper/wake model installation paths;
-- fix compile/runtime mismatches found locally before any raw mouse/keyboard automation.
+After Phase 12C merges, the project should be run on the target Windows machine. Use the verifier first, then start Tauri locally. Actual compiler/runtime failures should drive the next integration-fix phase before adding more computer-use capabilities.
 
 ## Documentation
 
@@ -295,3 +277,4 @@ After Phase 12B, priority shifts to **local release verification and integration
 - [`docs/PERMISSION_GATEWAY.md`](docs/PERMISSION_GATEWAY.md)
 - [`docs/RUNTIME_READINESS.md`](docs/RUNTIME_READINESS.md)
 - [`docs/RUNTIME_PATHS_PACKAGING.md`](docs/RUNTIME_PATHS_PACKAGING.md)
+- [`docs/LOCAL_WINDOWS_VERIFICATION.md`](docs/LOCAL_WINDOWS_VERIFICATION.md)
