@@ -72,6 +72,7 @@ fn is_valid_transition(from: AssistantState, to: AssistantState) -> bool {
             | (Listening, Idle)
             | (Listening, Error)
             | (Processing, Executing)
+            | (Processing, Confirming)
             | (Processing, Speaking)
             | (Processing, Idle)
             | (Processing, Error)
@@ -80,6 +81,7 @@ fn is_valid_transition(from: AssistantState, to: AssistantState) -> bool {
             | (Executing, Confirming)
             | (Executing, Idle)
             | (Executing, Error)
+            | (Confirming, Processing)
             | (Confirming, Executing)
             | (Confirming, Idle)
             | (Confirming, Error)
@@ -141,6 +143,32 @@ where
         Ok(())
     }
 
+    /// Mark an in-flight backend request as waiting for an explicit user
+    /// confirmation. This is intentionally a narrow lifecycle API rather than
+    /// exposing arbitrary state transitions to desktop integrations.
+    pub async fn begin_confirming(&self) -> Result<(), CoreError> {
+        match self.state().await {
+            AssistantState::Processing | AssistantState::Executing => {
+                self.change_state(AssistantState::Confirming).await
+            }
+            AssistantState::Confirming => Ok(()),
+            from => Err(CoreError::InvalidTransition {
+                from,
+                to: AssistantState::Confirming,
+            }),
+        }
+    }
+
+    /// Resume backend processing after the pending confirmation has been
+    /// resolved. Both Allow and Deny return control to the same in-flight agent
+    /// turn; the MCP result tells the model which decision occurred.
+    pub async fn finish_confirming(&self) -> Result<(), CoreError> {
+        if self.state().await == AssistantState::Confirming {
+            self.change_state(AssistantState::Processing).await?;
+        }
+        Ok(())
+    }
+
     pub async fn handle_text(&self, request: UserRequest) -> Result<String, CoreError> {
         // Keep the first implementation single-flight. Voice interruption and
         // concurrent tool execution are introduced deliberately in later phases.
@@ -154,6 +182,12 @@ where
                         text: response.clone(),
                     })
                     .await;
+                // A broker timeout can resolve after the desktop event loop has
+                // lost its UI consumer. Normalize a lingering Confirming state
+                // before ending the completed request.
+                if self.state().await == AssistantState::Confirming {
+                    self.change_state(AssistantState::Processing).await?;
+                }
                 self.change_state(AssistantState::Idle).await?;
                 Ok(response)
             }
@@ -197,6 +231,16 @@ mod tests {
     #[test]
     fn state_machine_accepts_expected_text_flow() {
         let mut state = StateMachine::default();
+        state.transition(AssistantState::Processing).unwrap();
+        state.transition(AssistantState::Idle).unwrap();
+        assert_eq!(state.state(), AssistantState::Idle);
+    }
+
+    #[test]
+    fn state_machine_accepts_confirmation_round_trip() {
+        let mut state = StateMachine::default();
+        state.transition(AssistantState::Processing).unwrap();
+        state.transition(AssistantState::Confirming).unwrap();
         state.transition(AssistantState::Processing).unwrap();
         state.transition(AssistantState::Idle).unwrap();
         assert_eq!(state.state(), AssistantState::Idle);
