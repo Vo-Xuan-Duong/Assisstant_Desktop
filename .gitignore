@@ -1,0 +1,38 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# Tauri / Windows
+*.pdb
+*.msi
+*.exe
+*.dll
+*.dmp
+
+# Local runtime state
+.assistant/
+*.db
+*.db-shm
+*.db-wal
+logs/
+models/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Generated native build output
+native/**/build/
+native/**/out/
