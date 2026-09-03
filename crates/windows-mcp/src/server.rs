@@ -1,3 +1,4 @@
+use permission_engine::{enforce, PermissionEngine, PermissionError};
 use rmcp::{
     handler::server::wrapper::Parameters,
     schemars,
@@ -7,14 +8,28 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 
 use windows_tools::{
-    apps, audio, automation, clipboard, media, system, window,
+    apps, audio, automation, clipboard, media, system, tool_definition, window,
     automation::{UiInspectOptions, UiScrollAmount, UiTreeSnapshot},
     window::{ActiveWindow, WindowHandle},
     ToolError,
 };
 
 #[derive(Debug, Clone, Default)]
-pub struct WindowsMcpServer;
+pub struct WindowsMcpServer {
+    permissions: PermissionEngine,
+}
+
+impl WindowsMcpServer {
+    fn authorize(&self, tool_name: &str) -> Result<(), String> {
+        let definition = tool_definition(tool_name).ok_or_else(|| {
+            permission_error(PermissionError::UnknownTool {
+                tool_name: tool_name.to_owned(),
+            })
+        })?;
+        let evaluation = self.permissions.evaluate(tool_name, definition.risk);
+        enforce(evaluation).map_err(permission_error)
+    }
+}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SetVolumeInput {
@@ -138,6 +153,20 @@ fn tool_error(error: ToolError) -> String {
     error.to_string()
 }
 
+fn permission_error(error: PermissionError) -> String {
+    match error {
+        PermissionError::ConfirmationRequired { tool_name, reason } => {
+            format!("confirmation_required: tool={tool_name}; {reason}")
+        }
+        PermissionError::Denied { tool_name, reason } => {
+            format!("permission_denied: tool={tool_name}; {reason}")
+        }
+        PermissionError::UnknownTool { tool_name } => {
+            format!("permission_denied: unknown tool `{tool_name}` has no risk catalogue entry")
+        }
+    }
+}
+
 fn explicit_window_handle(raw: i64) -> Result<WindowHandle, String> {
     let raw = isize::try_from(raw)
         .map_err(|_| "window_handle is outside the native Windows handle range".to_owned())?;
@@ -184,6 +213,7 @@ impl WindowsMcpServer {
         description = "Read the current master volume percentage and mute state of the default Windows output device. This is read-only."
     )]
     fn audio_get_volume(&self) -> Result<String, String> {
+        self.authorize("audio_get_volume")?;
         audio::get_state().map_err(tool_error).and_then(|value| to_json(&value))
     }
 
@@ -195,6 +225,7 @@ impl WindowsMcpServer {
         &self,
         Parameters(SetVolumeInput { percent }): Parameters<SetVolumeInput>,
     ) -> Result<String, String> {
+        self.authorize("audio_set_volume")?;
         audio::set_volume(percent)
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
@@ -208,6 +239,7 @@ impl WindowsMcpServer {
         &self,
         Parameters(SetMuteInput { muted }): Parameters<SetMuteInput>,
     ) -> Result<String, String> {
+        self.authorize("audio_set_mute")?;
         audio::set_mute(muted)
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
@@ -221,6 +253,7 @@ impl WindowsMcpServer {
         &self,
         Parameters(OpenAppInput { target }): Parameters<OpenAppInput>,
     ) -> Result<String, String> {
+        self.authorize("apps_open")?;
         apps::open(&target)
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
@@ -231,6 +264,7 @@ impl WindowsMcpServer {
         description = "List currently running Windows process executables and process ids. This is read-only and does not terminate or modify processes."
     )]
     fn apps_list(&self) -> Result<String, String> {
+        self.authorize("apps_list")?;
         apps::list_running()
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
@@ -241,6 +275,7 @@ impl WindowsMcpServer {
         description = "Read the title and process id of the current Windows foreground window. This is read-only."
     )]
     fn window_get_active(&self) -> Result<String, String> {
+        self.authorize("window_get_active")?;
         window::get_active()
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
@@ -251,6 +286,7 @@ impl WindowsMcpServer {
         description = "Read basic Windows machine information including logical CPU count and physical-memory usage. This is read-only."
     )]
     fn system_get_info(&self) -> Result<String, String> {
+        self.authorize("system_get_info")?;
         system::get_info()
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
@@ -261,6 +297,7 @@ impl WindowsMcpServer {
         description = "Send the Windows media play/pause key to the active media session."
     )]
     fn media_play_pause(&self) -> Result<String, String> {
+        self.authorize("media_play_pause")?;
         media::play_pause()
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
@@ -271,6 +308,7 @@ impl WindowsMcpServer {
         description = "Send the Windows next-track media key to the active media session."
     )]
     fn media_next(&self) -> Result<String, String> {
+        self.authorize("media_next")?;
         media::next()
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
@@ -281,6 +319,7 @@ impl WindowsMcpServer {
         description = "Send the Windows previous-track media key to the active media session."
     )]
     fn media_previous(&self) -> Result<String, String> {
+        self.authorize("media_previous")?;
         media::previous()
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
@@ -291,6 +330,7 @@ impl WindowsMcpServer {
         description = "Read Unicode text from the Windows clipboard. Clipboard content can contain sensitive information, so call this only when it is relevant to the user's request."
     )]
     fn clipboard_read_text(&self) -> Result<String, String> {
+        self.authorize("clipboard_read_text")?;
         clipboard::read_text()
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
@@ -304,6 +344,7 @@ impl WindowsMcpServer {
         &self,
         Parameters(ClipboardWriteInput { text }): Parameters<ClipboardWriteInput>,
     ) -> Result<String, String> {
+        self.authorize("clipboard_write_text")?;
         clipboard::write_text(&text)
             .map_err(tool_error)
             .and_then(|value| to_json(&value))
@@ -321,6 +362,7 @@ impl WindowsMcpServer {
             max_nodes,
         }): Parameters<UiInspectInput>,
     ) -> Result<String, String> {
+        self.authorize("ui_inspect")?;
         let handle = inspect_window_handle(window_handle)?;
         let options = UiInspectOptions {
             max_depth: max_depth.unwrap_or(4),
@@ -348,6 +390,7 @@ impl WindowsMcpServer {
             path,
         }): Parameters<UiElementActionInput>,
     ) -> Result<String, String> {
+        self.authorize("ui_focus")?;
         let handle = explicit_window_handle(window_handle)?;
         let result_path = path.clone();
         let result = run_blocking(move || {
@@ -361,7 +404,7 @@ impl WindowsMcpServer {
 
     #[tool(
         name = "ui_invoke",
-        description = "Invoke an element from a recent ui_inspect snapshot using Windows UI Automation InvokePattern. Use only when supports_invoke=true. This does not synthesize a mouse click. Pass the exact inspected root_window_handle and path; inspect again if stale."
+        description = "Invoke an element from a recent ui_inspect snapshot using Windows UI Automation InvokePattern. Use only when supports_invoke=true. This does not synthesize a mouse click. Pass the exact inspected root_window_handle and path; inspect again if stale. Sensitive actions require desktop confirmation."
     )]
     async fn ui_invoke(
         &self,
@@ -370,6 +413,7 @@ impl WindowsMcpServer {
             path,
         }): Parameters<UiElementActionInput>,
     ) -> Result<String, String> {
+        self.authorize("ui_invoke")?;
         let handle = explicit_window_handle(window_handle)?;
         let result_path = path.clone();
         let result = run_blocking(move || {
@@ -383,7 +427,7 @@ impl WindowsMcpServer {
 
     #[tool(
         name = "ui_set_value",
-        description = "Set text/value on an element from a recent ui_inspect snapshot using a writable Windows UI Automation ValuePattern. Use only when supports_value=true and the user request requires editing that control. Never infer passwords or secrets. Pass the exact inspected root_window_handle and path; inspect again if stale."
+        description = "Set text/value on an element from a recent ui_inspect snapshot using a writable Windows UI Automation ValuePattern. Use only when supports_value=true and the user request requires editing that control. Never infer passwords or secrets. Sensitive actions require desktop confirmation."
     )]
     async fn ui_set_value(
         &self,
@@ -393,6 +437,7 @@ impl WindowsMcpServer {
             value,
         }): Parameters<UiSetValueInput>,
     ) -> Result<String, String> {
+        self.authorize("ui_set_value")?;
         let handle = explicit_window_handle(window_handle)?;
         let result_path = path.clone();
         let result = run_blocking(move || {
@@ -406,7 +451,7 @@ impl WindowsMcpServer {
 
     #[tool(
         name = "ui_toggle",
-        description = "Toggle an element that exposes UI Automation TogglePattern, such as many checkboxes or switches. Inspect first and use the returned toggle_state to avoid unnecessary or incorrect toggles."
+        description = "Toggle an element that exposes UI Automation TogglePattern, such as many checkboxes or switches. Inspect first and use the returned toggle_state to avoid unnecessary or incorrect toggles. Sensitive actions require desktop confirmation."
     )]
     async fn ui_toggle(
         &self,
@@ -415,6 +460,7 @@ impl WindowsMcpServer {
             path,
         }): Parameters<UiElementActionInput>,
     ) -> Result<String, String> {
+        self.authorize("ui_toggle")?;
         let handle = explicit_window_handle(window_handle)?;
         let result_path = path.clone();
         let result = run_blocking(move || {
@@ -428,7 +474,7 @@ impl WindowsMcpServer {
 
     #[tool(
         name = "ui_select",
-        description = "Select one element that exposes UI Automation SelectionItemPattern, such as many list, tab, menu, or radio items. Inspect first and prefer an element whose is_selected state is false."
+        description = "Select one element that exposes UI Automation SelectionItemPattern, such as many list, tab, menu, or radio items. Inspect first and prefer an element whose is_selected state is false. Sensitive actions require desktop confirmation."
     )]
     async fn ui_select(
         &self,
@@ -437,6 +483,7 @@ impl WindowsMcpServer {
             path,
         }): Parameters<UiElementActionInput>,
     ) -> Result<String, String> {
+        self.authorize("ui_select")?;
         let handle = explicit_window_handle(window_handle)?;
         let result_path = path.clone();
         let result = run_blocking(move || {
@@ -460,6 +507,7 @@ impl WindowsMcpServer {
             expanded,
         }): Parameters<UiSetExpandedInput>,
     ) -> Result<String, String> {
+        self.authorize("ui_set_expanded")?;
         let handle = explicit_window_handle(window_handle)?;
         let result_path = path.clone();
         let action = if expanded { "expand" } else { "collapse" };
@@ -485,6 +533,7 @@ impl WindowsMcpServer {
             vertical,
         }): Parameters<UiScrollInput>,
     ) -> Result<String, String> {
+        self.authorize("ui_scroll")?;
         let handle = explicit_window_handle(window_handle)?;
         let result_path = path.clone();
         let horizontal = UiScrollAmount::from(horizontal);
