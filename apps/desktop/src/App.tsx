@@ -14,6 +14,7 @@ import {
   submitPrompt,
 } from "./api";
 import { onPermissionRequest, submitPermissionDecision } from "./permissionApi";
+import ReadinessPanel from "./ReadinessPanel";
 import type {
   AssistantState,
   ChatMessage,
@@ -458,6 +459,7 @@ export default function App() {
           >
             Wake {wake?.enabled ? "ON" : "OFF"}
           </button>
+          <ReadinessPanel />
           <button type="button" className="secondary" disabled={busy} onClick={() => void refreshHealth()}>
             Kiểm tra
           </button>
