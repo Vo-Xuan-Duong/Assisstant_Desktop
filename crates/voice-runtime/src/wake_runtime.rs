@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tokio::{
-    sync::{broadcast, mpsc, watch},
+    sync::{broadcast, mpsc, oneshot, watch},
     time::{sleep, timeout, Instant},
 };
 use tracing::{debug, warn};
@@ -42,10 +42,7 @@ pub enum WakeRuntimeEvent {
 #[derive(Debug, Clone, Copy)]
 pub struct WakeRuntimeConfig {
     pub microphone: MicrophoneConfig,
-    /// Minimum detector quiet period after a successful wake before the runtime
-    /// may reopen the microphone.
     pub detection_cooldown: Duration,
-    /// Retry delay after the microphone/backend cannot be opened.
     pub error_retry_delay: Duration,
     pub enabled_on_start: bool,
 }
@@ -61,18 +58,26 @@ impl Default for WakeRuntimeConfig {
     }
 }
 
-#[derive(Debug)]
 enum WakeCommand {
     SetEnabled(bool),
     Suspend,
     Resume,
+    Reload {
+        detector: Box<dyn WakeWordDetector>,
+        ack: oneshot::Sender<Result<(), String>>,
+    },
     Shutdown,
 }
 
-#[derive(Debug)]
 enum WorkerInput {
     Command(Option<WakeCommand>),
     Audio(Option<AudioChunk>),
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CommandEffect {
+    stop: bool,
+    reopen_microphone: bool,
 }
 
 #[derive(Clone)]
@@ -98,9 +103,6 @@ impl WakeRuntimeHandle {
         Ok(())
     }
 
-    /// Suspend wake capture and do not return until the worker has released its
-    /// CPAL microphone stream. This acts as a resource barrier before Whisper or
-    /// another full-duplex voice path opens the same Windows input endpoint.
     pub async fn suspend(&self) -> Result<(), String> {
         if matches!(
             self.state(),
@@ -130,6 +132,25 @@ impl WakeRuntimeHandle {
             .send(WakeCommand::Resume)
             .await
             .map_err(|_| "wake runtime is no longer running".to_owned())
+    }
+
+    /// Replace the detector while preserving this runtime handle/event stream.
+    /// The worker acknowledges only after the replacement detector successfully
+    /// resets; otherwise the previous detector remains active.
+    pub async fn reload(&self, detector: Box<dyn WakeWordDetector>) -> Result<(), String> {
+        let (ack_tx, ack_rx) = oneshot::channel();
+        self.commands
+            .send(WakeCommand::Reload {
+                detector,
+                ack: ack_tx,
+            })
+            .await
+            .map_err(|_| "wake runtime is no longer running".to_owned())?;
+
+        timeout(Duration::from_secs(5), ack_rx)
+            .await
+            .map_err(|_| "timed out waiting for wake detector reload".to_owned())?
+            .map_err(|_| "wake runtime stopped before detector reload completed".to_owned())?
     }
 
     pub async fn shutdown(&self) -> Result<(), String> {
@@ -225,21 +246,16 @@ async fn run_worker(
             cooldown_until = None;
             transition(&state_tx, &events, WakeRuntimeState::Disabled);
 
-            match commands.recv().await {
-                Some(WakeCommand::SetEnabled(true)) => {
-                    enabled = true;
-                    suspended = false;
-                    transition(&state_tx, &events, WakeRuntimeState::Starting);
-                    continue;
-                }
-                Some(WakeCommand::Shutdown) | None => break,
-                // Resume is intentionally ignored while disabled. A delayed
-                // resume scheduled before the user disabled wake must never
-                // silently re-enable the always-on microphone.
-                Some(WakeCommand::Resume)
-                | Some(WakeCommand::SetEnabled(false))
-                | Some(WakeCommand::Suspend) => continue,
+            let effect = apply_command(
+                commands.recv().await,
+                &mut enabled,
+                &mut suspended,
+                &mut detector,
+            );
+            if effect.stop {
+                break;
             }
+            continue;
         }
 
         if suspended {
@@ -247,19 +263,16 @@ async fn run_worker(
             retry_at = None;
             transition(&state_tx, &events, WakeRuntimeState::Suspended);
 
-            match commands.recv().await {
-                Some(WakeCommand::Resume) => {
-                    suspended = false;
-                    transition(&state_tx, &events, WakeRuntimeState::Starting);
-                    continue;
-                }
-                Some(WakeCommand::SetEnabled(false)) => {
-                    enabled = false;
-                    continue;
-                }
-                Some(WakeCommand::Shutdown) | None => break,
-                Some(WakeCommand::SetEnabled(true)) | Some(WakeCommand::Suspend) => continue,
+            let effect = apply_command(
+                commands.recv().await,
+                &mut enabled,
+                &mut suspended,
+                &mut detector,
+            );
+            if effect.stop {
+                break;
             }
+            continue;
         }
 
         if let Some(until) = cooldown_until {
@@ -267,8 +280,14 @@ async fn run_worker(
                 transition(&state_tx, &events, WakeRuntimeState::Cooldown);
                 tokio::select! {
                     command = commands.recv() => {
-                        if apply_command(command, &mut enabled, &mut suspended) {
+                        let effect = apply_command(command, &mut enabled, &mut suspended, &mut detector);
+                        if effect.stop {
                             break;
+                        }
+                        if effect.reopen_microphone {
+                            microphone = None;
+                            retry_at = None;
+                            cooldown_until = None;
                         }
                     }
                     _ = sleep(until.saturating_duration_since(Instant::now())) => {
@@ -284,8 +303,13 @@ async fn run_worker(
             if Instant::now() < until {
                 tokio::select! {
                     command = commands.recv() => {
-                        if apply_command(command, &mut enabled, &mut suspended) {
+                        let effect = apply_command(command, &mut enabled, &mut suspended, &mut detector);
+                        if effect.stop {
                             break;
+                        }
+                        if effect.reopen_microphone {
+                            microphone = None;
+                            retry_at = None;
                         }
                     }
                     _ = sleep(until.saturating_duration_since(Instant::now())) => {
@@ -319,9 +343,6 @@ async fn run_worker(
             }
         }
 
-        // Isolate the stream borrow inside this block. Once WorkerInput is
-        // produced, the borrow has ended and the selected branch may safely drop
-        // or replace `microphone`.
         let input = {
             let stream = microphone.as_mut().expect("microphone initialized above");
             tokio::select! {
@@ -332,11 +353,16 @@ async fn run_worker(
 
         match input {
             WorkerInput::Command(command) => {
-                if apply_command(command, &mut enabled, &mut suspended) {
+                let effect = apply_command(command, &mut enabled, &mut suspended, &mut detector);
+                if effect.stop {
                     break;
                 }
-                if !enabled || suspended {
+                if !enabled || suspended || effect.reopen_microphone {
                     microphone = None;
+                }
+                if effect.reopen_microphone {
+                    retry_at = None;
+                    cooldown_until = None;
                 }
             }
             WorkerInput::Audio(chunk) => {
@@ -353,8 +379,6 @@ async fn run_worker(
 
                 match detector.process(&chunk) {
                     Ok(Some(detection)) => {
-                        // Release microphone ownership before publishing the event so
-                        // the desktop can immediately begin a full voice turn.
                         microphone = None;
                         cooldown_until = Some(Instant::now() + config.detection_cooldown);
                         let _ = events.send(WakeRuntimeEvent::Detected { detection });
@@ -375,33 +399,50 @@ async fn run_worker(
     transition(&state_tx, &events, WakeRuntimeState::Stopped);
 }
 
-/// Returns true when the worker should stop.
 fn apply_command(
     command: Option<WakeCommand>,
     enabled: &mut bool,
     suspended: &mut bool,
-) -> bool {
+    detector: &mut Box<dyn WakeWordDetector>,
+) -> CommandEffect {
     match command {
         Some(WakeCommand::SetEnabled(value)) => {
             *enabled = value;
             if !value {
                 *suspended = false;
             }
-            false
+            CommandEffect::default()
         }
         Some(WakeCommand::Suspend) => {
             if *enabled {
                 *suspended = true;
             }
-            false
+            CommandEffect::default()
         }
         Some(WakeCommand::Resume) => {
             if *enabled {
                 *suspended = false;
             }
-            false
+            CommandEffect::default()
         }
-        Some(WakeCommand::Shutdown) | None => true,
+        Some(WakeCommand::Reload {
+            mut detector: replacement,
+            ack,
+        }) => {
+            let result = replacement.reset().map_err(|error| error.to_string());
+            if result.is_ok() {
+                *detector = replacement;
+            }
+            let _ = ack.send(result);
+            CommandEffect {
+                stop: false,
+                reopen_microphone: true,
+            }
+        }
+        Some(WakeCommand::Shutdown) | None => CommandEffect {
+            stop: true,
+            reopen_microphone: false,
+        },
     }
 }
 
