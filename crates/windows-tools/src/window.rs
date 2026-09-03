@@ -100,7 +100,7 @@ pub fn monitor_bounds(handle: WindowHandle) -> ToolResult<MonitorBounds> {
             ..Default::default()
         };
         if !GetMonitorInfoW(monitor, &mut info).as_bool() {
-            return Err(ToolError::Windows(WindowsError::from_win32()));
+            return Err(ToolError::Windows(WindowsError::from_thread()));
         }
 
         let width = info.rcMonitor.right - info.rcMonitor.left;
