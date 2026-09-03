@@ -1,6 +1,3 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-
-use assistant_common::{AssistantEvent, AssistantState};
 use serde::Serialize;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
@@ -11,7 +8,6 @@ use windows_tools::window::{self, MonitorBounds, WindowHandle};
 
 const EDGE_THICKNESS: u32 = 24;
 const EDGE_LABELS: [&str; 4] = ["edge-top", "edge-right", "edge-bottom", "edge-left"];
-static EDGE_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize)]
 struct EdgeModeEvent {
@@ -55,59 +51,19 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn activate(app: &AppHandle, source_window: Option<WindowHandle>) {
-    let epoch = next_epoch();
-    if let Err(error) = show_mode(app, source_window, "activated") {
-        warn!(%error, "failed to show assistant activation edge overlay");
+    if let Err(error) = show(app, source_window) {
+        warn!(%error, "failed to show assistant edge overlay");
         return;
     }
 
-    schedule_hide(app.clone(), epoch, 900);
-}
-
-pub fn sync_assistant_event(
-    app: &AppHandle,
-    event: &AssistantEvent,
-    source_window: Option<WindowHandle>,
-) {
-    let AssistantEvent::StateChanged { to, .. } = event else {
-        return;
-    };
-
-    let epoch = next_epoch();
-    match to {
-        AssistantState::Idle => {
-            // Voice turns briefly pass through Idle between the model response and
-            // SAPI playback. A short grace period prevents a visible edge flicker.
-            schedule_hide(app.clone(), epoch, 160);
-        }
-        AssistantState::Listening => show_or_warn(app, source_window, "listening"),
-        AssistantState::Processing => show_or_warn(app, source_window, "processing"),
-        AssistantState::Executing => show_or_warn(app, source_window, "executing"),
-        AssistantState::Speaking => show_or_warn(app, source_window, "speaking"),
-        AssistantState::Confirming => show_or_warn(app, source_window, "confirming"),
-        AssistantState::Error => {
-            show_or_warn(app, source_window, "error");
-            schedule_hide(app.clone(), epoch, 1400);
-        }
+    if let Err(error) = app.emit("edge:mode", EdgeModeEvent { mode: "activated" }) {
+        warn!(%error, "failed to emit assistant edge activation mode");
     }
 }
 
-fn show_or_warn(app: &AppHandle, source_window: Option<WindowHandle>, mode: &'static str) {
-    if let Err(error) = show_mode(app, source_window, mode) {
-        warn!(%error, %mode, "failed to update assistant edge overlay");
-    }
-}
-
-fn show_mode(
-    app: &AppHandle,
-    source_window: Option<WindowHandle>,
-    mode: &'static str,
-) -> Result<(), String> {
+fn show(app: &AppHandle, source_window: Option<WindowHandle>) -> Result<(), String> {
     let bounds = resolve_monitor_bounds(app, source_window)?;
     position_windows(app, bounds)?;
-
-    app.emit("edge:mode", EdgeModeEvent { mode })
-        .map_err(|error| error.to_string())?;
 
     for label in EDGE_LABELS {
         if let Some(window) = app.get_webview_window(label) {
@@ -115,6 +71,16 @@ fn show_mode(
         }
     }
     Ok(())
+}
+
+pub fn hide(app: &AppHandle) {
+    for label in EDGE_LABELS {
+        if let Some(window) = app.get_webview_window(label) {
+            if let Err(error) = window.hide() {
+                warn!(%error, %label, "failed to hide assistant edge overlay");
+            }
+        }
+    }
 }
 
 fn resolve_monitor_bounds(
@@ -203,27 +169,4 @@ fn set_geometry(
         .set_size(PhysicalSize { width, height })
         .map_err(|error| error.to_string())?;
     Ok(())
-}
-
-fn hide(app: &AppHandle) {
-    for label in EDGE_LABELS {
-        if let Some(window) = app.get_webview_window(label) {
-            if let Err(error) = window.hide() {
-                warn!(%error, %label, "failed to hide assistant edge overlay");
-            }
-        }
-    }
-}
-
-fn next_epoch() -> u64 {
-    EDGE_EPOCH.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
-}
-
-fn schedule_hide(app: AppHandle, epoch: u64, delay_ms: u64) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-        if EDGE_EPOCH.load(Ordering::Acquire) == epoch {
-            hide(&app);
-        }
-    });
 }
