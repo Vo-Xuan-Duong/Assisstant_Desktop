@@ -26,10 +26,12 @@ h1 { margin: 0; font-size: 22px; font-weight: 650; }
 .runtime-card div:first-child { display: grid; gap: 3px; }
 .runtime-card strong { font-size: 13px; font-weight: 600; }
 .runtime-card small { color: #77839a; overflow-wrap: anywhere; }
-.runtime-card .voice-ready { color: #70cfa4; }
-.runtime-card .voice-warning { color: #caa56f; }
+.runtime-card .voice-ready, .runtime-card .wake-ready { color: #70cfa4; }
+.runtime-card .voice-warning, .runtime-card .wake-warning { color: #caa56f; }
 .runtime-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.secondary, .quick-prompts button, .footer-action { border: 1px solid #30394d; border-radius: 10px; background: #171b24; color: #cdd5e4; padding: 8px 10px; }
+.secondary, .quick-prompts button, .footer-action, .wake-toggle { border: 1px solid #30394d; border-radius: 10px; background: #171b24; color: #cdd5e4; padding: 8px 10px; }
+.wake-toggle { min-width: 86px; border-color: #394258; transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease; }
+.wake-toggle-on { color: #dfffee; border-color: #4d9e78; background: #17261f; box-shadow: 0 0 16px rgba(84, 201, 143, .15); }
 .conversation { overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 6px 2px 8px; scrollbar-width: thin; }
 .message { max-width: 88%; padding: 12px 14px; border-radius: 16px; border: 1px solid #252c3a; background: #151923; }
 .message span { display: block; margin-bottom: 5px; color: #8793a9; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
