@@ -11,7 +11,7 @@ Development is phase-based: finish one bounded subsystem, static-review it, upda
 - **Latest completed phase on `main`: Phase 14A — Windows Startup & Single Instance**
 - **Latest completed main commit:** `1e20daf634274a423f36e10da5a2e8d3cebfce45`
 - **Current branch:** `phase/14b-release-readiness`
-- **Current phase:** Phase 14B — Release Readiness
+- **Current phase:** Phase 14B — Release Readiness (remote hardening complete; local release gates remain)
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
@@ -58,6 +58,7 @@ Verified Download   Local Preparation
 ## Locked stack
 
 - Rust — assistant core, bridge, MCP, Windows runtime, permission/runtime/resource services.
+- Rust `1.85.0` — pinned release toolchain for the current workspace baseline.
 - TypeScript + React — desktop UI.
 - Tauri 2 — shell, tray, global shortcut, transparent edge UI, sidecar bundling.
 - Tokio — async runtime.
@@ -114,7 +115,7 @@ Verified Download   Local Preparation
 | 13C — Wake Keyword Preparation | ✅ | local SentencePiece tokenization + validated `keywords.txt` generation |
 | 13D — Wake Lifecycle & Hot Reload | ✅ | transactional phrase replacement + detector hot reload + persisted wake settings |
 | 14A — Windows Startup & Single Instance | ✅ | one process + tray-controlled logon startup + hidden background launch |
-| **14B — Release Readiness** | **🚧** | full-feature Windows bundle contract + release verifier/checklist |
+| **14B — Release Readiness** | **✅** | full-feature Windows bundle contract + fail-closed release verifier/checklist |
 
 ## Recent merge points
 
@@ -364,7 +365,7 @@ JSON output:
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1 -Json
 ```
 
-The verifier is read-only and now also reports wake `tokens.txt`, `keywords.txt`, preparation-only `bpe.model`, and persisted `settings/wake.json` state. It does not build, test, start the app, invoke Actions, download models or change runtime policy.
+The verifier is read-only and also reports wake `tokens.txt`, `keywords.txt`, preparation-only `bpe.model`, and persisted `settings/wake.json` state. It does not build, test, start the app, invoke Actions, download models or change runtime policy.
 
 ## Release readiness
 
@@ -375,6 +376,13 @@ voice-whisper + wake-word
 ```
 
 and restrict installer output to a current-user NSIS package. This avoids accidentally shipping the default feature-light Cargo build or requiring Administrator access for a normal install.
+
+The release toolchain is pinned to Rust `1.85.0`. Reproducible dependency resolution requires both application lockfiles to be committed before packaging:
+
+```text
+Cargo.lock
+pnpm-lock.yaml
+```
 
 Read-only release gate:
 
@@ -388,10 +396,11 @@ Stricter public-release gate:
 pnpm desktop:release:verify:public
 ```
 
-The release verifier checks bundle identity, full voice/wake feature selection, sidecar contract, license, version alignment, NSIS policy, lockfile, release icon and optional public code-signing policy. It never builds, signs, installs, downloads models or invokes Actions.
+The release verifier checks bundle identity, full voice/wake feature selection, sidecar contract, license, Rust toolchain pin, `Cargo.lock`, `pnpm-lock.yaml`, version alignment, NSIS policy, release icon and optional public code-signing policy. It fails closed on missing/drifted release configuration and never builds, signs, installs, downloads models or invokes Actions.
 
 Current external release gates that still require local owner input are:
 
+- generate/review/commit `Cargo.lock`;
 - generate/review/commit `pnpm-lock.yaml`;
 - approve and commit final application icon assets;
 - configure a real Windows code-signing identity before public distribution;
