@@ -9,7 +9,7 @@ use tracing::{debug, warn};
 
 use crate::{
     wake::{WakeDetection, WakeWordDetector},
-    MicrophoneConfig, MicrophoneStream,
+    AudioChunk, MicrophoneConfig, MicrophoneStream,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -67,6 +67,12 @@ enum WakeCommand {
     Suspend,
     Resume,
     Shutdown,
+}
+
+#[derive(Debug)]
+enum WorkerInput {
+    Command(Option<WakeCommand>),
+    Audio(Option<AudioChunk>),
 }
 
 #[derive(Clone)]
@@ -169,14 +175,19 @@ async fn run_worker(
             transition(&state_tx, &events, WakeRuntimeState::Disabled);
 
             match commands.recv().await {
-                Some(WakeCommand::SetEnabled(true)) | Some(WakeCommand::Resume) => {
+                Some(WakeCommand::SetEnabled(true)) => {
                     enabled = true;
                     suspended = false;
                     transition(&state_tx, &events, WakeRuntimeState::Starting);
                     continue;
                 }
                 Some(WakeCommand::Shutdown) | None => break,
-                Some(WakeCommand::SetEnabled(false)) | Some(WakeCommand::Suspend) => continue,
+                // Resume is intentionally ignored while disabled. A delayed
+                // resume scheduled before the user disabled wake must never
+                // silently re-enable the always-on microphone.
+                Some(WakeCommand::Resume)
+                | Some(WakeCommand::SetEnabled(false))
+                | Some(WakeCommand::Suspend) => continue,
             }
         }
 
@@ -257,9 +268,19 @@ async fn run_worker(
             }
         }
 
-        let stream = microphone.as_mut().expect("microphone initialized above");
-        tokio::select! {
-            command = commands.recv() => {
+        // Isolate the stream borrow inside this block. Once WorkerInput is
+        // produced, the borrow has ended and the selected branch may safely drop
+        // or replace `microphone`.
+        let input = {
+            let stream = microphone.as_mut().expect("microphone initialized above");
+            tokio::select! {
+                command = commands.recv() => WorkerInput::Command(command),
+                chunk = stream.next_chunk() => WorkerInput::Audio(chunk),
+            }
+        };
+
+        match input {
+            WorkerInput::Command(command) => {
                 if apply_command(command, &mut enabled, &mut suspended) {
                     break;
                 }
@@ -267,9 +288,13 @@ async fn run_worker(
                     microphone = None;
                 }
             }
-            chunk = stream.next_chunk() => {
+            WorkerInput::Audio(chunk) => {
                 let Some(chunk) = chunk else {
-                    publish_error(&state_tx, &events, "wake microphone stream ended unexpectedly".into());
+                    publish_error(
+                        &state_tx,
+                        &events,
+                        "wake microphone stream ended unexpectedly".into(),
+                    );
                     microphone = None;
                     retry_at = Some(Instant::now() + config.error_retry_delay);
                     continue;
