@@ -1,5 +1,6 @@
 pub mod apps;
 pub mod audio;
+pub mod automation;
 pub mod clipboard;
 pub mod error;
 pub mod media;
