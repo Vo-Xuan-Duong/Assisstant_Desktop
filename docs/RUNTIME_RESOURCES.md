@@ -1,14 +1,8 @@
-# Runtime Resource Registry
+# Runtime Resources
 
-Phase 13A introduces one desktop-side source of truth for optional local AI resources.
+Phase 13A introduced one source of truth for optional local AI resources. Phase 13B adds a verified installer on top of that registry without weakening the existing path/status contract.
 
-The registry does **not** download models. It resolves expected paths, validates the local file layout, exposes status to Tauri/React, and is reused by voice, wake-word and Readiness.
-
-## Why this exists
-
-Before Phase 13A, Whisper, WakeService and Readiness each had some path/status logic of their own. That made it possible for different UI surfaces to disagree about whether a resource was installed.
-
-The new flow is:
+## Architecture
 
 ```text
 RuntimePaths
@@ -17,13 +11,16 @@ ResourceRegistry
     ├── Whisper path/status
     └── Wake model/keywords paths/status
            ↓
-    ┌──────┼───────────┐
-    ↓      ↓           ↓
-Voice   WakeService  Readiness
-                    + Setup UI
+    ┌──────┼───────────────┐
+    ↓      ↓               ↓
+Voice   WakeService     Readiness / Setup UI
+                           ↓
+                  Resource install catalog
+                           ↓
+                  Verified installer
 ```
 
-Status is recomputed from the filesystem each time `assistant_resources` or Readiness is requested. Copying files into the expected location can therefore be detected by pressing **Kiểm tra lại** without changing application configuration.
+The frontend never supplies an arbitrary download URL. It requests installation by trusted resource ID; backend code resolves that ID through a compiled manifest.
 
 ## Resource states
 
@@ -35,11 +32,11 @@ not_compiled
 ```
 
 - `ready` — the build feature is enabled and all required files exist.
-- `missing` — the feature is enabled but no usable resource is installed.
-- `incomplete` — a multi-file resource has only some required files.
-- `not_compiled` — the current build does not enable that optional feature. Expected paths are still shown so resources can be prepared before rebuilding.
+- `missing` — the feature is enabled but the required resource is absent.
+- `incomplete` — a multi-file resource contains only some required files.
+- `not_compiled` — the current build does not enable that optional feature. Paths remain visible so resources may be prepared before rebuilding.
 
-Readiness maps `missing`, `incomplete` and `not_compiled` to `optional_missing`; text assistant operation remains available.
+Readiness maps optional missing/not-compiled resources to `optional_missing`; text assistant operation remains available.
 
 ## Default local-data layout
 
@@ -57,9 +54,7 @@ Readiness maps `missing`, `incomplete` and `not_compiled` to `optional_missing`;
             └── keywords.txt
 ```
 
-The wake layout is derived from the same `SherpaWakeConfig::gigaspeech_int8(...)` contract used by the actual detector.
-
-`keywords.txt` must be generated against the selected model/tokenizer. It is not just a plain wake phrase string.
+The wake layout comes from the same `SherpaWakeConfig::gigaspeech_int8(...)` contract used by the detector. `keywords.txt` must be generated against the selected tokenizer/model; it is not merely a plain wake phrase.
 
 ## Environment overrides
 
@@ -69,31 +64,136 @@ ASSISTANT_WAKE_MODEL_DIR
 ASSISTANT_WAKE_KEYWORDS
 ```
 
-Phase 13A requires override values to be **absolute paths**. Relative overrides are rejected during desktop setup so resource resolution never changes because the app was launched from a different working directory.
+Overrides must be absolute paths. Relative values are rejected during desktop setup so resource resolution cannot change with process working directory.
 
-## Desktop command
+## Registry command
 
 ```text
 assistant_resources
 ```
 
-returns:
+returns resource state and exact local paths only. It does not read model contents or send model data to Gemini.
+
+## Verified installer catalog
 
 ```text
-resources[]
-  id
-  label
-  state
-  compiled
-  root_path
-  detail
-  files[]
-    name
-    path
-    exists
+assistant_resource_catalog
 ```
 
-No model contents are read or sent to Gemini by this command. It checks only local paths and file existence.
+returns backend-owned manifests containing:
+
+```text
+id
+version
+package_kind
+installable
+source_url
+source_page
+license
+expected_bytes
+sha256
+note
+```
+
+The catalog is informational on the frontend. The install command accepts only a `resource_id`:
+
+```text
+assistant_resource_install(resource_id)
+```
+
+There is no command argument for a custom URL, hash, destination or expected size.
+
+## Whisper automatic install
+
+Phase 13B enables automatic install only for the pinned multilingual Whisper base model used by the application.
+
+Pinned manifest:
+
+```text
+resource id: whisper
+package: single_file
+file: ggml-base.bin
+expected bytes: 147951465
+sha256: 60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
+license: MIT
+```
+
+The source revision and URL are compiled into `resource_manifest.rs`.
+
+Install flow:
+
+```text
+resource_id
+   ↓
+trusted backend manifest
+   ↓
+HTTPS request
+   ↓
+unique .part file in destination directory
+   ↓
+stream bytes + SHA-256
+   ↓
+expected byte-count check
+   ↓
+SHA-256 check
+   ↓
+flush + sync_all
+   ↓
+re-check destination does not already exist
+   ↓
+atomic rename
+   ↓
+registry refresh
+```
+
+Important behavior:
+
+- existing destination files are never overwritten;
+- one install per resource ID may run at a time;
+- partial files use a random UUID name;
+- downloads exceeding the pinned size fail immediately;
+- final byte size must equal the manifest size;
+- SHA-256 must exactly match the manifest;
+- failed downloads/finalization remove the `.part` file where possible;
+- destination creation races fail closed rather than overwrite a file;
+- verified installation occurs only after final rename succeeds.
+
+## Progress event
+
+The backend emits:
+
+```text
+resource:install_progress
+```
+
+with stages:
+
+```text
+starting
+downloading
+verified
+installed
+failed
+```
+
+The Resources panel displays progress and refreshes both Resource Registry and Readiness after a successful installation.
+
+## Wake-word auto-install remains disabled
+
+The wake manifest is intentionally present but has:
+
+```text
+installable = false
+```
+
+Reasons:
+
+1. the existing GigaSpeech archive checksum/redistribution contract has not yet been pinned to the same standard as Whisper;
+2. wake installation is archive-based rather than single-file;
+3. `keywords.txt` is application-specific and must be generated using the model tokenizer;
+4. changing to a newer wake model should be an explicit runtime migration, not an implicit download substitution.
+
+Until those items are resolved, the Resources panel shows the expected wake files and reports `Manual install required`.
 
 ## First-run UI
 
@@ -103,49 +203,45 @@ Open:
 Readiness → Resources
 ```
 
-The panel shows resource state, expected root path, every required file, present/missing status and build-feature status.
+For each resource it displays:
 
-Phase 13A deliberately has no **Download** button.
+- registry state;
+- local root and file paths;
+- manifest version;
+- expected size;
+- license;
+- upstream source page;
+- install policy;
+- live verified-download progress when supported.
 
-## Why automatic download is deferred
+A resource whose file already exists is never offered for automatic overwrite, even if the current build feature is disabled.
 
-Before downloading a model automatically, the project must lock:
+## Privacy and security boundary
 
-1. canonical source URL;
-2. immutable model/version identifier;
-3. expected SHA-256 checksum;
-4. license/redistribution requirements;
-5. archive extraction layout;
-6. partial-download/retry behavior;
-7. disk-space requirements;
-8. update policy.
+The resource subsystem does not expose prompts, credentials, broker secrets, screenshots, clipboard contents or permission arguments.
 
-Those concerns belong to Phase 13B rather than being hidden inside the registry.
-
-## Phase 13B integration point
-
-A future installer can target a resource by registry ID:
-
-```text
-whisper
-wake_word
-```
-
-and install to the exact paths already displayed by Phase 13A. After installation, the existing registry refresh path can report the resource as Ready without changing the voice/wake APIs.
-
-## Privacy
-
-The registry exposes only paths, feature flags, file-exists booleans and descriptive status. It does not read model bytes, prompts, clipboard data, screenshots, credentials, broker secrets or permission arguments.
+Automatic download trust is anchored in backend code, not model output or frontend input. The model/Gemini cannot choose a resource URL or checksum through these commands.
 
 ## Local verification checklist
 
-1. Open Readiness → Resources with no models installed.
-2. Confirm Whisper and wake resources show the expected app-local-data paths.
-3. Add only one wake model file and confirm Wake becomes `incomplete`.
-4. Add all required wake files and confirm resource status becomes `ready` when the wake feature is compiled.
-5. Place `ggml-base.bin` at the Whisper path and confirm Whisper becomes `ready` when the feature is compiled.
-6. Verify VoiceCapabilities and Readiness agree with the resource panel.
-7. Launch the app from a different working directory and confirm paths do not change.
-8. Set a relative resource override and confirm setup rejects it.
+Registry:
 
-Remote development still does not execute builds, runtime tests or GitHub Actions.
+1. Open Readiness → Resources with no models installed.
+2. Confirm Whisper and wake paths use app-local-data.
+3. Add only one wake file and confirm wake becomes `incomplete` when the feature is compiled.
+4. Add all required wake files and confirm it becomes `ready`.
+5. Launch from a different working directory and confirm paths remain stable.
+6. Set a relative resource override and confirm setup rejects it.
+
+Verified Whisper installer:
+
+1. Ensure `ggml-base.bin` is absent.
+2. Open Resources and confirm Whisper shows `Tải và xác minh`.
+3. Start installation and confirm progress moves through download/verification/install stages.
+4. Confirm the final path is the registry Whisper path and no `.part` file remains.
+5. Confirm Registry and Readiness refresh to Ready when `voice-whisper` is compiled.
+6. Repeat install with the final file present and confirm overwrite is refused/disabled.
+7. Interrupt network access during download and confirm no final model file is created.
+8. Confirm wake word still has no automatic install action.
+
+Remote development still does not execute native builds, tests, runtime downloads or GitHub Actions.
