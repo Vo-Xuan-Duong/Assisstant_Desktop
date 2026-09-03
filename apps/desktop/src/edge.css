@@ -1,0 +1,199 @@
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent !important;
+}
+
+body {
+  pointer-events: none;
+  user-select: none;
+}
+
+.edge-surface {
+  --voice-level: 0;
+  --edge-opacity: 0;
+  --edge-scale: 0.58;
+  --flow-duration: 3.8s;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  opacity: var(--edge-opacity);
+  transition: opacity 260ms ease-out;
+  contain: strict;
+}
+
+.edge-aura,
+.edge-flow,
+.edge-core {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.edge-aura {
+  background: linear-gradient(90deg, #38bdf8, #6366f1 31%, #b56cff 61%, #ff72a6 82%, #38bdf8);
+  background-size: 240% 100%;
+  filter: blur(7px);
+  opacity: .7;
+  animation: edge-flow var(--flow-duration) linear infinite;
+}
+
+.edge-flow {
+  background: linear-gradient(90deg, transparent 0 8%, #6bdcff 22%, #8c7cff 45%, #e177ff 65%, #ff7fab 82%, transparent 96%);
+  background-size: 220% 100%;
+  opacity: .82;
+  filter: blur(2.5px);
+  animation: edge-flow var(--flow-duration) linear infinite;
+}
+
+.edge-core {
+  background: linear-gradient(90deg, #7dd3fc, #818cf8 34%, #c084fc 64%, #f9a8d4);
+  opacity: .9;
+}
+
+.edge-top .edge-aura,
+.edge-top .edge-flow,
+.edge-top .edge-core,
+.edge-bottom .edge-aura,
+.edge-bottom .edge-flow,
+.edge-bottom .edge-core {
+  transform-origin: center;
+  transform: scaleY(var(--edge-scale));
+}
+
+.edge-left .edge-aura,
+.edge-left .edge-flow,
+.edge-left .edge-core,
+.edge-right .edge-aura,
+.edge-right .edge-flow,
+.edge-right .edge-core {
+  background-image: linear-gradient(180deg, #38bdf8, #6366f1 31%, #b56cff 61%, #ff72a6 82%, #38bdf8);
+  background-size: 100% 240%;
+  transform-origin: center;
+  transform: scaleX(var(--edge-scale));
+  animation-name: edge-flow-vertical;
+}
+
+.edge-mode-idle {
+  --edge-opacity: 0;
+}
+
+.edge-mode-activated {
+  --edge-opacity: .88;
+  --edge-scale: .72;
+  --flow-duration: 1.35s;
+  animation: activation-bloom 900ms ease-out both;
+}
+
+.edge-mode-listening {
+  --edge-opacity: calc(.48 + var(--voice-level) * .5);
+  --edge-scale: calc(.48 + var(--voice-level) * .5);
+  --flow-duration: 2.4s;
+}
+
+.edge-mode-listening .edge-aura {
+  opacity: calc(.48 + var(--voice-level) * .48);
+}
+
+.edge-mode-processing {
+  --edge-opacity: .84;
+  --edge-scale: .64;
+  --flow-duration: 1.05s;
+}
+
+.edge-mode-executing {
+  --edge-opacity: .92;
+  --edge-scale: .76;
+  --flow-duration: .72s;
+}
+
+.edge-mode-speaking {
+  --edge-opacity: .84;
+  --edge-scale: .68;
+  --flow-duration: 1.7s;
+  animation: speaking-breathe 920ms ease-in-out infinite alternate;
+}
+
+.edge-mode-confirming {
+  --edge-opacity: .86;
+  --edge-scale: .68;
+  --flow-duration: 2.2s;
+}
+
+.edge-mode-confirming .edge-aura,
+.edge-mode-confirming .edge-flow,
+.edge-mode-confirming .edge-core {
+  background-image: linear-gradient(90deg, #facc15, #fb923c 48%, #facc15);
+}
+
+.edge-left.edge-mode-confirming .edge-aura,
+.edge-left.edge-mode-confirming .edge-flow,
+.edge-left.edge-mode-confirming .edge-core,
+.edge-right.edge-mode-confirming .edge-aura,
+.edge-right.edge-mode-confirming .edge-flow,
+.edge-right.edge-mode-confirming .edge-core {
+  background-image: linear-gradient(180deg, #facc15, #fb923c 48%, #facc15);
+}
+
+.edge-mode-error {
+  --edge-opacity: .92;
+  --edge-scale: .74;
+  --flow-duration: .9s;
+  animation: error-pulse 680ms ease-in-out infinite alternate;
+}
+
+.edge-mode-error .edge-aura,
+.edge-mode-error .edge-flow,
+.edge-mode-error .edge-core {
+  background-image: linear-gradient(90deg, #fb7185, #ef4444 48%, #fb7185);
+}
+
+.edge-left.edge-mode-error .edge-aura,
+.edge-left.edge-mode-error .edge-flow,
+.edge-left.edge-mode-error .edge-core,
+.edge-right.edge-mode-error .edge-aura,
+.edge-right.edge-mode-error .edge-flow,
+.edge-right.edge-mode-error .edge-core {
+  background-image: linear-gradient(180deg, #fb7185, #ef4444 48%, #fb7185);
+}
+
+@keyframes edge-flow {
+  from { background-position: 0% 50%; }
+  to { background-position: 220% 50%; }
+}
+
+@keyframes edge-flow-vertical {
+  from { background-position: 50% 0%; }
+  to { background-position: 50% 220%; }
+}
+
+@keyframes activation-bloom {
+  0% { opacity: 0; }
+  25% { opacity: 1; }
+  100% { opacity: .82; }
+}
+
+@keyframes speaking-breathe {
+  from { filter: brightness(.9); }
+  to { filter: brightness(1.22); }
+}
+
+@keyframes error-pulse {
+  from { filter: brightness(.88); }
+  to { filter: brightness(1.3); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edge-surface,
+  .edge-aura,
+  .edge-flow {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
