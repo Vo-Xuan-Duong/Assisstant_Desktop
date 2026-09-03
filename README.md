@@ -4,14 +4,14 @@ Windows-first desktop AI assistant powered by **Google Antigravity + Gemini + MC
 
 Development is phase-based: finish one bounded subsystem, static-review it, update this README, then squash-merge to `main` before expanding the next subsystem.
 
-> Current remote verification policy: **do not run GitHub Actions, tests, or native runtime builds remotely**. Native Windows verification is performed later on the local machine.
+> Current remote verification policy: **do not run GitHub Actions, tests, native runtime builds, or model downloads remotely**. Native Windows verification is performed later on the local machine.
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 12C — Local Windows Verification Harness**
-- **Latest completed main commit:** `46799a5c956dc4044bc763bf5270ca478833cc5c`
-- **Current branch:** `phase/13a-runtime-resource-registry`
-- **Current phase:** Phase 13A — Runtime Resource Registry & First-Run Setup Foundation
+- **Latest completed phase on `main`: Phase 13A — Runtime Resource Registry**
+- **Latest completed main commit:** `5c9338d1aab2259625318890a273bf3bf8854f03`
+- **Current branch:** `phase/13b-verified-resource-installer`
+- **Current phase:** Phase 13B — Verified Resource Installer
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
@@ -41,9 +41,21 @@ Win32 / UIA / CoreAudio / GDI / Clipboard
 Windows
 ```
 
+Optional local voice resources are managed separately:
+
+```text
+RuntimePaths
+    ↓
+ResourceRegistry
+    ↓
+Verified Resource Manifest
+    ↓
+Installer / Setup UI
+```
+
 ## Locked stack
 
-- Rust — assistant core, bridge, MCP, Windows runtime, permission/runtime services.
+- Rust — assistant core, bridge, MCP, Windows runtime, permission/runtime/resource services.
 - TypeScript + React — desktop UI.
 - Tauri 2 — shell, tray, global shortcut, transparent edge UI, sidecar bundling.
 - Tokio — async runtime.
@@ -54,6 +66,8 @@ Windows
 - Whisper — optional local STT.
 - Windows SAPI — local TTS.
 - sherpa-onnx — optional wake word.
+- reqwest — verified resource download transport.
+- SHA-256 — resource integrity verification before install.
 
 ## Development progress
 
@@ -90,7 +104,8 @@ Windows
 | 12A — Runtime Readiness | ✅ | readiness panel across runtime dependencies |
 | 12B — Runtime Paths & Packaging | ✅ | app-local-data runtime + bundled MCP sidecar |
 | 12C — Local Windows Verification Harness | ✅ | read-only prerequisite/runtime preflight |
-| **13A — Runtime Resource Registry** | **🚧** | unified Whisper/wake resource status + first-run setup panel |
+| 13A — Runtime Resource Registry | ✅ | unified Whisper/wake paths/status + setup UI |
+| **13B — Verified Resource Installer** | **🚧** | pinned manifest + verified Whisper install + progress UI |
 
 ## Recent merge points
 
@@ -111,6 +126,7 @@ Windows
 12A  24b39fb...  runtime readiness diagnostics
 12B  af9d712...  runtime paths + MCP sidecar packaging
 12C  46799a5...  local Windows verification harness
+13A  5c9338d...  runtime resource registry + setup UI
 ```
 
 ## Current MCP capability surface
@@ -177,6 +193,8 @@ Runtime data is not tied to repository root or process working directory.
 <app-local-data>/
 ├── context/
 ├── models/
+│   ├── whisper/
+│   └── wake/
 ├── permissions/
 ├── audit/
 └── runtime/
@@ -186,28 +204,9 @@ Runtime data is not tied to repository root or process working directory.
 
 Antigravity uses `<app-local-data>/runtime` as its working directory. The desktop generates the MCP config with an absolute `assistant-mcp.exe` path. Tauri bundles `assistant-mcp` as an external sidecar, staged with the Rust target-triple suffix before dev/build.
 
-## Phase 13A — Runtime Resource Registry
+## Runtime resources
 
-Phase 13A makes one registry responsible for optional local voice resources:
-
-```text
-RuntimePaths
-    ↓
-ResourceRegistry
-    ├── Whisper model
-    └── Wake model + keywords
-          ↓
-Voice / WakeService / Readiness / Setup UI
-```
-
-Resource states:
-
-```text
-ready
-missing
-incomplete
-not_compiled
-```
+Resource paths and filesystem status come from one `ResourceRegistry` used by VoiceCapabilities, WakeService, Readiness and the Resources UI.
 
 Default layout:
 
@@ -224,23 +223,65 @@ Default layout:
         └── keywords.txt
 ```
 
-Open the in-app first-run view through:
-
-```text
-Readiness → Resources
-```
-
-It shows the exact required paths/files and can refresh status after files are copied into place.
-
-Phase 13A does **not** download resources. Before automatic download is enabled, Phase 13B must lock source URLs, immutable versions, SHA-256 checksums, licenses, extraction layout and retry/update policy.
-
-Resource path overrides must be absolute:
+Resource overrides must be absolute:
 
 ```text
 ASSISTANT_WHISPER_MODEL
 ASSISTANT_WAKE_MODEL_DIR
 ASSISTANT_WAKE_KEYWORDS
 ```
+
+Open:
+
+```text
+Readiness → Resources
+```
+
+## Phase 13B — Verified Resource Installer
+
+The installer is backend-manifest driven. The frontend/model cannot provide arbitrary URLs, hashes or destinations.
+
+```text
+resource_id
+    ↓
+compiled trusted manifest
+    ↓
+HTTPS download to unique .part
+    ↓
+stream + SHA-256
+    ↓
+byte-count verification
+    ↓
+SHA-256 verification
+    ↓
+flush / sync
+    ↓
+no-overwrite recheck
+    ↓
+atomic rename
+```
+
+Whisper automatic install is enabled only for the pinned multilingual `ggml-base.bin` manifest:
+
+```text
+expected bytes: 147951465
+sha256: 60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
+license: MIT
+```
+
+Installer safety behavior:
+
+- arbitrary download URLs are not accepted from React or Gemini;
+- destination files are never overwritten;
+- one install per resource ID may run at a time;
+- partial downloads are UUID-named `.part` files;
+- oversized/short downloads fail;
+- SHA-256 mismatch fails;
+- failed finalization removes the partial file where possible;
+- progress stages are `starting / downloading / verified / installed / failed`;
+- successful install refreshes both Registry and Readiness.
+
+Wake-word automatic install remains disabled. The current archive/checksum/license/keywords-generation contract must be pinned before an archive installer is allowed.
 
 ## Local Windows preflight
 
@@ -258,7 +299,7 @@ The verifier is read-only and does not build, test, start the app, invoke Action
 
 ## Readiness model
 
-The in-app Readiness panel checks Antigravity, Windows MCP, Permission Broker, Context Storage, TTS, Whisper and Wake Word. Whisper/wake resource checks now use the same ResourceRegistry contract as the actual voice/wake paths.
+The in-app Readiness panel checks Antigravity, Windows MCP, Permission Broker, Context Storage, TTS, Whisper and Wake Word. Whisper/wake checks reuse the ResourceRegistry paths used by the actual voice/wake runtimes.
 
 ## Context / privacy
 
@@ -273,13 +314,13 @@ Desktop context is collected on demand only. Screen and clipboard data are treat
 5. Prefer semantic Windows/UIA APIs over raw input.
 6. Fail closed for unknown tools, stale targets, broker errors and malformed policy.
 7. Static-review APIs before merge.
-8. Do not run GitHub Actions/tests/native runtime builds during remote development.
+8. Do not run GitHub Actions/tests/native runtime builds/model downloads during remote development.
 9. Squash-merge completed phases to `main`.
 10. **Update README before every phase merge.**
 
 ## Next direction
 
-After Phase 13A, proceed to **Phase 13B — Verified Resource Installer** only after the model sources/licenses/checksums are explicitly pinned. Until then, local resources are installed manually into the paths exposed by the registry.
+After Phase 13B is locked, proceed to **Phase 13C — Wake Resource Packaging/Installer Contract** only after checksum, redistribution terms, archive extraction behavior and tokenizer-based `keywords.txt` generation are explicit.
 
 Actual compiler/runtime failures from the Windows local verification harness still take precedence over adding new computer-use capabilities.
 
