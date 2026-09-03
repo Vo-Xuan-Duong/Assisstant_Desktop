@@ -21,7 +21,7 @@ const stateLabel: Record<ResourceState, string> = {
 };
 
 function formatBytes(value: number): string {
-  if (value <= 0) return "0 B";
+  if (value <= 0) return "Local generated";
   const units = ["B", "KB", "MB", "GB"];
   let amount = value;
   let index = 0;
@@ -43,6 +43,8 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
   const [catalog, setCatalog] = useState<ResourceInstallManifest[]>([]);
   const [progress, setProgress] = useState<Record<string, ResourceInstallProgress>>({});
   const [installing, setInstalling] = useState<Record<string, boolean>>({});
+  const [wakePhrase, setWakePhrase] = useState("HEY ASSISTANT");
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -98,16 +100,20 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
   );
 
   const startInstall = useCallback(
-    async (resourceId: string) => {
+    async (resourceId: string, phrase?: string) => {
       if (installing[resourceId]) return;
       setInstalling((current) => ({ ...current, [resourceId]: true }));
       setError(null);
+      setNotice(null);
       try {
-        await installResource(resourceId);
+        const result = await installResource(resourceId, phrase);
         await refresh();
         await onResourcesChanged?.();
+        if (resourceId === "wake_keywords") {
+          setNotice(`Đã tạo ${result.path}. Hãy khởi động lại ứng dụng để WakeService nạp keyword mới.`);
+        }
       } catch (cause) {
-        setError(`Không thể cài ${resourceId}: ${String(cause)}`);
+        setError(`Không thể xử lý ${resourceId}: ${String(cause)}`);
       } finally {
         setInstalling((current) => ({ ...current, [resourceId]: false }));
       }
@@ -139,9 +145,10 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
           </div>
 
           <p className="resource-note">
-            Chỉ resource có manifest nguồn/version/kích thước/checksum đã khóa mới được cài tự động. Wake word hiện vẫn yêu cầu cài thủ công.
+            Whisper có verified installer. Wake model archive vẫn cài thủ công; `keywords.txt` có thể được tạo local từ `bpe.model` và `tokens.txt`.
           </p>
 
+          {notice && <p className="resource-notice">{notice}</p>}
           {error && <p className="resource-error">{error}</p>}
 
           <div className="resource-list">
@@ -157,6 +164,21 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
                 manifest?.installable &&
                   !allFilesPresent &&
                   !isInstalling,
+              );
+
+              const wakeKeywordManifest = resource.id === "wake_word" ? manifestById.get("wake_keywords") : undefined;
+              const wakeTokensReady = resource.files.some((file) => file.name === "tokens" && file.exists);
+              const wakeKeywordsReady = resource.files.some((file) => file.name === "keywords" && file.exists);
+              const wakeBpeReady = resource.preparation_files.some((file) => file.name === "bpe_model" && file.exists);
+              const wakePreparing = Boolean(installing.wake_keywords);
+              const canPrepareWake = Boolean(
+                resource.id === "wake_word" &&
+                  resource.compiled &&
+                  wakeTokensReady &&
+                  wakeBpeReady &&
+                  !wakeKeywordsReady &&
+                  wakePhrase.trim() &&
+                  !wakePreparing,
               );
 
               return (
@@ -197,6 +219,18 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
                     ))}
                   </div>
 
+                  {resource.preparation_files.length > 0 && (
+                    <div className="resource-preparation-files">
+                      <small>Preparation resources</small>
+                      {resource.preparation_files.map((file) => (
+                        <div key={`${resource.id}-prep-${file.name}`} className={file.exists ? "resource-file-ready" : "resource-file-missing"}>
+                          <span>{file.exists ? "✓" : "×"} {file.name}</span>
+                          <code>{file.path}</code>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {manifest && (
                     <div className="resource-install-actions">
                       {manifest.installable ? (
@@ -213,8 +247,39 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
                               : "Tải và xác minh"}
                         </button>
                       ) : (
-                        <span className="resource-manual">Manual install required</span>
+                        <span className="resource-manual">Model package: Manual install required</span>
                       )}
+                    </div>
+                  )}
+
+                  {wakeKeywordManifest && (
+                    <div className="wake-keyword-preparation">
+                      <div>
+                        <strong>Tạo wake phrase local</strong>
+                        <small>{wakeKeywordManifest.note}</small>
+                      </div>
+                      <input
+                        value={wakePhrase}
+                        maxLength={64}
+                        disabled={wakePreparing || wakeKeywordsReady}
+                        onChange={(event) => setWakePhrase(event.target.value)}
+                        placeholder="HEY ASSISTANT"
+                      />
+                      <button
+                        type="button"
+                        className="resource-install"
+                        disabled={!canPrepareWake}
+                        onClick={() => void startInstall("wake_keywords", wakePhrase)}
+                      >
+                        {wakeKeywordsReady
+                          ? "keywords.txt đã có"
+                          : wakePreparing
+                            ? "Đang tạo"
+                            : "Tạo keywords.txt"}
+                      </button>
+                      {!resource.compiled && <small>Build cần bật feature `wake-word` để tokenize local.</small>}
+                      {!wakeBpeReady && <small>Thiếu `bpe.model` trong wake model directory.</small>}
+                      {!wakeTokensReady && <small>Thiếu `tokens.txt` trong wake model directory.</small>}
                     </div>
                   )}
                 </article>
