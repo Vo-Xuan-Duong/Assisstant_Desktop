@@ -9,6 +9,7 @@ pub mod system;
 pub mod virtualized;
 pub mod window;
 pub mod window_control;
+pub mod window_discovery;
 
 use assistant_common::ToolRisk;
 
@@ -52,6 +53,16 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
         name: "window_get_active",
         risk: ToolRisk::Safe,
         description: "Read metadata about the current foreground window.",
+    },
+    ToolDefinition {
+        name: "window_list",
+        risk: ToolRisk::Safe,
+        description: "List visible titled top-level Windows windows with HWND, process id and state metadata.",
+    },
+    ToolDefinition {
+        name: "window_activate",
+        risk: ToolRisk::Moderate,
+        description: "Restore if needed and request foreground activation of an explicitly identified top-level Windows window.",
     },
     ToolDefinition {
         name: "window_set_state",
