@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, VecDeque},
+    fmt,
     path::PathBuf,
     process::Stdio,
     sync::Arc,
@@ -20,7 +21,7 @@ use crate::{
 
 const MAX_DIAGNOSTIC_LINES: usize = 32;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AntigravityConfig {
     pub binary: String,
     pub model: Option<String>,
@@ -31,6 +32,21 @@ pub struct AntigravityConfig {
     /// is used for local runtime integration such as the permission broker and
     /// must never be logged with values.
     pub environment: BTreeMap<String, String>,
+}
+
+impl fmt::Debug for AntigravityConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let environment_keys: Vec<&str> = self.environment.keys().map(String::as_str).collect();
+        formatter
+            .debug_struct("AntigravityConfig")
+            .field("binary", &self.binary)
+            .field("model", &self.model)
+            .field("agent", &self.agent)
+            .field("effort", &self.effort)
+            .field("working_directory", &self.working_directory)
+            .field("environment_keys", &environment_keys)
+            .finish()
+    }
 }
 
 impl Default for AntigravityConfig {
