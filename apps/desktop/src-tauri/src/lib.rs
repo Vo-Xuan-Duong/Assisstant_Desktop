@@ -1,6 +1,7 @@
 mod edge;
 mod permission_desktop;
 mod readiness;
+mod resource_registry;
 mod runtime_paths;
 mod wake_desktop;
 
@@ -15,6 +16,7 @@ use assistant_core::{AssistantCore, EventSink};
 use async_trait::async_trait;
 use context_engine::{ContextConfig, ContextEngine};
 use permission_desktop::PermissionDesktopService;
+use resource_registry::{ResourceRegistry, ResourceState, RuntimeResourceSnapshot};
 use runtime_paths::RuntimePaths;
 use serde::Serialize;
 use tauri::{
@@ -71,6 +73,7 @@ struct DesktopState {
     core: Arc<DesktopCore>,
     context: ContextEngine,
     runtime_paths: RuntimePaths,
+    resources: ResourceRegistry,
     tts: WindowsSapiTts,
     session_id: RwLock<SessionId>,
     source_window: Mutex<Option<WindowHandle>>,
@@ -129,6 +132,11 @@ async fn assistant_readiness(
     wake: State<'_, WakeService>,
 ) -> readiness::RuntimeReadinessReport {
     readiness::collect(state.inner(), permission.inner(), wake.inner()).await
+}
+
+#[tauri::command]
+async fn assistant_resources(state: State<'_, DesktopState>) -> RuntimeResourceSnapshot {
+    state.resources.snapshot()
 }
 
 #[tauri::command]
@@ -193,25 +201,12 @@ async fn assistant_submit(text: String, state: State<'_, DesktopState>) -> Resul
 
 #[tauri::command]
 async fn assistant_voice_capabilities(state: State<'_, DesktopState>) -> VoiceCapabilities {
-    #[cfg(feature = "voice-whisper")]
-    {
-        return VoiceCapabilities {
-            tts_available: true,
-            whisper_compiled: true,
-            model_path: Some(state.voice.model_path.display().to_string()),
-            model_available: state.voice.model_path.is_file(),
-        };
-    }
-
-    #[cfg(not(feature = "voice-whisper"))]
-    {
-        let _ = state;
-        VoiceCapabilities {
-            tts_available: true,
-            whisper_compiled: false,
-            model_path: None,
-            model_available: false,
-        }
+    let whisper = state.resources.whisper_status();
+    VoiceCapabilities {
+        tts_available: true,
+        whisper_compiled: whisper.compiled,
+        model_path: whisper.files.first().map(|file| file.path.clone()),
+        model_available: whisper.state == ResourceState::Ready,
     }
 }
 
@@ -534,6 +529,8 @@ pub fn run() {
         .setup(|app| {
             let initial_source_window = current_external_window();
             let runtime_paths = RuntimePaths::prepare(app.handle()).map_err(std::io::Error::other)?;
+            let resources = ResourceRegistry::resolve(&runtime_paths).map_err(std::io::Error::other)?;
+            let wake_service = WakeService::setup(&resources);
             let (permission_service, broker_environment) =
                 PermissionDesktopService::setup(app.handle())?;
             let mut antigravity_config = AntigravityConfig::default();
@@ -556,21 +553,14 @@ pub fn run() {
             });
 
             #[cfg(feature = "voice-whisper")]
-            let model_path = if let Some(path) = std::env::var_os("ASSISTANT_WHISPER_MODEL") {
-                PathBuf::from(path)
-            } else {
-                runtime_paths
-                    .app_local_data
-                    .join("models")
-                    .join("whisper")
-                    .join("ggml-base.bin")
-            };
+            let model_path = resources.whisper_model_path().to_path_buf();
 
             app.manage(DesktopState {
                 client,
                 core,
                 context,
                 runtime_paths,
+                resources,
                 tts: WindowsSapiTts::default(),
                 session_id: RwLock::new(SessionId::new()),
                 source_window: Mutex::new(initial_source_window),
@@ -582,7 +572,7 @@ pub fn run() {
                 },
             });
             app.manage(permission_service);
-            app.manage(WakeService::setup(app.handle()));
+            app.manage(wake_service);
 
             edge::setup(app.handle())?;
             setup_wake_events(app.handle());
@@ -602,6 +592,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             assistant_health,
             assistant_readiness,
+            assistant_resources,
             assistant_wake_status,
             assistant_wake_set_enabled,
             assistant_submit,
