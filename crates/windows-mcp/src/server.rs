@@ -42,8 +42,8 @@ pub struct ClipboardWriteInput {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UiInspectInput {
-    /// Optional HWND returned by a previous Windows/window tool. When omitted,
-    /// inspect the current foreground window.
+    /// Optional HWND supplied by Desktop Context or a previous inspection. When
+    /// omitted, inspect the current foreground window.
     pub window_handle: Option<i64>,
     /// Maximum UI Automation tree depth. Defaults to 4 and is hard-capped natively.
     pub max_depth: Option<u32>,
@@ -80,7 +80,9 @@ struct UiInspectResult {
 struct UiActionResult {
     ok: bool,
     action: &'static str,
-    window: ActiveWindow,
+    /// Snapshot of the target root before the action. Invoke can legitimately
+    /// close or replace its window, so post-action HWND lookup is not required.
+    window_before_action: ActiveWindow,
     path: Vec<u32>,
 }
 
@@ -119,17 +121,16 @@ where
 }
 
 fn action_result(
-    handle: WindowHandle,
+    window_before_action: ActiveWindow,
     path: Vec<u32>,
     action: &'static str,
-) -> Result<UiActionResult, String> {
-    let window = window::get(handle).map_err(tool_error)?;
-    Ok(UiActionResult {
+) -> UiActionResult {
+    UiActionResult {
         ok: true,
         action,
-        window,
+        window_before_action,
         path,
-    })
+    }
 }
 
 #[tool_router(server_handler)]
@@ -266,7 +267,7 @@ impl WindowsMcpServer {
 
     #[tool(
         name = "ui_inspect",
-        description = "Inspect the Windows UI Automation Control View for a window. If window_handle is omitted, inspect the current foreground window. Returns structural accessibility metadata and a root_window_handle plus child-index paths. It deliberately does not read editable field values. Use this before ui_focus/ui_invoke/ui_set_value, and inspect again if a path becomes stale."
+        description = "Inspect the Windows UI Automation Control View for a window. When Desktop Context provides active_window_handle for the user's referenced app, pass it explicitly; only omit window_handle when the actual foreground window is intentionally the target. Returns structural metadata, root_window_handle, and child-index paths without reading editable field values. Use this before ui_focus/ui_invoke/ui_set_value and inspect again if a path becomes stale."
     )]
     async fn ui_inspect(
         &self,
@@ -306,8 +307,9 @@ impl WindowsMcpServer {
         let handle = explicit_window_handle(window_handle)?;
         let result_path = path.clone();
         let result = run_blocking(move || {
+            let window_before_action = window::get(handle).map_err(tool_error)?;
             automation::focus(handle, &path).map_err(tool_error)?;
-            action_result(handle, result_path, "focus")
+            Ok(action_result(window_before_action, result_path, "focus"))
         })
         .await?;
         to_json(&result)
@@ -327,8 +329,9 @@ impl WindowsMcpServer {
         let handle = explicit_window_handle(window_handle)?;
         let result_path = path.clone();
         let result = run_blocking(move || {
+            let window_before_action = window::get(handle).map_err(tool_error)?;
             automation::invoke(handle, &path).map_err(tool_error)?;
-            action_result(handle, result_path, "invoke")
+            Ok(action_result(window_before_action, result_path, "invoke"))
         })
         .await?;
         to_json(&result)
@@ -349,8 +352,9 @@ impl WindowsMcpServer {
         let handle = explicit_window_handle(window_handle)?;
         let result_path = path.clone();
         let result = run_blocking(move || {
+            let window_before_action = window::get(handle).map_err(tool_error)?;
             automation::set_value(handle, &path, &value).map_err(tool_error)?;
-            action_result(handle, result_path, "set_value")
+            Ok(action_result(window_before_action, result_path, "set_value"))
         })
         .await?;
         to_json(&result)
