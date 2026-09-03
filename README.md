@@ -8,10 +8,10 @@ The project is developed phase-by-phase: each subsystem is given a stable contra
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 11B — Window Management**
-- **Current development branch:** `phase/11c-window-discovery-activation`
-- **Current phase:** Phase 11C — Window Discovery & Activation
-- **Latest completed `main` commit:** `75826887e479e9276d4329ab4cae23a507ae95f8`
+- **Latest completed phase on `main`: Phase 11C — Window Discovery & Activation**
+- **Current development branch:** `phase/11d-monitor-window-placement`
+- **Current phase:** Phase 11D — Monitor Discovery & Window Placement
+- **Latest completed `main` commit:** `0f5aeada05eaee6cd68d47a5e97dfb69836b48de`
 - **Desktop target:** Windows first
 - **AI backend:** Antigravity CLI / Gemini
 - **Tool protocol:** MCP over stdio
@@ -98,7 +98,8 @@ Wake word / Hotkey / Text
 | 10E — MCP Router Modularization | ✅ | System/UI routers split without public contract changes |
 | 11A — VirtualizedItem | ✅ | Status + semantic `Realize()` with mandatory reinspection |
 | 11B — Window Management | ✅ | Minimize/maximize/restore + graceful close with stale-HWND guard |
-| **11C — Window Discovery & Activation** | **🚧** | Bounded top-level window discovery + explicit foreground activation |
+| 11C — Window Discovery & Activation | ✅ | Bounded top-level window discovery + explicit foreground activation |
+| **11D — Monitor Discovery & Window Placement** | **🚧** | Monitor/work-area geometry + explicit move/resize without raw input |
 
 ## Recent merge points
 
@@ -122,6 +123,7 @@ Phase 10D  0760aeb...  ScrollItem MCP
 Phase 10E  9ad37fb...  MCP router modularization
 Phase 11A  26c4d48...  VirtualizedItem support
 Phase 11B  7582688...  Explicit window management
+Phase 11C  0f5aead...  Window discovery + activation
 ```
 
 ## Current Windows/MCP capability surface
@@ -133,9 +135,11 @@ Phase 11B  7582688...  Explicit window management
 - `audio_set_mute`
 - `apps_open`
 - `apps_list`
+- `display_list` *(Phase 11D, in development)*
 - `window_get_active`
-- `window_list` *(Phase 11C, in development)*
-- `window_activate` *(Phase 11C, in development)*
+- `window_list`
+- `window_activate`
+- `window_set_bounds` *(Phase 11D, in development)*
 - `window_set_state`
 - `window_close`
 - `system_get_info`
@@ -177,37 +181,39 @@ The process ID is checked again immediately before mutation. This prevents a rec
 Current risk model:
 
 ```text
-window_list       → Safe
-window_activate   → Moderate
-window_set_state  → Moderate
-window_close      → Sensitive
+display_list       → Safe
+window_list        → Safe
+window_activate    → Moderate
+window_set_bounds  → Moderate
+window_set_state   → Moderate
+window_close       → Sensitive
 ```
 
 `window_close` posts `WM_CLOSE`; it does **not** terminate the process and preserves normal unsaved-changes/application shutdown behavior.
 
-## Phase 11C — Window Discovery & Activation
+## Phase 11D — Monitor Discovery & Window Placement
 
 The current branch adds:
 
 ```text
-window_list
+display_list
     ↓
-visible titled top-level windows
-    ↓
-HWND + PID + title + executable + minimized + foreground
+monitor bounds + work_area + primary
 
-window_activate(HWND, expected PID)
+window_set_bounds(HWND, expected PID, x, y, width, height)
     ↓
-validate current HWND owner
+validate bounds
     ↓
-restore if minimized
+revalidate HWND owner PID
     ↓
-SetForegroundWindow
+SetWindowPos(SWP_NOZORDER | SWP_NOACTIVATE)
 ```
 
-`window_list` returns a bounded payload (default 80, hard maximum 200). The Win32 enumeration itself completes normally even after the payload cap is reached, avoiding false `EnumWindows` failure semantics.
+`work_area` is intended for assistant-managed placement so taskbars and other reserved desktop areas are not covered.
 
-If Windows refuses `SetForegroundWindow` because of focus-stealing restrictions, the operation reports that refusal. The assistant does not fall back to Alt+Tab, synthetic keyboard input, or mouse clicks.
+Window placement keeps focus and Z-order unchanged. If activation is desired, the agent must call `window_activate` as a separate, permission-controlled action.
+
+Native placement rejects non-positive dimensions, dimensions above 32768 pixels, coordinates outside ±100000 pixels, and stale HWND/PID pairs.
 
 ## Permission model
 
@@ -291,7 +297,7 @@ Screenshots are captured only when the user request needs screen context. Local 
 
 ## Next direction
 
-After Phase 11C is locked, the next Windows-assistant capability will be selected as another bounded semantic phase. Raw mouse/keyboard automation remains deferred until semantic APIs are exhausted and a separate safety design is in place.
+After Phase 11D is locked, development will continue with another bounded Windows/system capability or with local integration hardening. Raw mouse/keyboard automation remains deferred until semantic APIs are exhausted and a separate safety design is in place.
 
 ## Documentation
 
@@ -309,3 +315,4 @@ Key design documents live under [`docs/`](docs/), including:
 - [`docs/UI_AUTOMATION_VIRTUALIZED_ITEM.md`](docs/UI_AUTOMATION_VIRTUALIZED_ITEM.md)
 - [`docs/WINDOW_MANAGEMENT.md`](docs/WINDOW_MANAGEMENT.md)
 - [`docs/WINDOW_DISCOVERY_ACTIVATION.md`](docs/WINDOW_DISCOVERY_ACTIVATION.md)
+- [`docs/MONITOR_WINDOW_PLACEMENT.md`](docs/MONITOR_WINDOW_PLACEMENT.md)

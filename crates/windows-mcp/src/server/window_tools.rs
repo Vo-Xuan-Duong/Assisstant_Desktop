@@ -2,6 +2,7 @@ use rmcp::{handler::server::wrapper::Parameters, schemars, tool, tool_router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use windows_tools::{
+    monitor_layout,
     window::{ActiveWindow, WindowHandle},
     window_control::{self, WindowVisualState},
     window_discovery,
@@ -44,6 +45,22 @@ pub struct WindowTargetInput {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct WindowSetBoundsInput {
+    /// Exact HWND of the target top-level window.
+    pub window_handle: i64,
+    /// Process id observed for this HWND when the target was selected.
+    pub expected_process_id: u32,
+    /// Desired left coordinate in the virtual desktop coordinate space.
+    pub x: i32,
+    /// Desired top coordinate in the virtual desktop coordinate space.
+    pub y: i32,
+    /// Desired positive width in pixels.
+    pub width: i32,
+    /// Desired positive height in pixels.
+    pub height: i32,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct WindowSetStateInput {
     /// Exact HWND of the target top-level window.
     pub window_handle: i64,
@@ -82,6 +99,19 @@ where
 
 #[tool_router(router = window_tool_router, vis = "pub(crate)")]
 impl WindowsMcpServer {
+    #[tool(
+        name = "display_list",
+        description = "List Windows monitor geometry, including full bounds, work area, and primary-monitor state. This is read-only. Prefer work_area for window placement so taskbars and desktop reserved regions are not covered."
+    )]
+    async fn display_list(&self) -> Result<String, String> {
+        self.permissions.authorize("display_list", json!({})).await?;
+        let monitors = run_blocking(|| {
+            monitor_layout::list_monitors().map_err(|error| error.to_string())
+        })
+        .await?;
+        to_json(&monitors)
+    }
+
     #[tool(
         name = "window_list",
         description = "List visible titled top-level Windows windows with HWND, process id, executable, minimized state, and whether each window is currently foreground. The result is bounded. This is read-only and is the preferred way to discover a target before explicit window actions."
@@ -129,6 +159,52 @@ impl WindowsMcpServer {
         to_json(&WindowActionResult {
             ok: true,
             action: "activate",
+            window_before_action: before,
+        })
+    }
+
+    #[tool(
+        name = "window_set_bounds",
+        description = "Move and resize one explicitly identified top-level Windows window in virtual-desktop coordinates. Pass the exact HWND and expected_process_id. Use display_list first when placing relative to a monitor and prefer its work_area. The operation preserves focus and Z-order."
+    )]
+    async fn window_set_bounds(
+        &self,
+        Parameters(WindowSetBoundsInput {
+            window_handle,
+            expected_process_id,
+            x,
+            y,
+            width,
+            height,
+        }): Parameters<WindowSetBoundsInput>,
+    ) -> Result<String, String> {
+        self.permissions
+            .authorize(
+                "window_set_bounds",
+                json!({
+                    "window_handle": window_handle,
+                    "expected_process_id": expected_process_id,
+                    "x": x,
+                    "y": y,
+                    "width": width,
+                    "height": height,
+                }),
+            )
+            .await?;
+
+        let handle = explicit_window_handle(window_handle)?;
+        let before = monitor_layout::set_window_bounds(
+            handle,
+            expected_process_id,
+            x,
+            y,
+            width,
+            height,
+        )
+        .map_err(|error| error.to_string())?;
+        to_json(&WindowActionResult {
+            ok: true,
+            action: "set_bounds",
             window_before_action: before,
         })
     }
