@@ -86,8 +86,9 @@ async fn prepare_wake_keywords(
 
     if let Err(error) = wake.reload_or_start(detector, phrase).await {
         let destination_for_rollback = destination.clone();
+        let rollback_backup = backup.clone();
         let rollback = tokio::task::spawn_blocking(move || {
-            rollback_keyword_swap(&destination_for_rollback, backup.as_deref())
+            rollback_keyword_swap(&destination_for_rollback, rollback_backup.as_deref())
         })
         .await
         .map_err(|join| format!("wake keyword rollback worker failed: {join}"))?;
@@ -150,9 +151,6 @@ fn prepare_wake_replacement(
             .map_err(|error| format!("cannot sync temporary keywords file: {error}"))?;
         drop(file);
 
-        // Load the complete native detector before touching the currently active
-        // keyword file. This validates the generated keyword against the actual
-        // model/token configuration, not just SentencePiece syntax.
         let detector = SherpaWakeWordDetector::load(SherpaWakeConfig::gigaspeech_int8(
             &model_dir,
             &temporary,
@@ -190,7 +188,10 @@ fn prepare_wake_replacement(
 }
 
 #[cfg(feature = "wake-word")]
-fn rollback_keyword_swap(destination: &std::path::Path, backup: Option<&std::path::Path>) -> Result<(), String> {
+fn rollback_keyword_swap(
+    destination: &std::path::Path,
+    backup: Option<&std::path::Path>,
+) -> Result<(), String> {
     if destination.exists() {
         fs::remove_file(destination)
             .map_err(|error| format!("cannot remove failed replacement keywords: {error}"))?;
