@@ -68,6 +68,24 @@ pub fn open(target: &str) -> ToolResult<OpenResult> {
 }
 
 pub fn list_running() -> ToolResult<Vec<RunningApp>> {
+    let mut apps = enumerate_processes()?;
+    apps.sort_unstable_by(|left, right| {
+        left.executable
+            .to_ascii_lowercase()
+            .cmp(&right.executable.to_ascii_lowercase())
+            .then(left.process_id.cmp(&right.process_id))
+    });
+    Ok(apps)
+}
+
+pub fn executable_for_process(process_id: u32) -> ToolResult<Option<String>> {
+    Ok(enumerate_processes()?
+        .into_iter()
+        .find(|app| app.process_id == process_id)
+        .map(|app| app.executable))
+}
+
+fn enumerate_processes() -> ToolResult<Vec<RunningApp>> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)? };
     let _snapshot = HandleGuard(snapshot);
 
@@ -96,13 +114,6 @@ pub fn list_running() -> ToolResult<Vec<RunningApp>> {
             break;
         }
     }
-
-    apps.sort_unstable_by(|left, right| {
-        left.executable
-            .to_ascii_lowercase()
-            .cmp(&right.executable.to_ascii_lowercase())
-            .then(left.process_id.cmp(&right.process_id))
-    });
 
     Ok(apps)
 }
