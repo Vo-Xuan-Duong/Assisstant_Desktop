@@ -1,0 +1,30 @@
+.readiness-root { position: relative; }
+.readiness-trigger { border: 1px solid #394258; border-radius: 10px; background: #171b24; color: #cdd5e4; padding: 8px 10px; }
+.readiness-ready { border-color: #39745a; color: #dfffee; }
+.readiness-optional_missing { border-color: #806739; color: #f0d29b; }
+.readiness-blocking { border-color: #83505a; color: #ffc7cf; }
+.readiness-panel { position: absolute; top: calc(100% + 10px); right: 0; z-index: 850; width: min(620px, calc(100vw - 44px)); max-height: min(690px, calc(100vh - 120px)); overflow: auto; display: grid; gap: 14px; padding: 16px; border: 1px solid #323b50; border-radius: 16px; background: rgba(14, 17, 24, .98); box-shadow: 0 24px 80px rgba(0, 0, 0, .48); }
+.readiness-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.readiness-header > div { display: grid; gap: 4px; }
+.readiness-header strong { font-size: 14px; }
+.readiness-refresh { border: 1px solid #354057; border-radius: 9px; background: #1a202c; color: #d7dfec; padding: 7px 9px; }
+.readiness-summary { display: flex; flex-wrap: wrap; gap: 7px; }
+.readiness-count { padding: 4px 7px; border: 1px solid #30394c; border-radius: 999px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.readiness-count-ready { color: #85ddb3; border-color: #315f4b; }
+.readiness-count-optional { color: #e7c17f; border-color: #655333; }
+.readiness-count-blocking { color: #f1aab4; border-color: #6a3e47; }
+.readiness-checks { display: grid; gap: 9px; }
+.readiness-check { display: grid; gap: 7px; padding: 11px 12px; border: 1px solid #282f3f; border-radius: 12px; background: #11151d; }
+.readiness-check-ready { border-left-color: #4d9e78; }
+.readiness-check-optional_missing { border-left-color: #b18748; }
+.readiness-check-blocking { border-left-color: #b45c6b; }
+.readiness-check-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.readiness-check-title strong { font-size: 12px; }
+.readiness-check-title span { font-size: 9px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: #98a4b8; }
+.readiness-check p, .readiness-empty, .readiness-error { margin: 0; color: #9ca7ba; font-size: 11px; line-height: 1.45; }
+.readiness-error { color: #ef9da9; }
+.readiness-check code { display: block; overflow-wrap: anywhere; color: #77859d; font-size: 10px; }
+@media (max-width: 600px) {
+  .readiness-panel { position: fixed; inset: 68px 12px 12px; width: auto; max-height: none; }
+  .readiness-header { align-items: stretch; flex-direction: column; }
+}
