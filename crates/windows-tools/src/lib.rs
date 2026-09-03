@@ -39,6 +39,11 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
         description: "Open an application, document, URI, or shell target through Windows.",
     },
     ToolDefinition {
+        name: "apps.list",
+        risk: ToolRisk::Safe,
+        description: "List running process executables and process ids.",
+    },
+    ToolDefinition {
         name: "window.get_active",
         risk: ToolRisk::Safe,
         description: "Read metadata about the current foreground window.",
