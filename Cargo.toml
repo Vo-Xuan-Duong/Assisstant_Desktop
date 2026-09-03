@@ -6,6 +6,7 @@ members = [
     "crates/assistant-core",
     "crates/antigravity-bridge",
     "crates/context-engine",
+    "crates/permission-engine",
     "crates/voice-runtime",
     "crates/windows-tools",
     "crates/windows-mcp",

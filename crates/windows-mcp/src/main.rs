@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
 
     info!("starting Assisstant Desktop Windows MCP server");
 
-    let service = WindowsMcpServer.serve(stdio()).await?;
+    let service = WindowsMcpServer::default().serve(stdio()).await?;
     let reason = service.waiting().await?;
 
     info!(?reason, "Windows MCP server stopped");
