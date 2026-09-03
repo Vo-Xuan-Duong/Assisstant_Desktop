@@ -55,7 +55,7 @@ pub fn request_close(
 ) -> ToolResult<ActiveWindow> {
     let before = validate_target(handle, expected_process_id)?;
     unsafe {
-        PostMessageW(handle.hwnd(), WM_CLOSE, WPARAM(0), LPARAM(0))?;
+        PostMessageW(Some(handle.hwnd()), WM_CLOSE, WPARAM(0), LPARAM(0))?;
     }
     Ok(before)
 }
