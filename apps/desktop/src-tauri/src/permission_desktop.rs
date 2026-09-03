@@ -48,10 +48,13 @@ pub struct PermissionDesktopService {
 }
 
 impl PermissionDesktopService {
-    pub fn setup(
-        app: &AppHandle,
-        audit_path: PathBuf,
-    ) -> Result<(Self, [(String, String); 2]), BrokerError> {
+    pub fn setup(app: &AppHandle) -> Result<(Self, [(String, String); 2]), BrokerError> {
+        let audit_path = app
+            .path()
+            .app_local_data_dir()
+            .map_err(|error| BrokerError::Rejected(format!("cannot resolve app local data directory: {error}")))?
+            .join("audit")
+            .join("permissions.jsonl");
         let (broker, mut requests) = tauri::async_runtime::block_on(bind_local(CONFIRMATION_TIMEOUT))?;
         let environment = broker.endpoint().environment();
         let service = Self {
@@ -73,8 +76,6 @@ impl PermissionDesktopService {
     }
 
     async fn handle_request(&self, app: &AppHandle, request: PermissionRequest) {
-        // A confirmation request must be visible even when the app is hidden in
-        // the tray. show_main_window also preserves the external source HWND.
         super::show_main_window(app);
 
         let request_id = request.request_id;
@@ -104,8 +105,6 @@ impl PermissionDesktopService {
             return;
         }
 
-        // Broker timeout is fail-closed. Mirror the timeout in the desktop
-        // lifecycle so Confirming cannot linger if the UI disappears.
         let timeout_service = self.clone();
         let timeout_app = app.clone();
         tauri::async_runtime::spawn(async move {
@@ -159,8 +158,6 @@ impl PermissionDesktopService {
 
         self.append_audit(entry).await;
 
-        // If multiple tool confirmations are ever outstanding, stay Confirming
-        // until the final pending request has resolved.
         if pending_empty {
             let state = app.state::<super::DesktopState>();
             if let Err(error) = state.core.finish_confirming().await {
