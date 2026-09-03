@@ -9,6 +9,7 @@ repository.workspace = true
 [features]
 default = []
 whisper = ["dep:whisper-rs"]
+wake-sherpa = ["dep:sherpa-onnx"]
 
 [dependencies]
 async-trait.workspace = true
@@ -17,6 +18,7 @@ serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+sherpa-onnx = { version = "1.13.7", optional = true }
 whisper-rs = { version = "0.16.0", optional = true, default-features = false, features = ["tracing_backend"] }
 windows = { workspace = true, features = [
     "Win32_Media_Speech",
