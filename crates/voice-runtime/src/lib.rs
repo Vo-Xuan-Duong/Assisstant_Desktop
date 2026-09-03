@@ -1,3 +1,8 @@
+pub mod stt;
+pub mod vad;
+#[cfg(feature = "whisper")]
+pub mod whisper;
+
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex,
