@@ -165,6 +165,11 @@ pub fn copy_file(source: &str, destination: &str) -> ToolResult<FileMutationResu
 pub fn move_path(source: &str, destination: &str) -> ToolResult<FileMutationResult> {
     let source = absolute_path(source, "source")?;
     let destination = absolute_path(destination, "destination")?;
+    if source.parent().is_none() {
+        return Err(ToolError::Unsupported(
+            "moving a filesystem root is never allowed".into(),
+        ));
+    }
     let metadata = fs::symlink_metadata(&source)?;
     if metadata.file_type().is_symlink() {
         return Err(ToolError::Unsupported(
