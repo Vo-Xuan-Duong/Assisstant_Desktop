@@ -6,7 +6,7 @@ Provide a deterministic path for simple read-only desktop questions that do not 
 
 This path is intentionally narrow. It must never become a shortcut around the permission model.
 
-## Phase 16A scope
+## Implemented scope
 
 The core exposes `match_local_safe_intent` and currently recognizes only MCP tools classified as `Safe`:
 
@@ -14,6 +14,8 @@ The core exposes `match_local_safe_intent` and currently recognizes only MCP too
 - `apps_list`
 - `window_get_active`
 - `system_get_info`
+
+The Tauri desktop checks the matcher before collecting desktop context or submitting the request to Antigravity. A match is re-validated against `windows_tools::TOOL_CATALOG`; execution is refused unless the catalog still marks that exact tool as `Safe`.
 
 Supported requests include Vietnamese and basic English variants such as:
 
@@ -26,11 +28,13 @@ Supported requests include Vietnamese and basic English variants such as:
 - `What is the active window?`
 - `System info`
 
+Local answers are produced directly from the existing `windows-tools` implementations. Text and voice turns share the same `complete_prompt` path, so both can use the fast-path.
+
 ## Safety rules
 
-The matcher must return `None` when a request mutates state or is not deterministic enough.
+The matcher returns `None` when a request mutates state or is not deterministic enough.
 
-Examples that must continue through Antigravity + MCP + permission handling:
+Examples that continue through Antigravity + MCP + permission handling:
 
 - `Đặt âm lượng xuống 30%`
 - `Tắt tiếng`
@@ -42,12 +46,14 @@ Examples that must continue through Antigravity + MCP + permission handling:
 
 Unknown or ambiguous language also falls back to the agent instead of guessing.
 
+The desktop performs a second safety check immediately before execution. If a mapped tool is missing from the catalog or no longer has `ToolRisk::Safe`, the local path fails closed instead of executing it.
+
 ## Core lifecycle
 
-`AssistantCore::handle_local_safe_tool` provides the state/event contract for the future desktop executor:
+`AssistantCore::handle_local_safe_tool` keeps local execution on the same state/event model as agent-driven tool turns:
 
 ```text
-Idle
+Idle / Listening
   -> Processing
   -> ToolStarted
   -> Executing
@@ -58,20 +64,31 @@ Idle
 
 A local tool failure emits `ToolFinished { success: false }`, moves the assistant to `Error`, and emits `local_tool_error`.
 
-This keeps the UI event model consistent with agent-driven tool turns.
+## Request flow
 
-## Phase 16B
+```text
+User text / Whisper transcript
+        |
+        v
+match_local_safe_intent
+   |               |
+ match           no match
+   |               |
+   v               v
+catalog Safe?   context collection
+   |               |
+   v               v
+windows-tools   Antigravity / Gemini
+   |               |
+   v               v
+local response   MCP as needed
+```
 
-The desktop integration should:
+The fast-path avoids screenshot/clipboard/context collection for matched read-only commands because those inputs are unnecessary for deterministic execution.
 
-1. call `match_local_safe_intent` before desktop context collection and Antigravity submission;
-2. verify the matched tool still exists in `windows_tools::TOOL_CATALOG` and is still classified `Safe`;
-3. execute only the corresponding read-only `windows-tools` operation;
-4. format a concise local response;
-5. run it through `AssistantCore::handle_local_safe_tool` so UI state/events remain consistent;
-6. fall back to the existing Antigravity path for every unmatched request.
+## Next extension
 
-The implementation must not add Moderate/Sensitive tools to the direct path until a reusable permission gateway is shared by both MCP and desktop execution.
+Moderate/Sensitive tools must not be added to the direct path until the permission gateway is reusable outside the MCP server. The next extension should extract/share the authorization gateway first, then add deterministic mutating intents only through that same authorization contract.
 
 ## Why this exists
 
