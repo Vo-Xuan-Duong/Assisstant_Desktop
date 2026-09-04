@@ -102,7 +102,7 @@ pub const TOOL_CATALOG: &[ToolDefinition] = &[
     },
     ToolDefinition {
         name: "system_lock",
-        risk: ToolRisk::Moderate,
+        risk: ToolRisk::Sensitive,
         description: "Lock the current interactive Windows workstation.",
     },
     ToolDefinition {
@@ -280,16 +280,22 @@ mod tests {
     }
 
     #[test]
-    fn system_control_mutations_are_not_safe() {
+    fn destructive_system_controls_are_sensitive() {
         for name in [
+            "system_lock",
+            "system_logoff",
             "system_shutdown",
             "system_restart",
             "process_terminate",
+            "file_create_directory",
+            "file_copy",
+            "file_move",
             "file_delete",
+            "input_send_hotkey",
             "input_type_text",
         ] {
             let tool = tool_definition(name).expect("tool must exist");
-            assert_ne!(tool.risk, ToolRisk::Safe, "{name} must never be Safe");
+            assert_eq!(tool.risk, ToolRisk::Sensitive, "{name} must require confirmation");
         }
     }
 }
