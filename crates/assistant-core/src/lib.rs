@@ -15,6 +15,137 @@ pub enum CoreError {
     },
     #[error("agent backend failed: {0}")]
     Backend(String),
+    #[error("local tool failed: {0}")]
+    LocalTool(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalSafeIntent {
+    GetVolume,
+    ListRunningApps,
+    GetActiveWindow,
+    GetSystemInfo,
+}
+
+impl LocalSafeIntent {
+    pub const fn tool_name(self) -> &'static str {
+        match self {
+            Self::GetVolume => "audio_get_volume",
+            Self::ListRunningApps => "apps_list",
+            Self::GetActiveWindow => "window_get_active",
+            Self::GetSystemInfo => "system_get_info",
+        }
+    }
+}
+
+/// Match a deliberately small set of read-only commands that do not require
+/// model reasoning. Mutating or ambiguous requests intentionally return None
+/// so they continue through Antigravity + MCP + the normal permission path.
+pub fn match_local_safe_intent(text: &str) -> Option<LocalSafeIntent> {
+    let normalized = text.trim().to_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let asks_volume = contains_any(&normalized, &["âm lượng", "am luong", "volume"]);
+    let volume_is_query = contains_any(
+        &normalized,
+        &[
+            "bao nhiêu",
+            "bao nhieu",
+            "hiện tại",
+            "hien tai",
+            "current",
+            "what is",
+            "mức nào",
+            "muc nao",
+        ],
+    );
+    let volume_is_mutation = contains_any(
+        &normalized,
+        &[
+            "đặt ",
+            "dat ",
+            "set ",
+            "tăng",
+            "tang",
+            "giảm",
+            "giam",
+            "mute",
+            "unmute",
+            "tắt tiếng",
+            "tat tieng",
+            "bật tiếng",
+            "bat tieng",
+        ],
+    );
+    if asks_volume && volume_is_query && !volume_is_mutation {
+        return Some(LocalSafeIntent::GetVolume);
+    }
+
+    let asks_active_window = contains_any(
+        &normalized,
+        &[
+            "cửa sổ active",
+            "cua so active",
+            "cửa sổ đang dùng",
+            "cua so dang dung",
+            "active window",
+            "foreground window",
+            "ứng dụng đang active",
+            "ung dung dang active",
+            "app đang active",
+            "app dang active",
+        ],
+    );
+    if asks_active_window {
+        return Some(LocalSafeIntent::GetActiveWindow);
+    }
+
+    let asks_running_apps = contains_any(
+        &normalized,
+        &[
+            "ứng dụng đang chạy",
+            "ung dung dang chay",
+            "app đang chạy",
+            "app dang chay",
+            "running apps",
+            "running applications",
+            "process đang chạy",
+            "process dang chay",
+            "tiến trình đang chạy",
+            "tien trinh dang chay",
+        ],
+    );
+    if asks_running_apps {
+        return Some(LocalSafeIntent::ListRunningApps);
+    }
+
+    let asks_system_info = contains_any(
+        &normalized,
+        &[
+            "máy đang dùng bao nhiêu ram",
+            "may dang dung bao nhieu ram",
+            "ram hiện tại",
+            "ram hien tai",
+            "memory usage",
+            "memory hiện tại",
+            "memory hien tai",
+            "thông tin máy",
+            "thong tin may",
+            "system info",
+            "system information",
+        ],
+    );
+    if asks_system_info {
+        return Some(LocalSafeIntent::GetSystemInfo);
+    }
+
+    None
+}
+
+fn contains_any(text: &str, patterns: &[&str]) -> bool {
+    patterns.iter().any(|pattern| text.contains(pattern))
 }
 
 #[async_trait]
@@ -169,6 +300,59 @@ where
         Ok(())
     }
 
+    pub async fn handle_local_safe_tool<F>(
+        &self,
+        tool_name: &'static str,
+        operation: F,
+    ) -> Result<String, CoreError>
+    where
+        F: FnOnce() -> Result<String, CoreError>,
+    {
+        let _request_guard = self.request_gate.lock().await;
+        self.change_state(AssistantState::Processing).await?;
+        self.events
+            .publish(AssistantEvent::ToolStarted {
+                name: tool_name.to_owned(),
+            })
+            .await;
+        self.change_state(AssistantState::Executing).await?;
+
+        match operation() {
+            Ok(response) => {
+                self.events
+                    .publish(AssistantEvent::ToolFinished {
+                        name: tool_name.to_owned(),
+                        success: true,
+                    })
+                    .await;
+                self.events
+                    .publish(AssistantEvent::ResponseCompleted {
+                        text: response.clone(),
+                    })
+                    .await;
+                self.change_state(AssistantState::Idle).await?;
+                Ok(response)
+            }
+            Err(error) => {
+                warn!(%error, %tool_name, "local safe tool failed");
+                self.events
+                    .publish(AssistantEvent::ToolFinished {
+                        name: tool_name.to_owned(),
+                        success: false,
+                    })
+                    .await;
+                self.change_state(AssistantState::Error).await?;
+                self.events
+                    .publish(AssistantEvent::Error {
+                        code: "local_tool_error".into(),
+                        message: error.to_string(),
+                    })
+                    .await;
+                Err(error)
+            }
+        }
+    }
+
     pub async fn handle_text(&self, request: UserRequest) -> Result<String, CoreError> {
         // Keep the first implementation single-flight. Voice interruption and
         // concurrent tool execution are introduced deliberately in later phases.
@@ -261,5 +445,46 @@ mod tests {
         let mut state = StateMachine::default();
         let result = state.transition(AssistantState::Executing);
         assert!(matches!(result, Err(CoreError::InvalidTransition { .. })));
+    }
+
+    #[test]
+    fn safe_intent_matches_vietnamese_volume_query() {
+        assert_eq!(
+            match_local_safe_intent("Âm lượng hiện tại bao nhiêu?"),
+            Some(LocalSafeIntent::GetVolume)
+        );
+    }
+
+    #[test]
+    fn safe_intent_matches_running_apps_and_active_window() {
+        assert_eq!(
+            match_local_safe_intent("Ứng dụng nào đang chạy?"),
+            Some(LocalSafeIntent::ListRunningApps)
+        );
+        assert_eq!(
+            match_local_safe_intent("Cửa sổ active hiện tại là gì?"),
+            Some(LocalSafeIntent::GetActiveWindow)
+        );
+    }
+
+    #[test]
+    fn safe_intent_matches_system_memory_query() {
+        assert_eq!(
+            match_local_safe_intent("Máy đang dùng bao nhiêu RAM?"),
+            Some(LocalSafeIntent::GetSystemInfo)
+        );
+    }
+
+    #[test]
+    fn mutating_volume_request_does_not_use_safe_fast_path() {
+        assert_eq!(
+            match_local_safe_intent("Đặt âm lượng xuống 30%"),
+            None
+        );
+    }
+
+    #[test]
+    fn unrelated_prompt_falls_back_to_agent() {
+        assert_eq!(match_local_safe_intent("Giải thích Rust ownership"), None);
     }
 }
