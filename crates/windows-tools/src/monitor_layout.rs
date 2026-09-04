@@ -2,14 +2,13 @@ use std::mem::size_of;
 
 use serde::Serialize;
 use windows::{
-    core::Error as WindowsError,
+    core::{BOOL, Error as WindowsError},
     Win32::{
-        Foundation::{BOOL, LPARAM, RECT},
-        Graphics::Gdi::{
-            EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
-            MONITORINFOF_PRIMARY,
+        Foundation::{LPARAM, RECT},
+        Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO},
+        UI::WindowsAndMessaging::{
+            SetWindowPos, MONITORINFOF_PRIMARY, SWP_NOACTIVATE, SWP_NOZORDER,
         },
-        UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER},
     },
 };
 
@@ -65,7 +64,7 @@ pub fn list_monitors() -> ToolResult<Vec<MonitorDescriptor>> {
     };
 
     if !ok.as_bool() {
-        return Err(ToolError::Windows(WindowsError::from_win32()));
+        return Err(ToolError::Windows(WindowsError::from_thread()));
     }
 
     Ok(monitors)
@@ -157,7 +156,7 @@ unsafe extern "system" fn enum_monitor_callback(
             monitor_handle: monitor.0 as isize,
             bounds: info.rcMonitor.into(),
             work_area: info.rcWork.into(),
-            primary: (info.dwFlags & MONITORINFOF_PRIMARY as u32) != 0,
+            primary: (info.dwFlags & MONITORINFOF_PRIMARY) != 0,
         });
     }
 

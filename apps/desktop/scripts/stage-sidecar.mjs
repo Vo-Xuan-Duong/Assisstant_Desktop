@@ -22,7 +22,14 @@ const targetTriple = execFileSync("rustc", ["--print", "host-tuple"], {
 
 if (!targetTriple) throw new Error("rustc did not return a host target triple");
 
-const cargoArgs = ["build", "-p", "windows-mcp", "--bin", "assistant-mcp"];
+const cargoArgs = [
+  "build",
+  "-p",
+  "windows-mcp",
+  "--bin",
+  "assistant-mcp",
+  "--locked",
+];
 if (requestedProfile === "release") cargoArgs.push("--release");
 
 execFileSync("cargo", cargoArgs, {

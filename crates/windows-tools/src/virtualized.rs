@@ -7,14 +7,14 @@ use windows::{
         },
         UI::Accessibility::{
             CUIAutomation, IUIAutomation, IUIAutomationCondition, IUIAutomationElement,
-            IUIAutomationVirtualizedItemPattern, TreeScope_Children,
+            IUIAutomationVirtualizedItemPattern, TreeScope_Children, UIA_PATTERN_ID,
         },
     },
 };
 
 use crate::{window::WindowHandle, ToolError, ToolResult};
 
-const UIA_VIRTUALIZED_ITEM_PATTERN_ID: i32 = 10020;
+const UIA_VIRTUALIZED_ITEM_PATTERN_ID: UIA_PATTERN_ID = UIA_PATTERN_ID(10020);
 const MAX_PATH_DEPTH: usize = 16;
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -71,7 +71,7 @@ impl VirtualizedClient {
         let com = ComGuard;
         let automation: IUIAutomation =
             unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL)? };
-        let root = unsafe { automation.ElementFromHandle(handle.hwnd().0)? };
+        let root = unsafe { automation.ElementFromHandle(handle.hwnd())? };
 
         Ok(Self {
             _com: com,
@@ -107,7 +107,7 @@ impl VirtualizedClient {
     }
 }
 
-fn pattern<T: Interface>(element: &IUIAutomationElement, pattern_id: i32) -> Option<T> {
+fn pattern<T: Interface>(element: &IUIAutomationElement, pattern_id: UIA_PATTERN_ID) -> Option<T> {
     unsafe { element.GetCurrentPattern(pattern_id) }
         .ok()
         .and_then(|pattern| pattern.cast::<T>().ok())

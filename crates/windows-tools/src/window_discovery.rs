@@ -1,9 +1,12 @@
 use serde::Serialize;
-use windows::Win32::{
-    Foundation::{BOOL, HWND, LPARAM},
-    UI::WindowsAndMessaging::{
-        EnumWindows, GetForegroundWindow, IsIconic, IsWindowVisible, SetForegroundWindow,
-        ShowWindow, SW_RESTORE,
+use windows::{
+    core::BOOL,
+    Win32::{
+        Foundation::{HWND, LPARAM},
+        UI::WindowsAndMessaging::{
+            EnumWindows, GetForegroundWindow, IsIconic, IsWindowVisible, SetForegroundWindow,
+            ShowWindow, SW_RESTORE,
+        },
     },
 };
 
