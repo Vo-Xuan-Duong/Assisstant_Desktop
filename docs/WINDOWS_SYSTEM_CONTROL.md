@@ -14,7 +14,7 @@ Phase 17 expands the Windows MCP surface with semantic system controls while pre
 - `system_restart` — immediate restart request.
 - `display_turn_off` — ask Windows to power off displays until the next wake/input event.
 
-`system_logoff`, `system_shutdown`, and `system_restart` are Sensitive and require explicit desktop confirmation. Shutdown/restart/logoff call the Windows-owned `shutdown.exe` directly with fixed code-owned arguments; no user-controlled command line is accepted.
+`system_lock`, `system_logoff`, `system_shutdown`, and `system_restart` are Sensitive and require explicit desktop confirmation. Shutdown/restart/logoff call the Windows-owned `shutdown.exe` directly with fixed code-owned arguments; no user-controlled command line is accepted. Workstation locking uses the native Windows shutdown/session API.
 
 ### Process
 
@@ -38,8 +38,8 @@ Safety constraints:
 - copy/move never overwrite an existing destination;
 - copy accepts regular files only;
 - symlink/junction move/delete is rejected;
+- move/delete cannot target a filesystem root;
 - delete is non-recursive;
-- filesystem roots cannot be deleted;
 - file mutations are Sensitive and require confirmation.
 
 ### Keyboard input
@@ -53,7 +53,7 @@ Hotkeys accept at most five keys from a bounded vocabulary: modifiers/navigation
 
 Every MCP method invokes `McpPermissionGateway::authorize` before touching Windows state. The public `windows-tools::TOOL_CATALOG` remains the source of risk classification.
 
-Unknown tools fail closed. Sensitive tools cannot be downgraded through runtime Moderate overrides.
+Unknown tools fail closed. Sensitive tools cannot be downgraded through runtime Moderate overrides. Catalog tests assert that destructive system/session, process, filesystem and keyboard-input operations remain Sensitive.
 
 ## Not included yet
 
