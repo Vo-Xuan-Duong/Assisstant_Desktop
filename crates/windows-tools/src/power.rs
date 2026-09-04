@@ -1,12 +1,9 @@
 use std::process::Command;
 
 use serde::Serialize;
-use windows::{
-    Win32::UI::WindowsAndMessaging::LockWorkStation,
-    core::Error as WindowsError,
-};
+use windows::Win32::System::Shutdown::LockWorkStation;
 
-use crate::{ToolError, ToolResult};
+use crate::ToolResult;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PowerActionResult {
@@ -23,9 +20,7 @@ fn spawn_shutdown(action: &'static str, args: &[&str]) -> ToolResult<PowerAction
 }
 
 pub fn lock() -> ToolResult<PowerActionResult> {
-    if !unsafe { LockWorkStation() }.as_bool() {
-        return Err(ToolError::Windows(WindowsError::from_thread()));
-    }
+    unsafe { LockWorkStation()? };
     Ok(PowerActionResult {
         action: "lock",
         initiated: true,
