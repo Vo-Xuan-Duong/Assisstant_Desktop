@@ -9,6 +9,8 @@ pub mod wake_keywords;
 pub mod wake_runtime;
 #[cfg(feature = "whisper")]
 pub mod whisper;
+#[cfg(feature = "zipformer")]
+pub mod zipformer;
 
 use std::sync::{
     Arc, Mutex,
