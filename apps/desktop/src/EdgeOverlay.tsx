@@ -5,7 +5,7 @@ import type { AssistantState } from "./types";
 import "./edge.css";
 
 type Edge = "top" | "right" | "bottom" | "left";
-type EdgeMode = AssistantState | "activated";
+type EdgeMode = AssistantState | "activated" | "ready";
 
 interface EdgeModePayload {
   mode: EdgeMode;
@@ -22,6 +22,7 @@ export default function EdgeOverlay() {
   const [mode, setMode] = useState<EdgeMode>("idle");
   const [voiceLevel, setVoiceLevel] = useState(0);
   const activationTimer = useRef<number | null>(null);
+  const surfaceEngaged = useRef(false);
 
   useEffect(() => {
     let disposed = false;
@@ -36,12 +37,13 @@ export default function EdgeOverlay() {
 
     void listen<EdgeModePayload>("edge:mode", ({ payload }) => {
       clearActivationTimer();
+      surfaceEngaged.current = true;
       setMode(payload.mode);
       if (payload.mode === "activated") {
         activationTimer.current = window.setTimeout(() => {
-          setMode("idle");
+          setMode("ready");
           activationTimer.current = null;
-        }, 950);
+        }, 900);
       }
     }).then((fn) => {
       if (disposed) fn();
@@ -51,7 +53,7 @@ export default function EdgeOverlay() {
     void onAssistantEvent((event) => {
       if (event.type === "state_changed") {
         clearActivationTimer();
-        setMode(event.to);
+        setMode(event.to === "idle" && surfaceEngaged.current ? "ready" : event.to);
         if (event.to !== "listening") setVoiceLevel(0);
       }
       if (event.type === "error") {
