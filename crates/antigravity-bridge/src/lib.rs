@@ -26,6 +26,8 @@ pub enum BridgeError {
     MissingStderr,
     #[error("prompt cannot be empty")]
     EmptyPrompt,
+    #[error("Antigravity turn timed out after {seconds} seconds")]
+    TurnTimeout { seconds: u64 },
     #[error("Antigravity session ended unexpectedly (exit code: {code:?}): {diagnostics:?}")]
     SessionClosed {
         code: Option<i32>,
@@ -45,9 +47,10 @@ impl BridgeError {
             Self::EmptyPrompt => BridgeFailureKind::InvalidInput,
             Self::Json(_) => BridgeFailureKind::Protocol,
             Self::Spawn(_) | Self::Io(_) => BridgeFailureKind::Transport,
-            Self::MissingStdin | Self::MissingStdout | Self::MissingStderr => {
-                BridgeFailureKind::Process
-            }
+            Self::TurnTimeout { .. }
+            | Self::MissingStdin
+            | Self::MissingStdout
+            | Self::MissingStderr => BridgeFailureKind::Process,
             Self::SessionClosed { diagnostics, .. } => {
                 let classified = classify_message(&diagnostics.join("\n"));
                 if classified == BridgeFailureKind::Unknown {
