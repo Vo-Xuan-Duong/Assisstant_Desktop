@@ -7,7 +7,7 @@ pub mod wake;
 #[cfg(feature = "wake-sherpa")]
 pub mod wake_keywords;
 pub mod wake_runtime;
-#[cfg(feature = "whisper")]
+#[cfg(any(feature = "whisper", feature = "zipformer"))]
 pub mod whisper;
 #[cfg(feature = "zipformer")]
 pub mod zipformer;
