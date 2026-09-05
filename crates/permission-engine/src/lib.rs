@@ -22,8 +22,8 @@ pub struct PermissionEvaluation {
     pub reason: String,
 }
 
-/// Persisted desktop-managed runtime overrides. Phase 9D deliberately supports
-/// overrides only for tools that are classified Moderate by the native tool
+/// Persisted desktop-managed runtime overrides. Runtime overrides are only
+/// meaningful for tools that are still classified Moderate by the native tool
 /// catalogue. Safe/Sensitive/Blocked policy remains product-owned.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PermissionOverrideSnapshot {
@@ -82,17 +82,13 @@ impl PermissionPolicy {
     }
 
     pub fn decision_for(&self, tool_name: &str, risk: ToolRisk) -> PermissionDecision {
-        if risk == ToolRisk::Blocked {
-            return PermissionDecision::Deny;
-        }
-
-        if let Some(decision) = self.overrides.get(tool_name).copied() {
-            return decision;
-        }
-
         match risk {
             ToolRisk::Safe => self.safe,
-            ToolRisk::Moderate => self.moderate,
+            ToolRisk::Moderate => self
+                .overrides
+                .get(tool_name)
+                .copied()
+                .unwrap_or(self.moderate),
             ToolRisk::Sensitive => self.sensitive,
             ToolRisk::Blocked => PermissionDecision::Deny,
         }
@@ -202,6 +198,36 @@ mod tests {
             enforce(evaluation),
             Err(PermissionError::ConfirmationRequired { .. })
         ));
+    }
+
+    #[test]
+    fn moderate_override_is_applied() {
+        let mut policy = PermissionPolicy::default();
+        policy.set_tool_override("apps_open", PermissionDecision::Ask);
+        assert_eq!(
+            policy.decision_for("apps_open", ToolRisk::Moderate),
+            PermissionDecision::Ask
+        );
+    }
+
+    #[test]
+    fn sensitive_cannot_be_overridden_to_allow() {
+        let mut policy = PermissionPolicy::default();
+        policy.set_tool_override("ui_invoke", PermissionDecision::Allow);
+        assert_eq!(
+            policy.decision_for("ui_invoke", ToolRisk::Sensitive),
+            PermissionDecision::Ask
+        );
+    }
+
+    #[test]
+    fn safe_cannot_be_overridden_to_deny() {
+        let mut policy = PermissionPolicy::default();
+        policy.set_tool_override("system_get_info", PermissionDecision::Deny);
+        assert_eq!(
+            policy.decision_for("system_get_info", ToolRisk::Safe),
+            PermissionDecision::Allow
+        );
     }
 
     #[test]

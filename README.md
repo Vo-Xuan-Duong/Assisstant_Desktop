@@ -1,110 +1,155 @@
 # Assisstant Desktop
 
-Windows-first desktop AI assistant powered by **Google Antigravity + Gemini + MCP + Rust/Tauri**.
+Windows-first desktop AI assistant powered by **Google Antigravity CLI + Gemini + MCP + Rust/Tauri**.
 
-Development is phase-based: finish one bounded subsystem, static-review it, update this README, then squash-merge to `main` before expanding the next subsystem.
-
-> Remote policy: **do not run GitHub Actions, tests, native runtime builds, installers, signing operations, or model downloads remotely**. Native Windows verification happens on the local machine.
+The project is no longer a small prototype. The current codebase contains the complete text/voice/wake desktop pipeline, a permission-gated Windows MCP runtime, semantic UI Automation, resource management, Windows lifecycle integration, release packaging, and deterministic local read-only commands.
 
 ## Current status
 
-- **Latest completed phase on `main`: Phase 14B — Release Readiness**
-- **Latest completed phase commit:** `718f290a66336111486ff22baf121c4fccdc3e63`
-- **Current branch:** `phase/15-release-preparation`
-- **Current phase:** Phase 15 — Deterministic Release Preparation & Signing
-- **Desktop target:** Windows first
-- **AI backend:** Antigravity CLI / Gemini
-- **Tool protocol:** MCP over stdio
-- **Safety default:** unknown/blocked actions fail closed
+- **Target:** Windows first.
+- **Runtime:** Tauri 2 + React frontend with a Rust backend.
+- **AI backend:** Google Antigravity CLI in headless `stream-json` mode.
+- **Tool protocol:** MCP over stdio.
+- **Windows integration:** Win32 / COM / UI Automation / CoreAudio / CPAL.
+- **Voice:** local Whisper STT + Windows SAPI TTS.
+- **Wake word:** sherpa-onnx.
+- **Installer:** NSIS current-user package.
+- **Safety default:** unknown, blocked, stale, malformed, or unconfirmed sensitive actions fail closed.
+- **Feature status:** Phases 0–17 are integrated; current work is runtime hardening and local release validation.
+
+The previous README stopped at Phase 14/15. `main` has since added the local Safe intent fast-path, expanded Windows system control, Antigravity settings/model management, native build preparation, and Windows CI coverage.
 
 ## Architecture
 
 ```text
-Wake / Hotkey / Text
-        ↓
-Tauri Desktop + React + Edge Glow
-        ↓
-Assistant Core
-   ↙          ↘
-Context      Permission UI
-   ↓             ↑
-Antigravity Bridge ← Permission Broker
-        ↓
-Antigravity CLI / Gemini
-        ↓
-MCP Server
-        ↓
-Windows Tool Runtime
-        ↓
-Win32 / UIA / CoreAudio / GDI / Clipboard
-        ↓
-Windows
+Wake / Alt+Space / Mic / Text
+             |
+             v
+      Tauri Desktop + React
+             |
+             v
+        Assistant Core
+        /           \
+       /             \
+Local Safe Path    Context Engine
+       |             |
+       |             v
+       |       Antigravity Bridge
+       |             |
+       |             v
+       |       Antigravity CLI
+       |             |
+       |             v
+       |            MCP
+       |             |
+       |      Permission Gateway
+       |             |
+       +------> Windows Tools
+                     |
+                     v
+          Win32 / UIA / CoreAudio
 ```
 
-Local model/resources stay outside the installed executable and are resolved through app-local-data:
+No frontend component calls Win32 directly. Model-facing actions go through explicit tool contracts and the permission layer.
+
+## Workspace
 
 ```text
-RuntimePaths
-    ↓
-ResourceRegistry
-   ↙         ↘
-Whisper     Wake
-               ↓
-        phrase preparation
-               ↓
-          hot reload
+apps/desktop/src-tauri    Tauri desktop backend
+apps/desktop              React/TypeScript UI
+crates/common             Shared contracts
+crates/assistant-core     State machine and request lifecycle
+crates/antigravity-bridge Long-running Antigravity session
+crates/context-engine     On-demand desktop context
+crates/permission-broker  Authenticated local confirmation broker
+crates/permission-engine  Risk and permission policy
+crates/voice-runtime      Microphone, VAD, Whisper, TTS, wake runtime
+crates/windows-tools      Native Windows operations
+crates/windows-mcp        MCP server and permission gateway
 ```
 
 ## Locked stack
 
-- Rust — core, Antigravity bridge, MCP, permissions, Windows runtime and voice/resource services.
-- Rust `1.98.1` — pinned release baseline.
-- TypeScript + React — desktop UI.
-- Tauri 2 — Windows shell, tray, global shortcut, edge overlay and bundling.
-- Tokio — async runtime.
-- Antigravity CLI Headless — primary AI backend.
-- MCP over stdio — model/tool protocol.
-- `windows-rs 0.62.2` — Win32/COM/UIA/CoreAudio.
-- CPAL/WASAPI — microphone capture.
-- Whisper — local STT.
-- Windows SAPI — local TTS.
-- sherpa-onnx + SentencePiece — wake-word runtime and local phrase preparation.
-- NSIS — current-user Windows installer.
+- Rust `1.98.1` / edition 2024.
+- TypeScript + React.
+- Tauri 2.
+- Tokio.
+- `rmcp` for the MCP server.
+- `windows-rs 0.62.2`.
+- CPAL/WASAPI microphone capture.
+- whisper.cpp local STT.
+- Windows SAPI local TTS.
+- sherpa-onnx + SentencePiece wake-word stack.
+- NSIS Windows installer.
+- pnpm.
 
-## Development progress
+## Integrated development phases
 
 | Phase | Status | Capability |
 |---|---|---|
-| 0 — Foundation | ✅ | Workspace, contracts, Assistant Core |
-| 1 — Antigravity Runtime | ✅ | Long-running stream-json session |
-| 2 — Windows MCP Foundation | ✅ | Native Windows tools + `assistant-mcp.exe` |
-| 3 — Text Desktop MVP | ✅ | Tauri/React shell, tray, text chat |
-| 4 — Context Engine | ✅ | source window, clipboard, on-demand screenshot |
-| 5A — Audio Runtime | ✅ | CPAL/WASAPI capture |
-| 5B — VAD + STT | ✅ | VAD + Whisper |
-| 5C — Desktop Voice Turn | ✅ | listening → STT → Gemini → TTS |
-| 6 — Gemini-like Edge UI | ✅ | four click-through edge surfaces |
-| 7A — Wake Detector | ✅ | sherpa wake abstraction |
-| 7B — Background Wake Runtime | ✅ | always-on wake worker |
-| 7C — Wake-to-Conversation | ✅ | wake automatically starts voice turn |
-| 8A–8C — UI Automation | ✅ | inspect/focus/invoke/value/toggle/select/expand/scroll |
-| 9A–9D — Permissions | ✅ | fail-closed policy, authenticated broker, UX/audit, runtime overrides |
-| 10A–10E — Rich UIA | ✅ | range/grid/scroll-item/state schema/router modularization |
-| 11A–11D — Windows Control | ✅ | virtualization/window discovery/state/monitor placement |
-| 12A — Runtime Readiness | ✅ | readiness diagnostics across dependencies |
-| 12B — Runtime Paths & Packaging | ✅ | app-local-data runtime + bundled MCP sidecar |
-| 12C — Local Windows Verifier | ✅ | read-only prerequisite/runtime preflight |
-| 13A — Runtime Resource Registry | ✅ | unified Whisper/wake paths and setup UI |
-| 13B — Verified Resource Installer | ✅ | pinned manifest + SHA-256 install flow |
-| 13C — Wake Keyword Preparation | ✅ | SentencePiece + validated `keywords.txt` generation |
-| 13D — Wake Lifecycle & Hot Reload | ✅ | transactional replacement + persisted wake settings |
-| 14A — Windows Lifecycle | ✅ | single instance + opt-in autostart + hidden background launch |
-| 14B — Release Readiness | ✅ | full-feature NSIS contract + fail-closed release verifier |
-| **15 — Release Preparation & Signing** | **🚧** | reproducible icon + lockfile preparation + real local signing gate |
+| 0 | Complete | Workspace, contracts, Assistant Core |
+| 1 | Complete | Long-running Antigravity `stream-json` runtime |
+| 2 | Complete | Windows MCP foundation |
+| 3 | Complete | Tauri/React text desktop MVP |
+| 4 | Complete | Active-window / clipboard / screen context |
+| 5A–5C | Complete | Microphone, VAD, Whisper, voice turn, TTS |
+| 6 | Complete | Gemini-like edge overlay UI |
+| 7A–7C | Complete | Wake detector, background wake, wake-to-voice |
+| 8A–8C | Complete | Semantic Windows UI Automation |
+| 9A–9D | Complete | Permission policy, broker, confirmation UX, audit, overrides |
+| 10A–10E | Complete | Range/Grid/ScrollItem/UIA schema/router hardening |
+| 11A–11D | Complete | Virtualized UIA, window discovery/control, monitor placement |
+| 12A–12C | Complete | Readiness, runtime paths, MCP packaging, local verifier |
+| 13A–13D | Complete | Resource registry/install, wake keyword preparation/hot reload |
+| 14A–14B | Complete | Windows lifecycle and release readiness |
+| 15 | Complete | Deterministic release preparation/signing contract |
+| 16A | Complete | Deterministic local Safe intent fast-path |
+| 17 | Complete | Expanded Windows system control |
+| Runtime hardening | In progress | Timeouts, context privacy, settings correctness, local E2E validation |
+
+## Assistant lifecycle
+
+Assistant Core owns the main state machine:
+
+```text
+Idle
+Listening
+Processing
+Executing
+Confirming
+Speaking
+Error
+```
+
+The core uses a single-flight request gate. Permission confirmation is a real lifecycle state rather than an unrelated modal state.
+
+## Deterministic local Safe fast-path
+
+A deliberately small set of read-only requests bypasses Antigravity and executes locally:
+
+```text
+audio_get_volume
+apps_list
+window_get_active
+system_get_info
+```
+
+Examples:
+
+```text
+Âm lượng hiện tại bao nhiêu?
+Ứng dụng nào đang chạy?
+Cửa sổ active hiện tại là gì?
+Máy đang dùng bao nhiêu RAM?
+```
+
+Before local execution the desktop re-validates the exact tool in `windows_tools::TOOL_CATALOG` and refuses it unless the tool is still classified `Safe`.
+
+Mutating or ambiguous requests continue through Antigravity + MCP + permission handling.
 
 ## MCP capability surface
 
-### System / desktop
+### Audio / applications / system
 
 ```text
 audio_get_volume
@@ -112,13 +157,6 @@ audio_set_volume
 audio_set_mute
 apps_open
 apps_list
-display_list
-window_get_active
-window_list
-window_activate
-window_set_bounds
-window_set_state
-window_close
 system_get_info
 media_play_pause
 media_next
@@ -126,6 +164,44 @@ media_previous
 clipboard_read_text
 clipboard_write_text
 ```
+
+### Display / windows
+
+```text
+display_list
+display_turn_off
+window_get_active
+window_list
+window_activate
+window_set_bounds
+window_set_state
+window_close
+```
+
+### Power / process / input
+
+```text
+system_lock
+system_logoff
+system_shutdown
+system_restart
+process_terminate
+input_send_hotkey
+input_type_text
+```
+
+### Filesystem
+
+```text
+file_info
+file_list
+file_create_directory
+file_copy
+file_move
+file_delete
+```
+
+Filesystem mutation is intentionally bounded: absolute paths are required, overwrite is disabled, recursive deletion is not exposed, filesystem roots are rejected, and symlink/junction mutation is refused.
 
 ### Semantic UI Automation
 
@@ -144,344 +220,394 @@ ui_virtualized_item_status
 ui_realize
 ```
 
-UI Automation uses **explicit HWND + semantic element paths**, not pixel coordinates.
+UI Automation uses explicit HWND + semantic element paths rather than unrestricted pixel-coordinate automation.
 
 ## Permission model
 
 ```text
-Safe       → baseline Allow
-Moderate   → Default / Allow / Ask / Deny runtime policy
-Sensitive  → desktop confirmation / Allow once
-Blocked    → Deny
-Unknown    → Deny
+Safe       -> product baseline Allow
+Moderate   -> Default / Allow / Ask / Deny runtime policy
+Sensitive  -> explicit desktop confirmation / Allow once
+Blocked    -> Deny
+Unknown    -> Deny
 ```
 
-Sensitive approval is one-shot. Timeout, malformed policy, broker failure or missing UI response never becomes implicit Allow.
+Runtime overrides are enforced as a **Moderate-only invariant**. Safe, Sensitive, and Blocked decisions cannot be downgraded through the generic permission-policy override path.
 
-## Runtime / packaging contract
+Sensitive confirmations use an authenticated local broker:
+
+```text
+127.0.0.1 ephemeral port
++ RAM-only random session secret
++ request UUID
++ exact tool/risk/arguments
++ bounded timeout
++ AllowOnce / Deny
+```
+
+Missing broker state, malformed payloads, timeouts, stale responses, and UI failures deny execution.
+
+Permission audit records intentionally exclude prompts, clipboard contents, screenshots, broker secrets, and credentials.
+
+## Antigravity runtime
+
+The desktop maintains a long-running Antigravity CLI session using:
+
+```text
+--input-format stream-json
+--output-format stream-json
+```
+
+### Turn timeout
+
+An Antigravity turn is bounded so a live CLI process that stops producing a final result cannot hold Assistant Core in `Processing` indefinitely.
+
+Default:
+
+```text
+180 seconds
+```
+
+Optional override:
+
+```powershell
+$env:ASSISTANT_ANTIGRAVITY_TURN_TIMEOUT_SECONDS="240"
+```
+
+Accepted values are clamped to 15–1800 seconds. A timeout invalidates the session; shutdown has a short grace period and then terminates a process that does not exit.
+
+### CLI and authentication status
+
+The settings UI distinguishes **CLI availability** from verified account authentication.
+
+`agy --help` only proves that the binary is runnable. It does not prove that a cached Google account session is valid. Authentication is ultimately verified when a real Antigravity agent session starts. If the CLI has no cached credentials, the normal Antigravity authentication flow is used.
+
+The **Đăng nhập / Đổi tài khoản** action opens the normal interactive Antigravity CLI rather than extracting or managing Google credentials inside this application.
+
+### Model selection
+
+Available model choices come from the installed CLI:
+
+```powershell
+agy models
+```
+
+The application no longer fabricates a hard-coded fallback model catalogue when discovery fails. `Default` and `Custom model` remain available, and an invalid custom model is expected to fail loudly in Antigravity headless mode.
+
+Persistent desktop settings are stored under app-local-data:
+
+```text
+settings/antigravity.json
+```
+
+Changing model/effort resets the active Antigravity process so the next turn starts with the new configuration.
+
+## Desktop context and privacy
+
+Context is collected only when the user request indicates it is needed.
+
+Possible context sources:
+
+- source/active-window metadata;
+- clipboard text;
+- active-window screenshot.
+
+Desktop-derived text is formatted as explicitly untrusted escaped fields. Clipboard text is quoted and bounded to 16,000 characters before being included in an agent prompt. The prompt explicitly tells the model not to follow instructions embedded in desktop field values.
+
+Screenshots use a single transient path:
+
+```text
+<app-local-data>/context/active-window.png
+```
+
+The artifact is removed when its request snapshot is dropped. Temporary PNG files are also cleaned on failed writes/renames.
+
+This reduces persistence of sensitive screen content while keeping the local file available for the duration of the active agent turn.
+
+## Voice pipeline
+
+```text
+Microphone
+   |
+   v
+CPAL / WASAPI
+   |
+   v
+VAD
+   |
+   v
+Whisper multilingual base
+   |
+   v
+complete_prompt()
+   |
+   +--> local Safe path
+   |
+   +--> Antigravity + MCP
+   |
+   v
+Windows SAPI TTS
+```
+
+Whisper is configured for Vietnamese in the desktop voice turn.
+
+The microphone callback never blocks waiting for the async consumer; bounded queues drop excess chunks instead of blocking the realtime audio callback.
+
+## Wake word
+
+Wake uses sherpa-onnx with local model resources and a generated `keywords.txt`.
+
+Wake phrase lifecycle:
+
+```text
+phrase
+  |
+SentencePiece + token validation
+  |
+new keywords.txt.part
+  |
+old keywords.txt -> backup
+  |
+new file -> final
+  |
+load detector
+  |
+success -> persist phrase
+failure -> rollback
+```
+
+Manual Mic and wake activation use the same backend voice-turn path.
+
+## Runtime resources
+
+Default app-local-data layout:
 
 ```text
 <app-local-data>/
 ├── context/
 ├── models/
 │   ├── whisper/
+│   │   └── ggml-base.bin
 │   └── wake/
 ├── settings/
-│   └── wake.json
+│   ├── wake.json
+│   └── antigravity.json
 ├── permissions/
+│   └── policy.json
 ├── audit/
+│   └── permissions.jsonl
 └── runtime/
     └── .agents/
         └── mcp_config.json
 ```
 
-Antigravity uses `<app-local-data>/runtime` as its working directory. The desktop generates MCP configuration with an absolute path to the installed `assistant-mcp.exe` sidecar.
+Whisper automatic installation is backend-manifest-driven with a pinned source revision, byte size, and SHA-256.
 
-## Release build contract
+Wake-model automatic download remains disabled until the archive checksum and redistribution terms are explicitly pinned. Wake keywords are generated locally from the installed model tokenizer/resources.
 
-Windows automatically merges:
-
-```text
-apps/desktop/src-tauri/tauri.conf.json
-        +
-apps/desktop/src-tauri/tauri.windows.conf.json
-```
-
-The Windows overlay guarantees:
+Resource path overrides must be absolute:
 
 ```text
-voice-whisper + wake-word
-NSIS currentUser
-icons/icon.ico
+ASSISTANT_WHISPER_MODEL
+ASSISTANT_WAKE_MODEL_DIR
+ASSISTANT_WAKE_KEYWORDS
+ASSISTANT_RUNTIME_DIR
+ASSISTANT_MCP_BINARY
 ```
 
-Public builds add one more Tauri config overlay:
+## Windows lifecycle
 
-```text
-tauri.windows.signed.conf.json
-```
+- Single-instance plugin.
+- Normal second launch focuses the existing process.
+- `Alt + Space` global activation shortcut.
+- Tray show/hide/quit controls.
+- Opt-in **Khởi động cùng Windows**.
+- Autostart uses `--background` and remains hidden in the tray.
+- Wake/background services remain alive while the main window is hidden.
 
-which only adds the reviewed `bundle.windows.signCommand`; normal features/installer/icon settings continue to come from the Windows config.
+## Runtime readiness
 
-## Reproducible release assets
+The desktop exposes diagnostics for:
 
-Tracked icon source:
+- Antigravity CLI;
+- generated MCP configuration;
+- bundled/dev MCP sidecar;
+- permission broker and policy file;
+- writable context storage;
+- Windows TTS;
+- Whisper resource state;
+- wake resource/runtime state.
 
-```text
-apps/desktop/src-tauri/icons/app-icon.svg
-apps/desktop/src-tauri/icons/icon.ico.b64
-```
+Optional voice/wake resources do not block text assistant operation.
 
-The binary ICO is generated locally and ignored by Git:
+## Development
 
-```text
-apps/desktop/src-tauri/icons/icon.ico
-```
+Prerequisites on Windows:
 
-`prepare-release.ps1` decodes the tracked payload and verifies SHA-256 before the file is accepted by the build.
+- Node.js `^20.19.0 || >=22.12.0`;
+- pnpm 10;
+- Rust `1.98.1` MSVC toolchain;
+- Visual Studio C++ Build Tools / Windows SDK;
+- CMake;
+- Antigravity CLI for AI turns.
 
-Materialize assets only:
+Install dependencies:
 
 ```powershell
+pnpm install --frozen-lockfile
+```
+
+Prepare native dependencies and assets:
+
+```powershell
+pnpm desktop:native:prepare
 pnpm desktop:assets:prepare
 ```
 
-## Dependency lockfiles
+Read-only local prerequisite check:
 
-The two dependency lockfiles must come from the real package resolvers; they are never fabricated remotely:
-
-```text
-Cargo.lock
-pnpm-lock.yaml
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1
 ```
 
-Generate them locally together with release assets:
+Start desktop development:
+
+```powershell
+pnpm desktop:dev
+```
+
+Repository scripts also provide:
+
+```powershell
+pnpm check
+pnpm test
+pnpm test:models
+```
+
+`test:models` requires the relevant local model resources. It exercises native model integration with synthetic audio rather than opening the microphone.
+
+## CI
+
+The repository contains a Windows CI workflow for pull requests and pushes to `main`. It installs frozen pnpm dependencies, prepares native dependencies/assets, stages the MCP sidecar, checks Rust formatting, runs Rust tests, builds the frontend, checks the full desktop feature set, and verifies the release contract.
+
+Do not manually dispatch remote workflows merely to probe the application runtime. Native microphone, wake, installer, account, and real desktop behavior still require local Windows validation.
+
+## Release build
+
+Windows combines:
+
+```text
+apps/desktop/src-tauri/tauri.conf.json
++
+apps/desktop/src-tauri/tauri.windows.conf.json
+```
+
+The Windows overlay enables:
+
+```text
+voice-whisper
+wake-word
+NSIS current-user installer
+icon.ico
+native runtime DLL resources
+```
+
+Prepare deterministic release inputs:
 
 ```powershell
 pnpm desktop:release:prepare
 ```
 
-The command runs:
-
-```text
-cargo generate-lockfile
-pnpm install --lockfile-only --ignore-scripts
-```
-
-Review and commit both lockfiles before packaging.
-
-## Release verification
-
-Read-only local gate:
+Verify an unsigned local release candidate:
 
 ```powershell
 pnpm desktop:release:verify
 ```
 
-It checks, among other things:
-
-- Windows/MSVC release environment;
-- Rust toolchain pin;
-- both dependency lockfiles;
-- icon source/payload/materialized SHA-256;
-- bundle identity and version alignment;
-- full voice/wake feature selection;
-- NSIS/current-user policy;
-- MCP sidecar contract;
-- release scripts;
-- clean Git worktree.
-
-It does not build, sign, install, download models or invoke Actions.
-
-## Local unsigned release candidate
-
-After committing both lockfiles:
+Build:
 
 ```powershell
-pnpm install --frozen-lockfile
 pnpm desktop:release:build
 ```
 
-The command materializes release assets, verifies readiness, stages the release MCP sidecar through the existing Tauri build hook, builds the frontend and produces the NSIS installer.
-
-## Public signed release
-
-The signing implementation is committed, but signing identity is not:
+Public signing uses:
 
 ```text
 apps/desktop/src-tauri/tauri.windows.signed.conf.json
 apps/desktop/src-tauri/scripts/sign-windows.ps1
 ```
 
-Set local environment variables:
+Required local variables:
 
 ```powershell
-$env:ASSISTANT_WINDOWS_CERT_SHA1 = "<certificate SHA-1 thumbprint>"
-$env:ASSISTANT_WINDOWS_TIMESTAMP_URL = "<certificate-provider RFC3161 timestamp URL>"
+$env:ASSISTANT_WINDOWS_CERT_SHA1="<certificate SHA-1 thumbprint>"
+$env:ASSISTANT_WINDOWS_TIMESTAMP_URL="<RFC3161 timestamp URL>"
 ```
 
-The certificate must be installed with its private key under:
-
-```text
-Cert:\CurrentUser\My
-```
-
-Public verification:
+Public gate/build:
 
 ```powershell
 pnpm desktop:release:verify:public
-```
-
-The stricter gate validates the signed overlay, thumbprint shape, timestamp URL, actual certificate/private-key availability, certificate expiry and Windows `signtool.exe` availability.
-
-Public build:
-
-```powershell
 pnpm desktop:release:build:public
 ```
 
-Tauri passes each signing target through `sign-windows.ps1`; the script uses SHA-256 signing + RFC3161 timestamping and then runs `signtool verify`.
+Never commit PFX files, private keys, passwords, Google credentials, signing tokens, API keys, or cloud secrets.
 
-Never commit PFX files, private keys, passwords, client secrets, signing tokens or cloud credentials.
+## What is still required before a public release
 
-## Windows lifecycle
+The repository is feature-complete enough for local release-candidate validation, but a public release should wait until all of the following have been exercised on the target Windows machine:
 
-- single-instance plugin is registered before other lifecycle plugins;
-- normal second launch focuses the running instance;
-- tray **Khởi động cùng Windows** controls native autostart;
-- autostart uses fixed `--background`;
-- background startup keeps the runtime/tray/wake service alive without opening the main window;
-- explicit launch, tray click, `Alt + Space` or wake detection can surface the existing process.
+1. fresh install of the NSIS package;
+2. first launch and runtime readiness;
+3. Antigravity login and a real multi-turn session;
+4. local Safe command execution without AI;
+5. MCP tool execution and permission confirmation;
+6. microphone -> VAD -> Whisper -> Antigravity -> TTS;
+7. wake detection -> voice turn;
+8. tray, hide/show, `Alt + Space`, single-instance and autostart;
+9. resource installation/keyword preparation;
+10. shutdown/restart/process/file/input safety confirmations;
+11. signed installer verification before public distribution.
 
-## Local Windows preflight
-
-### Local development checks
-
-Install the locked frontend dependencies with `pnpm install --frozen-lockfile`.
-Run `pnpm check` for Rust formatting and the TypeScript/React production build.
-Run `pnpm test` for the entire Rust workspace, including Whisper and wake-word
-features; this also prepares the icon and MCP sidecar. The initial native build
-requires Visual Studio C++ Build Tools and CMake and can take several minutes.
-Whisper requires libclang to generate bindings for the Windows ABI.
-`pnpm desktop:native:prepare` downloads the pinned LLVM libclang 18.1.1 wheel,
-verifies its SHA-256 and extracts its DLL and license under `target/native/libclang`.
-`pnpm test` and desktop build/dev commands run this preparation automatically.
-An explicit `LIBCLANG_PATH` environment variable overrides the workspace default.
-The native runner locates MSVC/Windows SDK headers automatically. Rust, Whisper
-and SentencePiece use a consistent static C runtime. Sherpa is linked through
-DLLs to isolate its bundled protobuf from SentencePiece; sidecar staging copies
-the Sherpa/ONNX DLLs and the Windows bundle includes them.
-
-After installing model resources, run `pnpm test:models` to exercise SentencePiece,
-Sherpa and Whisper with synthetic audio without opening a microphone. This optional
-test uses the app-local-data models directory by default; set
-`ASSISTANT_TEST_MODELS_DIR` to use another directory.
-After staging the debug sidecar, `node scripts/smoke-mcp.mjs` verifies the MCP
-handshake, tool catalogue and a read-only native audio query.
-
-Start the desktop with `pnpm desktop:dev`. Antigravity CLI must be installed
-and signed in for AI requests; local read-only commands remain available without
-AI. Whisper and wake model resources are separate from the native build.
-The release verifier deliberately rejects uncommitted changes; use the development
-commands while reviewing fixes, and commit reviewed changes before packaging a release.
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1
-```
-
-JSON output:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1 -Json
-```
-
-This verifier is read-only and does not build/test/start the application.
-
-## Runtime resources
-
-Default layout:
-
-```text
-<app-local-data>/models/
-├── whisper/
-│   └── ggml-base.bin
-└── wake/
-    └── sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/
-        ├── encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx
-        ├── decoder-epoch-12-avg-2-chunk-16-left-64.onnx
-        ├── joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx
-        ├── tokens.txt
-        ├── keywords.txt
-        └── bpe.model
-```
-
-Resource overrides must be absolute:
-
-```text
-ASSISTANT_WHISPER_MODEL
-ASSISTANT_WAKE_MODEL_DIR
-ASSISTANT_WAKE_KEYWORDS
-```
-
-Whisper verified install uses a backend-owned URL/size/SHA-256 manifest; frontend/model requests cannot inject arbitrary resource URLs or install destinations.
-
-## Wake phrase lifecycle
-
-```text
-phrase
-  ↓
-SentencePiece + token validation
-  ↓
-new keywords.txt.part
-  ↓
-old keywords.txt → backup
-  ↓
-new keywords.txt → final
-  ↓
-load replacement detector
-  ↓
-success? no → rollback
-  ↓ yes
-persist phrase + remove backup
-```
-
-Wake preferences live in `<app-local-data>/settings/wake.json`.
-
-## Updater policy
-
-Automatic updater artifacts remain disabled until all of the following are defined together:
-
-- authenticated update endpoint;
-- updater signing-key lifecycle;
-- release publication workflow;
-- rollback/recovery policy;
-- installer/update test matrix.
-
-Manual signed releases remain the initial public distribution model.
-
-## Context / privacy
-
-Desktop context is collected only on demand. Screen/clipboard data are treated as untrusted context. Readiness/audit/verifier/resource output do not expose broker secrets, credentials, prompts, clipboard contents, screenshots, permission arguments or model contents.
+There is currently no requirement for a Gemini API key in the primary architecture; the application uses the user's normal Antigravity CLI authentication/session.
 
 ## Development rules
 
-1. Develop one bounded phase at a time.
-2. Keep native implementation separate from transport/UI where practical.
-3. Use stable typed contracts.
-4. Authorize before native mutation.
-5. Prefer semantic Windows/UIA APIs over raw input.
-6. Fail closed for unknown tools, stale targets, broker errors and malformed policy.
-7. Static-review APIs before merge.
-8. Do not run GitHub Actions/tests/native builds/installers/signing/model downloads during remote development.
-9. Squash-merge completed phases to `main`.
-10. Update README before every phase merge.
-
-## Next direction
-
-After Phase 15, repository-side release preparation is complete. Remaining work is inherently local/machine-dependent:
-
-1. resolve and review `Cargo.lock`;
-2. resolve and review `pnpm-lock.yaml`;
-3. compile, install and exercise the application on Windows;
-4. fix any compiler/runtime/install findings;
-5. provide a real trusted Windows signing identity before public distribution.
-
-No further computer-use capability should be added until those local verification findings are resolved.
+1. Keep native implementation separate from transport/UI where practical.
+2. Prefer explicit typed contracts.
+3. Authorize before native mutation.
+4. Prefer semantic Windows/UIA APIs over unrestricted raw shell automation.
+5. Fail closed for unknown tools, stale targets, broker failures, malformed policy, and missing confirmation.
+6. Keep screen/clipboard context on-demand and treat it as untrusted input.
+7. Do not add arbitrary shell/PowerShell execution to the model-facing tool surface.
+8. Keep dependency/model/release inputs deterministic and verifiable.
+9. Update this README when capability or release status changes.
+10. Validate native Windows behavior locally before calling a phase production-ready.
 
 ## Documentation
 
-- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- [`docs/ANTIGRAVITY.md`](docs/ANTIGRAVITY.md)
-- [`docs/MCP.md`](docs/MCP.md)
-- [`docs/VOICE_DESKTOP.md`](docs/VOICE_DESKTOP.md)
-- [`docs/WAKE_RUNTIME.md`](docs/WAKE_RUNTIME.md)
-- [`docs/WAKE_KEYWORD_PREPARATION.md`](docs/WAKE_KEYWORD_PREPARATION.md)
-- [`docs/WAKE_HOT_RELOAD.md`](docs/WAKE_HOT_RELOAD.md)
-- [`docs/WINDOWS_LIFECYCLE.md`](docs/WINDOWS_LIFECYCLE.md)
-- [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)
-- [`docs/PERMISSION_GATEWAY.md`](docs/PERMISSION_GATEWAY.md)
-- [`docs/RUNTIME_READINESS.md`](docs/RUNTIME_READINESS.md)
-- [`docs/RUNTIME_PATHS_PACKAGING.md`](docs/RUNTIME_PATHS_PACKAGING.md)
-- [`docs/LOCAL_WINDOWS_VERIFICATION.md`](docs/LOCAL_WINDOWS_VERIFICATION.md)
-- [`docs/RUNTIME_RESOURCES.md`](docs/RUNTIME_RESOURCES.md)
+Detailed design notes remain under `docs/`, including:
+
+- `docs/PROJECT_PLAN.md`
+- `docs/ARCHITECTURE.md`
+- `docs/ANTIGRAVITY.md`
+- `docs/MCP.md`
+- `docs/PERMISSION_GATEWAY.md`
+- `docs/RUNTIME_PERMISSION_POLICY.md`
+- `docs/LOCAL_INTENT_FAST_PATH.md`
+- `docs/WINDOWS_SYSTEM_CONTROL.md`
+- `docs/UI_AUTOMATION.md`
+- `docs/VOICE_DESKTOP.md`
+- `docs/WAKE_RUNTIME.md`
+- `docs/WAKE_KEYWORD_PREPARATION.md`
+- `docs/WAKE_HOT_RELOAD.md`
+- `docs/RUNTIME_READINESS.md`
+- `docs/RUNTIME_PATHS_PACKAGING.md`
+- `docs/RUNTIME_RESOURCES.md`
+- `docs/WINDOWS_LIFECYCLE.md`
+- `docs/LOCAL_WINDOWS_VERIFICATION.md`
+- `docs/RELEASE_CHECKLIST.md`
+
+## License
+
+MIT.

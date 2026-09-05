@@ -22,6 +22,9 @@ pub struct AntigravitySettingsView {
     pub current_effort: Option<String>,
     pub available_models: Vec<AntigravityModelInfo>,
     pub cli_binary: String,
+    /// Compatibility field consumed by the current UI. It means the CLI binary
+    /// is runnable, not that a Google account session has been independently
+    /// verified. Authentication is ultimately verified by a real agent turn.
     pub is_authenticated: bool,
 }
 
@@ -90,76 +93,44 @@ impl AntigravitySettingsStore {
 }
 
 pub fn fetch_available_models(binary_path: &str) -> Vec<AntigravityModelInfo> {
-    let mut models = Vec::new();
+    let Ok(output) = Command::new(binary_path).arg("models").output() else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
 
-    if let Ok(output) = Command::new(binary_path).arg("models").output() {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            for line in text.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with("Fetching") {
-                    continue;
-                }
-                let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() >= 2 {
-                    let id = parts[0].trim().to_string();
-                    let label = parts[1].trim().to_string();
-                    if !id.is_empty() {
-                        models.push(AntigravityModelInfo { id, label });
-                    }
-                } else {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if !parts.is_empty() {
-                        let id = parts[0].to_string();
-                        let label = parts[1..].join(" ");
-                        models.push(AntigravityModelInfo {
-                            id: id.clone(),
-                            label: if label.is_empty() { id } else { label },
-                        });
-                    }
-                }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut models = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("Fetching") {
+            continue;
+        }
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 2 {
+            let id = parts[0].trim().to_string();
+            let label = parts[1].trim().to_string();
+            if !id.is_empty() {
+                models.push(AntigravityModelInfo { id, label });
+            }
+        } else {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if !parts.is_empty() {
+                let id = parts[0].to_string();
+                let label = parts[1..].join(" ");
+                models.push(AntigravityModelInfo {
+                    id: id.clone(),
+                    label: if label.is_empty() { id } else { label },
+                });
             }
         }
     }
 
-    if !models.is_empty() {
-        return models;
-    }
-
-    vec![
-        AntigravityModelInfo {
-            id: "gemini-3.7-flash-high".into(),
-            label: "Gemini 3.7 Flash (High Reasoning)".into(),
-        },
-        AntigravityModelInfo {
-            id: "gemini-3.7-flash-medium".into(),
-            label: "Gemini 3.7 Flash (Medium Reasoning)".into(),
-        },
-        AntigravityModelInfo {
-            id: "gemini-3.7-flash-low".into(),
-            label: "Gemini 3.7 Flash (Low Reasoning)".into(),
-        },
-        AntigravityModelInfo {
-            id: "gemini-3.8-flash-high".into(),
-            label: "Gemini 3.8 Flash (High Reasoning)".into(),
-        },
-        AntigravityModelInfo {
-            id: "gemini-3.1-pro-high".into(),
-            label: "Gemini 3.1 Pro (High Reasoning)".into(),
-        },
-        AntigravityModelInfo {
-            id: "claude-sonnet-4-6".into(),
-            label: "Claude Sonnet 4.6 (Thinking)".into(),
-        },
-        AntigravityModelInfo {
-            id: "claude-opus-4-6-thinking".into(),
-            label: "Claude Opus 4.6 (Thinking)".into(),
-        },
-        AntigravityModelInfo {
-            id: "gpt-oss-120b-medium".into(),
-            label: "GPT-OSS 120B (Medium)".into(),
-        },
-    ]
+    // Do not fabricate a fallback catalogue. `agy models` is the authoritative
+    // source and headless runs fail loudly for unknown model slugs. An empty
+    // result keeps Default/Custom available without advertising stale IDs.
+    models
 }
 
 pub fn launch_cli_login(binary_path: &str) -> Result<(), String> {
