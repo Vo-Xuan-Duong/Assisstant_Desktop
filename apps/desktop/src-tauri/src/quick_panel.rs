@@ -1,3 +1,6 @@
+#[path = "management_ipc.rs"]
+mod management_ipc;
+
 use serde::Serialize;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
@@ -47,6 +50,15 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     // The window is interactive only inside its compact rectangle. The rest of
     // the desktop remains fully usable because this is not a fullscreen WebView.
     quick.set_ignore_cursor_events(false)?;
+
+    // The compact overlay is the long-term graphical host, so it also owns the
+    // lifecycle of the local management endpoint used by assistant.exe. Desktop
+    // state and WakeService have already been managed before quick_panel::setup.
+    let state = app.state::<crate::DesktopState>();
+    let management = management_ipc::ManagementIpc::setup(app, &state.runtime_paths)
+        .map_err(|error| tauri::Error::Io(std::io::Error::other(error)))?;
+    app.manage(management);
+
     Ok(())
 }
 
