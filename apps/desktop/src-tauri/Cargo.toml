@@ -8,7 +8,9 @@ repository.workspace = true
 
 [features]
 default = []
-voice-whisper = ["voice-runtime/whisper"]
+voice-stt = ["voice-runtime/zipformer"]
+# Backward-compatible alias for older local build commands. New builds should use `voice-stt`.
+voice-whisper = ["voice-stt", "voice-runtime/whisper"]
 wake-word = ["voice-runtime/wake-sherpa"]
 
 [lib]
