@@ -4,6 +4,7 @@ use std::{
     path::PathBuf,
     process::Stdio,
     sync::Arc,
+    time::Duration,
 };
 
 use tokio::{
@@ -20,6 +21,19 @@ use crate::{
 };
 
 const MAX_DIAGNOSTIC_LINES: usize = 32;
+const DEFAULT_TURN_TIMEOUT_SECONDS: u64 = 180;
+const MIN_TURN_TIMEOUT_SECONDS: u64 = 15;
+const MAX_TURN_TIMEOUT_SECONDS: u64 = 1_800;
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+
+fn turn_timeout() -> Duration {
+    let seconds = std::env::var("ASSISTANT_ANTIGRAVITY_TURN_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|value| value.clamp(MIN_TURN_TIMEOUT_SECONDS, MAX_TURN_TIMEOUT_SECONDS))
+        .unwrap_or(DEFAULT_TURN_TIMEOUT_SECONDS);
+    Duration::from_secs(seconds)
+}
 
 #[derive(Clone)]
 pub struct AntigravityConfig {
@@ -202,6 +216,16 @@ impl AntigravitySession {
     }
 
     pub async fn ask(&mut self, prompt: &str) -> Result<TurnResult, BridgeError> {
+        let deadline = turn_timeout();
+        match tokio::time::timeout(deadline, self.ask_inner(prompt)).await {
+            Ok(result) => result,
+            Err(_) => Err(BridgeError::TurnTimeout {
+                seconds: deadline.as_secs(),
+            }),
+        }
+    }
+
+    async fn ask_inner(&mut self, prompt: &str) -> Result<TurnResult, BridgeError> {
         if prompt.trim().is_empty() {
             return Err(BridgeError::EmptyPrompt);
         }
@@ -282,7 +306,14 @@ impl AntigravitySession {
 
     pub async fn shutdown(mut self) -> Result<(), BridgeError> {
         let _ = self.stdin.shutdown().await;
-        let wait_result = self.child.wait().await;
+        let wait_result = match tokio::time::timeout(SHUTDOWN_GRACE, self.child.wait()).await {
+            Ok(result) => result,
+            Err(_) => {
+                warn!("Antigravity process did not exit after stdin closed; terminating it");
+                let _ = self.child.start_kill();
+                self.child.wait().await
+            }
+        };
         self.stderr_task.abort();
         wait_result?;
         Ok(())
@@ -304,5 +335,12 @@ mod tests {
     fn default_binary_returns_usable_path_or_command() {
         let binary = default_binary();
         assert!(!binary.trim().is_empty());
+    }
+
+    #[test]
+    fn turn_timeout_is_bounded() {
+        let timeout = turn_timeout();
+        assert!(timeout >= Duration::from_secs(MIN_TURN_TIMEOUT_SECONDS));
+        assert!(timeout <= Duration::from_secs(MAX_TURN_TIMEOUT_SECONDS));
     }
 }
