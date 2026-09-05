@@ -1,11 +1,11 @@
-# Voice Runtime — Phase 5B VAD + STT
+# Voice Runtime — Vietnamese STT
 
-## Scope
+## Current architecture
 
-Phase 5B turns the normalized microphone chunks from Phase 5A into complete speech utterances and defines a replaceable speech-recognition interface.
+The desktop assistant now uses a Vietnamese-specific sherpa-onnx Zipformer model as its primary local speech recognizer. Whisper remains only as an optional compatibility fallback.
 
 ```text
-MicrophoneStream
+MicrophoneStream (CPAL)
       |
   AudioChunk
       |
@@ -15,18 +15,88 @@ UtteranceSegmenter
       |
 SpeechRecognizer
       |
-WhisperRecognizer   (optional feature)
+Vietnamese Zipformer INT8       <-- primary
+      |
+Whisper local model             <-- fallback only
       |
  Transcript
+      |
+Assistant Core
 ```
 
-The desktop UI is intentionally not connected to this pipeline until Phase 5C, when TTS and the full voice-turn lifecycle are available.
+The Assistant still keeps microphone audio local. Only the final transcript enters Assistant Core/Antigravity.
 
-## Baseline VAD
+## Primary model
 
-`UtteranceSegmenter` is local and has no model dependency. It uses chunk RMS levels to detect speech boundaries.
+Pinned model family:
 
-Default behavior:
+```text
+sherpa-onnx-zipformer-vi-30M-int8-2026-02-09
+```
+
+Required runtime files:
+
+```text
+encoder.int8.onnx
+decoder.onnx
+joiner.int8.onnx
+tokens.txt
+```
+
+Default model directory:
+
+```text
+%LOCALAPPDATA%/<Assisstant Desktop app-data>/models/stt/
+  sherpa-onnx-zipformer-vi-30M-int8-2026-02-09/
+```
+
+The directory can be overridden with an absolute path:
+
+```text
+ASSISTANT_ZIPFORMER_MODEL_DIR
+```
+
+The official sherpa-onnx model documentation is:
+
+```text
+https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/zipformer-transducer-models.html
+```
+
+The upstream package contains the exact INT8 encoder/joiner, decoder and token vocabulary expected by the runtime.
+
+## Runtime behavior
+
+`WhisperRecognizer` is retained as the compatibility type name used by the current Tauri voice state, but its behavior changed:
+
+1. resolve the Vietnamese Zipformer model directory;
+2. when all four Zipformer files exist, create a sherpa-onnx `OfflineRecognizer`;
+3. recognize the captured utterance with Zipformer using the microphone source sample rate;
+4. if Zipformer fails for a turn and a legacy Whisper model exists, try Whisper once as fallback;
+5. if Zipformer is not installed, an existing Whisper model can still be used during migration.
+
+Successful primary transcripts report the engine as:
+
+```text
+sherpa-onnx/zipformer-vi-30m-int8
+```
+
+Fallback transcripts report:
+
+```text
+whisper.cpp/fallback
+```
+
+## Sample-rate handling
+
+Sherpa-onnx accepts the source sample rate supplied by the microphone stream, so the primary recognizer does not perform the old forced 16 kHz whole-utterance resample.
+
+The existing 16 kHz linear resampler is retained only for Whisper fallback compatibility.
+
+## VAD
+
+The current local utterance segmenter remains unchanged in this migration. It detects speech boundaries before ASR and therefore isolates the recognizer replacement from microphone capture and Assistant Core.
+
+Default behavior remains:
 
 - speech RMS threshold: `0.012`;
 - speech start trigger: `120 ms`;
@@ -35,85 +105,37 @@ Default behavior:
 - minimum utterance: `250 ms`;
 - maximum utterance: `15 s`.
 
-Pre-roll avoids clipping the beginning of a phrase while the start threshold is being confirmed.
+A later STT phase can replace this baseline with Silero VAD and partial/streaming transcript events without changing the assistant reasoning pipeline.
 
-The VAD is intentionally a replaceable baseline. Later versions can use a neural VAD without changing the `Utterance` or STT interfaces.
+## Feature compatibility
 
-## SpeechRecognizer contract
+The desktop Cargo feature remains named `voice-whisper` for compatibility with existing release scripts. Internally, `voice-runtime/whisper` now enables both:
 
-Recognition engines implement:
+- `sherpa-onnx` for the primary Vietnamese Zipformer recognizer;
+- `whisper-rs` for optional fallback.
 
-```text
-SpeechRecognizer::transcribe(Utterance) -> Transcript
-```
+Renaming the public feature can be done later as a cleanup without coupling it to the functional STT migration.
 
-`Transcript` includes:
+## Resource installation
 
-- text;
-- language when known/configured;
-- engine name;
-- original utterance duration.
+The previous verified single-file Whisper downloader must not write a Whisper binary into the new Zipformer encoder path. Therefore automatic installation for the STT manifest is disabled until the installer supports a verified multi-file transaction.
 
-Recognition is asynchronous at the product boundary so CPU-heavy engines can run outside Tauri/Tokio's normal async task execution.
+For this migration, install the official upstream Zipformer package manually into the model directory shown by the Resources panel. The runtime requires all four files listed above before it reports the primary STT resource as `Ready`.
 
-## Resampling
-
-Whisper requires mono `f32` PCM at 16 kHz. Microphone hardware commonly runs at 44.1 or 48 kHz.
-
-Phase 5B includes a replaceable whole-utterance linear resampler:
+The legacy fallback path remains:
 
 ```text
-hardware mono f32
-44.1/48 kHz
-     |
-resample_mono
-     |
-16 kHz mono f32
+models/whisper/ggml-base.bin
 ```
 
-It runs after VAD, never inside the realtime audio callback.
+and can still be overridden by:
 
-The linear resampler is an integration baseline, not the final quality ceiling. A future band-limited resampler can replace it behind the same function boundary if local speech-recognition benchmarks justify the additional dependency/CPU cost.
-
-## Whisper feature
-
-Whisper support is **disabled by default**.
-
-```toml
-voice-runtime = { ..., features = ["whisper"] }
+```text
+ASSISTANT_WHISPER_MODEL
 ```
 
-Only enabling this feature pulls `whisper-rs` / whisper.cpp native compilation into the build.
+Whisper is not required for the new primary STT resource to become `Ready`.
 
-This separation is deliberate because the Whisper native build requires additional C/C++ tooling and should not make every ordinary Tauri build heavier.
+## Verification policy
 
-## WhisperRecognizer
-
-`WhisperRecognizer`:
-
-- loads a local ggml/gguf-compatible model path accepted by whisper.cpp;
-- defaults to Vietnamese (`vi`), but language can be changed or set to auto detection;
-- defaults to CPU execution;
-- runs recognition in `tokio::task::spawn_blocking`;
-- disables model stdout progress/realtime printing;
-- creates a fresh Whisper state for each complete utterance;
-- uses greedy decoding as the low-latency baseline.
-
-Whisper model installation/download is not handled by this phase. Model lifecycle belongs to a later application-data/model-management step.
-
-## Why not call Antigravity for STT
-
-Speech-to-text is deliberately local:
-
-- no additional API/quota consumption;
-- microphone audio is not sent to Antigravity merely for transcription;
-- latency is independent of network round trips;
-- the Antigravity quota is reserved for reasoning/tool orchestration.
-
-Only the resulting text enters Assistant Core.
-
-## Build and verification policy
-
-Default builds do not compile Whisper.
-
-No GitHub Actions or runtime tests are executed during repository development. The feature-gated native build and model accuracy are to be verified locally on the Windows development machine when the Whisper feature is enabled.
+No GitHub Action, build or native runtime test is manually dispatched as part of this repository change. Accuracy and microphone behavior should be validated locally on the target Windows machine with the Vietnamese Zipformer files installed.
