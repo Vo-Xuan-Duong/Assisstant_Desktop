@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "apps/cli",
     "apps/desktop/src-tauri",
     "crates/common",
     "crates/assistant-core",
@@ -24,11 +23,8 @@ repository = "https://github.com/Vo-Xuan-Duong/Assisstant_Desktop"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
-clap = { version = "4.5", features = ["derive", "env"] }
 cpal = "0.18.2"
-crossterm = "0.28"
 png = "0.18"
-ratatui = "0.29"
 reqwest = { version = "0.13.4", default-features = true }
 rmcp = { version = "3.2", features = ["server", "macros", "transport-io", "schemars"] }
 schemars = "1"
