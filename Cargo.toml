@@ -24,7 +24,7 @@ repository = "https://github.com/Vo-Xuan-Duong/Assisstant_Desktop"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 cpal = "0.18.2"
 crossterm = "0.28"
 png = "0.18"
