@@ -1,3 +1,4 @@
+mod system_control_tools;
 mod system_tools;
 mod ui_tools;
 mod virtualized_tools;
@@ -24,6 +25,7 @@ impl Default for WindowsMcpServer {
         Self {
             permissions: McpPermissionGateway::default(),
             tool_router: Self::system_tool_router()
+                + Self::system_control_tool_router()
                 + Self::ui_tool_router()
                 + Self::virtualized_tool_router()
                 + Self::window_tool_router(),
