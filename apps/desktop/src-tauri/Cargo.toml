@@ -8,7 +8,12 @@ repository.workspace = true
 
 [features]
 default = []
-voice-whisper = ["voice-runtime/whisper"]
+# Historical desktop feature retained so existing cfg blocks and release config stay valid.
+# It now enables Zipformer only; whisper-rs is not part of normal desktop builds.
+voice-whisper = ["voice-runtime/zipformer"]
+# Preferred feature name for new build commands. Enabling it also enables the historical
+# desktop cfg surface so the current Tauri voice lifecycle remains compiled.
+voice-stt = ["voice-whisper"]
 wake-word = ["voice-runtime/wake-sherpa"]
 
 [lib]

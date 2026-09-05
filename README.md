@@ -1,23 +1,44 @@
 # Assisstant Desktop
 
-Windows-first desktop AI assistant powered by **Google Antigravity CLI + Gemini + MCP + Rust/Tauri**.
+Windows-first AI assistant powered by **Google Antigravity CLI + Gemini + MCP + Rust/Tauri**.
 
-The project is no longer a small prototype. The current codebase contains the complete text/voice/wake desktop pipeline, a permission-gated Windows MCP runtime, semantic UI Automation, resource management, Windows lifecycle integration, release packaging, and deterministic local read-only commands.
+The product is designed as a background system assistant rather than a conventional chatbot window. Daily interaction uses a compact Gemini-style overlay and perimeter glow; the existing full desktop surface is retained for management and sensitive confirmations while the project moves toward a CLI/TUI management experience.
 
 ## Current status
 
 - **Target:** Windows first.
-- **Runtime:** Tauri 2 + React frontend with a Rust backend.
+- **Runtime:** Tauri 2 + Rust backend + React overlay/management frontend.
 - **AI backend:** Google Antigravity CLI in headless `stream-json` mode.
 - **Tool protocol:** MCP over stdio.
 - **Windows integration:** Win32 / COM / UI Automation / CoreAudio / CPAL.
-- **Voice:** local Whisper STT + Windows SAPI TTS.
+- **Primary STT:** sherpa-onnx Vietnamese Zipformer 30M INT8.
+- **TTS:** Windows SAPI.
 - **Wake word:** sherpa-onnx.
 - **Installer:** NSIS current-user package.
 - **Safety default:** unknown, blocked, stale, malformed, or unconfirmed sensitive actions fail closed.
-- **Feature status:** Phases 0–17 are integrated; current work is runtime hardening and local release validation.
 
-The previous README stopped at Phase 14/15. `main` has since added the local Safe intent fast-path, expanded Windows system control, Antigravity settings/model management, native build preparation, and Windows CI coverage.
+The repository is at a late beta / technical release-candidate stage. Text, tool, voice, wake, permission, overlay, Windows lifecycle, and release packaging are integrated; target-Windows runtime validation is still required before a public release.
+
+## User interaction
+
+Normal assistant invocation does not open the full desktop UI.
+
+```text
+Current application
+      |
+Alt + Space / Wake
+      |
+      +--> perimeter edge glow
+      |
+      +--> compact bottom overlay
+              |
+              +-- text input
+              +-- microphone
+              +-- short response
+              +-- expand when needed
+```
+
+The full application remains available for advanced settings, resource management, diagnostics, and sensitive permission confirmation.
 
 ## Architecture
 
@@ -25,7 +46,7 @@ The previous README stopped at Phase 14/15. `main` has since added the local Saf
 Wake / Alt+Space / Mic / Text
              |
              v
-      Tauri Desktop + React
+      Quick Tauri Overlay
              |
              v
         Assistant Core
@@ -50,20 +71,20 @@ Local Safe Path    Context Engine
           Win32 / UIA / CoreAudio
 ```
 
-No frontend component calls Win32 directly. Model-facing actions go through explicit tool contracts and the permission layer.
+No React component calls Win32 directly. Model-facing mutations go through explicit MCP tool contracts and the permission layer.
 
 ## Workspace
 
 ```text
-apps/desktop/src-tauri    Tauri desktop backend
-apps/desktop              React/TypeScript UI
+apps/desktop/src-tauri    Tauri desktop/backend shell
+apps/desktop              React quick overlay + management UI
 crates/common             Shared contracts
 crates/assistant-core     State machine and request lifecycle
 crates/antigravity-bridge Long-running Antigravity session
 crates/context-engine     On-demand desktop context
 crates/permission-broker  Authenticated local confirmation broker
 crates/permission-engine  Risk and permission policy
-crates/voice-runtime      Microphone, VAD, Whisper, TTS, wake runtime
+crates/voice-runtime      Microphone, VAD, STT, TTS, wake runtime
 crates/windows-tools      Native Windows operations
 crates/windows-mcp        MCP server and permission gateway
 ```
@@ -74,38 +95,14 @@ crates/windows-mcp        MCP server and permission gateway
 - TypeScript + React.
 - Tauri 2.
 - Tokio.
-- `rmcp` for the MCP server.
+- `rmcp` for MCP.
 - `windows-rs 0.62.2`.
 - CPAL/WASAPI microphone capture.
-- whisper.cpp local STT.
+- sherpa-onnx `1.13.7` for Vietnamese STT and wake-word native inference.
 - Windows SAPI local TTS.
-- sherpa-onnx + SentencePiece wake-word stack.
+- SentencePiece for wake keyword preparation.
 - NSIS Windows installer.
 - pnpm.
-
-## Integrated development phases
-
-| Phase | Status | Capability |
-|---|---|---|
-| 0 | Complete | Workspace, contracts, Assistant Core |
-| 1 | Complete | Long-running Antigravity `stream-json` runtime |
-| 2 | Complete | Windows MCP foundation |
-| 3 | Complete | Tauri/React text desktop MVP |
-| 4 | Complete | Active-window / clipboard / screen context |
-| 5A–5C | Complete | Microphone, VAD, Whisper, voice turn, TTS |
-| 6 | Complete | Gemini-like edge overlay UI |
-| 7A–7C | Complete | Wake detector, background wake, wake-to-voice |
-| 8A–8C | Complete | Semantic Windows UI Automation |
-| 9A–9D | Complete | Permission policy, broker, confirmation UX, audit, overrides |
-| 10A–10E | Complete | Range/Grid/ScrollItem/UIA schema/router hardening |
-| 11A–11D | Complete | Virtualized UIA, window discovery/control, monitor placement |
-| 12A–12C | Complete | Readiness, runtime paths, MCP packaging, local verifier |
-| 13A–13D | Complete | Resource registry/install, wake keyword preparation/hot reload |
-| 14A–14B | Complete | Windows lifecycle and release readiness |
-| 15 | Complete | Deterministic release preparation/signing contract |
-| 16A | Complete | Deterministic local Safe intent fast-path |
-| 17 | Complete | Expanded Windows system control |
-| Runtime hardening | In progress | Timeouts, context privacy, settings correctness, local E2E validation |
 
 ## Assistant lifecycle
 
@@ -123,208 +120,9 @@ Error
 
 The core uses a single-flight request gate. Permission confirmation is a real lifecycle state rather than an unrelated modal state.
 
-## Deterministic local Safe fast-path
+## Vietnamese voice pipeline
 
-A deliberately small set of read-only requests bypasses Antigravity and executes locally:
-
-```text
-audio_get_volume
-apps_list
-window_get_active
-system_get_info
-```
-
-Examples:
-
-```text
-Âm lượng hiện tại bao nhiêu?
-Ứng dụng nào đang chạy?
-Cửa sổ active hiện tại là gì?
-Máy đang dùng bao nhiêu RAM?
-```
-
-Before local execution the desktop re-validates the exact tool in `windows_tools::TOOL_CATALOG` and refuses it unless the tool is still classified `Safe`.
-
-Mutating or ambiguous requests continue through Antigravity + MCP + permission handling.
-
-## MCP capability surface
-
-### Audio / applications / system
-
-```text
-audio_get_volume
-audio_set_volume
-audio_set_mute
-apps_open
-apps_list
-system_get_info
-media_play_pause
-media_next
-media_previous
-clipboard_read_text
-clipboard_write_text
-```
-
-### Display / windows
-
-```text
-display_list
-display_turn_off
-window_get_active
-window_list
-window_activate
-window_set_bounds
-window_set_state
-window_close
-```
-
-### Power / process / input
-
-```text
-system_lock
-system_logoff
-system_shutdown
-system_restart
-process_terminate
-input_send_hotkey
-input_type_text
-```
-
-### Filesystem
-
-```text
-file_info
-file_list
-file_create_directory
-file_copy
-file_move
-file_delete
-```
-
-Filesystem mutation is intentionally bounded: absolute paths are required, overwrite is disabled, recursive deletion is not exposed, filesystem roots are rejected, and symlink/junction mutation is refused.
-
-### Semantic UI Automation
-
-```text
-ui_inspect
-ui_focus
-ui_invoke
-ui_set_value
-ui_set_range_value
-ui_toggle
-ui_select
-ui_set_expanded
-ui_scroll
-ui_scroll_into_view
-ui_virtualized_item_status
-ui_realize
-```
-
-UI Automation uses explicit HWND + semantic element paths rather than unrestricted pixel-coordinate automation.
-
-## Permission model
-
-```text
-Safe       -> product baseline Allow
-Moderate   -> Default / Allow / Ask / Deny runtime policy
-Sensitive  -> explicit desktop confirmation / Allow once
-Blocked    -> Deny
-Unknown    -> Deny
-```
-
-Runtime overrides are enforced as a **Moderate-only invariant**. Safe, Sensitive, and Blocked decisions cannot be downgraded through the generic permission-policy override path.
-
-Sensitive confirmations use an authenticated local broker:
-
-```text
-127.0.0.1 ephemeral port
-+ RAM-only random session secret
-+ request UUID
-+ exact tool/risk/arguments
-+ bounded timeout
-+ AllowOnce / Deny
-```
-
-Missing broker state, malformed payloads, timeouts, stale responses, and UI failures deny execution.
-
-Permission audit records intentionally exclude prompts, clipboard contents, screenshots, broker secrets, and credentials.
-
-## Antigravity runtime
-
-The desktop maintains a long-running Antigravity CLI session using:
-
-```text
---input-format stream-json
---output-format stream-json
-```
-
-### Turn timeout
-
-An Antigravity turn is bounded so a live CLI process that stops producing a final result cannot hold Assistant Core in `Processing` indefinitely.
-
-Default:
-
-```text
-180 seconds
-```
-
-Optional override:
-
-```powershell
-$env:ASSISTANT_ANTIGRAVITY_TURN_TIMEOUT_SECONDS="240"
-```
-
-Accepted values are clamped to 15–1800 seconds. A timeout invalidates the session; shutdown has a short grace period and then terminates a process that does not exit.
-
-### CLI and authentication status
-
-The settings UI distinguishes **CLI availability** from verified account authentication.
-
-`agy --help` only proves that the binary is runnable. It does not prove that a cached Google account session is valid. Authentication is ultimately verified when a real Antigravity agent session starts. If the CLI has no cached credentials, the normal Antigravity authentication flow is used.
-
-The **Đăng nhập / Đổi tài khoản** action opens the normal interactive Antigravity CLI rather than extracting or managing Google credentials inside this application.
-
-### Model selection
-
-Available model choices come from the installed CLI:
-
-```powershell
-agy models
-```
-
-The application no longer fabricates a hard-coded fallback model catalogue when discovery fails. `Default` and `Custom model` remain available, and an invalid custom model is expected to fail loudly in Antigravity headless mode.
-
-Persistent desktop settings are stored under app-local-data:
-
-```text
-settings/antigravity.json
-```
-
-Changing model/effort resets the active Antigravity process so the next turn starts with the new configuration.
-
-## Desktop context and privacy
-
-Context is collected only when the user request indicates it is needed.
-
-Possible context sources:
-
-- source/active-window metadata;
-- clipboard text;
-- active-window screenshot.
-
-Desktop-derived text is formatted as explicitly untrusted escaped fields. Clipboard text is quoted and bounded to 16,000 characters before being included in an agent prompt. The prompt explicitly tells the model not to follow instructions embedded in desktop field values.
-
-Screenshots use a single transient path:
-
-```text
-<app-local-data>/context/active-window.png
-```
-
-The artifact is removed when its request snapshot is dropped. Temporary PNG files are also cleaned on failed writes/renames.
-
-This reduces persistence of sensitive screen content while keeping the local file available for the duration of the active agent turn.
-
-## Voice pipeline
+The normal desktop build no longer uses Whisper as its primary recognizer.
 
 ```text
 Microphone
@@ -333,15 +131,19 @@ Microphone
 CPAL / WASAPI
    |
    v
-VAD
+UtteranceSegmenter / VAD
    |
    v
-Whisper multilingual base
+Vietnamese Zipformer 30M INT8
+sherpa-onnx OfflineRecognizer
+   |
+   v
+final transcript
    |
    v
 complete_prompt()
    |
-   +--> local Safe path
+   +--> deterministic local Safe path
    |
    +--> Antigravity + MCP
    |
@@ -349,15 +151,95 @@ complete_prompt()
 Windows SAPI TTS
 ```
 
-Whisper is configured for Vietnamese in the desktop voice turn.
+The current migration replaces the recognizer while preserving the existing utterance boundary: recognition starts after VAD has completed one utterance. Partial/streaming transcript events are not implemented yet.
+
+Successful primary transcripts report:
+
+```text
+sherpa-onnx/zipformer-vi-30m-int8
+```
 
 The microphone callback never blocks waiting for the async consumer; bounded queues drop excess chunks instead of blocking the realtime audio callback.
+
+### Model
+
+Runtime resource id:
+
+```text
+stt_zipformer_vi
+```
+
+Model family:
+
+```text
+sherpa-onnx-zipformer-vi-30M-int8-2026-02-09
+```
+
+Required runtime files:
+
+```text
+encoder.int8.onnx
+decoder.onnx
+joiner.int8.onnx
+tokens.txt
+```
+
+The installer also stores `bpe.model` for future contextual-biasing work.
+
+Default location:
+
+```text
+<app-local-data>/models/stt/
+  sherpa-onnx-zipformer-vi-30M-int8-2026-02-09/
+```
+
+Absolute override:
+
+```text
+ASSISTANT_ZIPFORMER_MODEL_DIR
+```
+
+### Verified multi-file installation
+
+Resource Setup installs the STT model as a transaction:
+
+1. create an adjacent staging directory;
+2. download from an immutable model revision;
+3. verify exact size and SHA-256 for encoder, decoder, joiner, and `bpe.model`;
+4. download `tokens.txt` under a strict size bound;
+5. validate its 2000 sequential token ids and expected special tokens;
+6. atomically promote the complete staging directory;
+7. delete staging data if any step fails.
+
+The installer refuses to overwrite a non-empty model directory.
+
+### Model license
+
+The selected Vietnamese model is licensed **CC-BY-NC-ND-4.0**. It is downloaded at runtime and is not bundled into the application installer. Runtime download does not remove the upstream non-commercial/no-derivatives restrictions. A commercial distribution must select a model with suitable commercial terms.
+
+### Feature compatibility
+
+The preferred desktop feature name for new commands is:
+
+```text
+voice-stt
+```
+
+The historical feature name remains valid:
+
+```text
+voice-whisper
+```
+
+Both routes compile the same Zipformer desktop STT path. The historical name is retained only because the current Tauri lifecycle and release configuration still use it. Normal desktop builds do **not** enable `whisper-rs`.
+
+`voice-runtime/whisper` remains an explicit legacy backend for migration/testing only.
+
+See [`docs/VOICE_STT.md`](docs/VOICE_STT.md) for the detailed STT contract.
 
 ## Wake word
 
 Wake uses sherpa-onnx with local model resources and a generated `keywords.txt`.
-
-Wake phrase lifecycle:
 
 ```text
 phrase
@@ -376,18 +258,100 @@ success -> persist phrase
 failure -> rollback
 ```
 
-Manual Mic and wake activation use the same backend voice-turn path.
+Manual Mic and wake activation reuse the same backend voice-turn path.
+
+Wake-model automatic download remains disabled until archive checksum and redistribution terms are explicitly pinned.
+
+## Deterministic local Safe fast-path
+
+A deliberately small set of read-only requests bypasses Antigravity and executes locally:
+
+```text
+audio_get_volume
+apps_list
+window_get_active
+system_get_info
+```
+
+Before execution the desktop re-validates the exact tool in `windows_tools::TOOL_CATALOG` and refuses it unless the tool is still classified `Safe`.
+
+Mutating or ambiguous requests continue through Antigravity + MCP + permission handling.
+
+## MCP capability surface
+
+Main tool families include:
+
+```text
+audio / media
+applications
+system information and power
+clipboard
+display and windows
+process
+keyboard/text input
+filesystem
+semantic Windows UI Automation
+```
+
+Filesystem mutations are intentionally bounded: absolute paths are required, overwrite is disabled, recursive deletion is not exposed, filesystem roots are rejected, and symlink/junction mutation is refused.
+
+UI Automation uses explicit HWND + semantic element paths rather than unrestricted pixel-coordinate automation.
+
+## Permission model
+
+```text
+Safe       -> baseline Allow
+Moderate   -> Default / Allow / Ask / Deny runtime policy
+Sensitive  -> explicit confirmation / Allow once
+Blocked    -> Deny
+Unknown    -> Deny
+```
+
+Runtime overrides are enforced as a **Moderate-only invariant**. Safe, Sensitive, and Blocked decisions cannot be downgraded through the generic override path.
+
+Sensitive confirmations use an authenticated local broker with an ephemeral loopback port, RAM-only secret, request UUID, exact tool/risk/arguments, bounded timeout, and fail-closed behavior.
+
+Permission audit records intentionally exclude prompts, clipboard contents, screenshots, broker secrets, and credentials.
+
+## Antigravity runtime
+
+The desktop maintains a long-running Antigravity CLI session using:
+
+```text
+--input-format stream-json
+--output-format stream-json
+```
+
+Turns are bounded by `ASSISTANT_ANTIGRAVITY_TURN_TIMEOUT_SECONDS` (default 180 seconds, clamped to 15–1800). A timeout invalidates the session so a stalled CLI process cannot leave Assistant Core permanently busy.
+
+Model discovery comes from:
+
+```powershell
+agy models
+```
+
+The application does not fabricate a hard-coded model catalogue when discovery fails.
+
+`agy --help` is treated only as CLI availability, not proof that a Google account session is valid. Account authentication is verified when a real Antigravity session starts.
+
+## Desktop context and privacy
+
+Context is collected only when the request indicates it is needed. Possible sources are source-window metadata, clipboard text, and an active-window screenshot.
+
+Desktop-derived text is escaped and explicitly marked as untrusted. Clipboard context is bounded. Screenshots use a transient app-local-data artifact that is removed when the request snapshot is dropped.
+
+The external foreground HWND is captured before the quick overlay takes focus, so active-window/context requests still refer to the application the user was using when the assistant was invoked.
 
 ## Runtime resources
 
-Default app-local-data layout:
+Default layout:
 
 ```text
 <app-local-data>/
 ├── context/
 ├── models/
-│   ├── whisper/
-│   │   └── ggml-base.bin
+│   ├── stt/
+│   │   └── sherpa-onnx-zipformer-vi-30M-int8-2026-02-09/
 │   └── wake/
 ├── settings/
 │   ├── wake.json
@@ -401,14 +365,10 @@ Default app-local-data layout:
         └── mcp_config.json
 ```
 
-Whisper automatic installation is backend-manifest-driven with a pinned source revision, byte size, and SHA-256.
-
-Wake-model automatic download remains disabled until the archive checksum and redistribution terms are explicitly pinned. Wake keywords are generated locally from the installed model tokenizer/resources.
-
-Resource path overrides must be absolute:
+Relevant absolute-path overrides:
 
 ```text
-ASSISTANT_WHISPER_MODEL
+ASSISTANT_ZIPFORMER_MODEL_DIR
 ASSISTANT_WAKE_MODEL_DIR
 ASSISTANT_WAKE_KEYWORDS
 ASSISTANT_RUNTIME_DIR
@@ -417,28 +377,14 @@ ASSISTANT_MCP_BINARY
 
 ## Windows lifecycle
 
-- Single-instance plugin.
-- Normal second launch focuses the existing process.
-- `Alt + Space` global activation shortcut.
-- Tray show/hide/quit controls.
-- Opt-in **Khởi động cùng Windows**.
-- Autostart uses `--background` and remains hidden in the tray.
-- Wake/background services remain alive while the main window is hidden.
-
-## Runtime readiness
-
-The desktop exposes diagnostics for:
-
-- Antigravity CLI;
-- generated MCP configuration;
-- bundled/dev MCP sidecar;
-- permission broker and policy file;
-- writable context storage;
-- Windows TTS;
-- Whisper resource state;
-- wake resource/runtime state.
-
-Optional voice/wake resources do not block text assistant operation.
+- single instance;
+- `Alt + Space` quick assistant activation;
+- compact always-on-top quick overlay;
+- click-through perimeter edge glow;
+- tray show/hide/quit controls;
+- opt-in Windows autostart;
+- autostart background mode;
+- wake/background services remain alive while the management window is hidden.
 
 ## Development
 
@@ -449,7 +395,7 @@ Prerequisites on Windows:
 - Rust `1.98.1` MSVC toolchain;
 - Visual Studio C++ Build Tools / Windows SDK;
 - CMake;
-- Antigravity CLI for AI turns.
+- Antigravity CLI.
 
 Install dependencies:
 
@@ -464,19 +410,13 @@ pnpm desktop:native:prepare
 pnpm desktop:assets:prepare
 ```
 
-Read-only local prerequisite check:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1
-```
-
 Start desktop development:
 
 ```powershell
 pnpm desktop:dev
 ```
 
-Repository scripts also provide:
+Available validation scripts include:
 
 ```powershell
 pnpm check
@@ -484,41 +424,27 @@ pnpm test
 pnpm test:models
 ```
 
-`test:models` requires the relevant local model resources. It exercises native model integration with synthetic audio rather than opening the microphone.
+`test:models` uses installed local Zipformer + wake resources and synthetic audio; it does not open the microphone.
 
-## CI
+## CI and local verification
 
-The repository contains a Windows CI workflow for pull requests and pushes to `main`. It installs frozen pnpm dependencies, prepares native dependencies/assets, stages the MCP sidecar, checks Rust formatting, runs Rust tests, builds the frontend, checks the full desktop feature set, and verifies the release contract.
+The repository contains Windows CI for pull requests and pushes to `main`. Do not manually dispatch remote workflows merely to probe native runtime behavior.
 
-Do not manually dispatch remote workflows merely to probe the application runtime. Native microphone, wake, installer, account, and real desktop behavior still require local Windows validation.
+Native microphone quality, STT accuracy/latency, wake-word behavior, installer download, native DLL loading, Antigravity account state, and real desktop automation must be validated on the target Windows machine.
 
-## Release build
+No manual test, build, model download, installer run, or workflow dispatch is implied by a source-only merge.
 
-Windows combines:
+## Release
 
-```text
-apps/desktop/src-tauri/tauri.conf.json
-+
-apps/desktop/src-tauri/tauri.windows.conf.json
-```
+Windows release configuration currently retains the historical `voice-whisper` feature name for compatibility; that feature now resolves to Zipformer STT rather than Whisper.
 
-The Windows overlay enables:
-
-```text
-voice-whisper
-wake-word
-NSIS current-user installer
-icon.ico
-native runtime DLL resources
-```
-
-Prepare deterministic release inputs:
+Prepare release inputs:
 
 ```powershell
 pnpm desktop:release:prepare
 ```
 
-Verify an unsigned local release candidate:
+Verify release contract:
 
 ```powershell
 pnpm desktop:release:verify
@@ -530,84 +456,19 @@ Build:
 pnpm desktop:release:build
 ```
 
-Public signing uses:
+A public release should wait until the current target-Windows STT/wake/overlay/permission/install path has been exercised locally.
 
-```text
-apps/desktop/src-tauri/tauri.windows.signed.conf.json
-apps/desktop/src-tauri/scripts/sign-windows.ps1
-```
+## Key documentation
 
-Required local variables:
-
-```powershell
-$env:ASSISTANT_WINDOWS_CERT_SHA1="<certificate SHA-1 thumbprint>"
-$env:ASSISTANT_WINDOWS_TIMESTAMP_URL="<RFC3161 timestamp URL>"
-```
-
-Public gate/build:
-
-```powershell
-pnpm desktop:release:verify:public
-pnpm desktop:release:build:public
-```
-
-Never commit PFX files, private keys, passwords, Google credentials, signing tokens, API keys, or cloud secrets.
-
-## What is still required before a public release
-
-The repository is feature-complete enough for local release-candidate validation, but a public release should wait until all of the following have been exercised on the target Windows machine:
-
-1. fresh install of the NSIS package;
-2. first launch and runtime readiness;
-3. Antigravity login and a real multi-turn session;
-4. local Safe command execution without AI;
-5. MCP tool execution and permission confirmation;
-6. microphone -> VAD -> Whisper -> Antigravity -> TTS;
-7. wake detection -> voice turn;
-8. tray, hide/show, `Alt + Space`, single-instance and autostart;
-9. resource installation/keyword preparation;
-10. shutdown/restart/process/file/input safety confirmations;
-11. signed installer verification before public distribution.
-
-There is currently no requirement for a Gemini API key in the primary architecture; the application uses the user's normal Antigravity CLI authentication/session.
-
-## Development rules
-
-1. Keep native implementation separate from transport/UI where practical.
-2. Prefer explicit typed contracts.
-3. Authorize before native mutation.
-4. Prefer semantic Windows/UIA APIs over unrestricted raw shell automation.
-5. Fail closed for unknown tools, stale targets, broker failures, malformed policy, and missing confirmation.
-6. Keep screen/clipboard context on-demand and treat it as untrusted input.
-7. Do not add arbitrary shell/PowerShell execution to the model-facing tool surface.
-8. Keep dependency/model/release inputs deterministic and verifiable.
-9. Update this README when capability or release status changes.
-10. Validate native Windows behavior locally before calling a phase production-ready.
-
-## Documentation
-
-Detailed design notes remain under `docs/`, including:
-
-- `docs/PROJECT_PLAN.md`
-- `docs/ARCHITECTURE.md`
-- `docs/ANTIGRAVITY.md`
-- `docs/MCP.md`
-- `docs/PERMISSION_GATEWAY.md`
-- `docs/RUNTIME_PERMISSION_POLICY.md`
-- `docs/LOCAL_INTENT_FAST_PATH.md`
-- `docs/WINDOWS_SYSTEM_CONTROL.md`
-- `docs/UI_AUTOMATION.md`
-- `docs/VOICE_DESKTOP.md`
-- `docs/WAKE_RUNTIME.md`
-- `docs/WAKE_KEYWORD_PREPARATION.md`
-- `docs/WAKE_HOT_RELOAD.md`
-- `docs/RUNTIME_READINESS.md`
-- `docs/RUNTIME_PATHS_PACKAGING.md`
-- `docs/RUNTIME_RESOURCES.md`
-- `docs/WINDOWS_LIFECYCLE.md`
-- `docs/LOCAL_WINDOWS_VERIFICATION.md`
-- `docs/RELEASE_CHECKLIST.md`
+- [`docs/VOICE_STT.md`](docs/VOICE_STT.md)
+- [`docs/VOICE_DESKTOP.md`](docs/VOICE_DESKTOP.md)
+- [`docs/WAKE_RUNTIME.md`](docs/WAKE_RUNTIME.md)
+- [`docs/RUNTIME_RESOURCES.md`](docs/RUNTIME_RESOURCES.md)
+- [`docs/RUNTIME_READINESS.md`](docs/RUNTIME_READINESS.md)
+- [`docs/PERMISSION_GATEWAY.md`](docs/PERMISSION_GATEWAY.md)
+- [`docs/EDGE_UI.md`](docs/EDGE_UI.md)
+- [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)
 
 ## License
 
-MIT.
+See the repository license for application source terms. Runtime/model resources may have separate upstream licenses; in particular, the current Vietnamese Zipformer STT model is CC-BY-NC-ND-4.0.

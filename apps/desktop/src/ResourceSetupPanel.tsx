@@ -24,7 +24,7 @@ const stateLabel: Record<ResourceState, string> = {
 const wakeModelFileNames = new Set(["encoder", "decoder", "joiner", "tokens"]);
 
 function formatBytes(value: number): string {
-  if (value <= 0) return "Local generated";
+  if (value <= 0) return "See upstream package";
   const units = ["B", "KB", "MB", "GB"];
   let amount = value;
   let index = 0;
@@ -156,6 +156,8 @@ export default function ResourceSetupPanel({
         await onResourcesChanged?.();
         if (resourceId === "wake_keywords") {
           setNotice(`Đã cập nhật ${result.path} và nạp wake phrase vào runtime hiện tại.`);
+        } else if (resourceId === "stt_zipformer_vi") {
+          setNotice(`Đã tải, xác minh và cài Vietnamese Zipformer tại ${result.path}.`);
         }
       } catch (cause) {
         setError(`Không thể xử lý ${resourceId}: ${String(cause)}`);
@@ -209,7 +211,7 @@ export default function ResourceSetupPanel({
             </div>
 
           <p className="resource-note">
-            Whisper có verified installer. Wake model archive vẫn cài thủ công; wake phrase có thể được tạo hoặc cập nhật local và hot-reload ngay.
+            STT chính dùng Vietnamese Zipformer INT8. Resource Setup tải từng file từ revision cố định, xác minh model asset rồi chỉ đưa cả bundle vào runtime sau khi hoàn tất; wake model vẫn yêu cầu cài thủ công. Model STT có license CC-BY-NC-ND-4.0 và không được bundle trong ứng dụng.
           </p>
 
           {notice && <p className="resource-notice">{notice}</p>}

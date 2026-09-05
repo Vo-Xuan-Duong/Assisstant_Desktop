@@ -59,7 +59,7 @@ export interface RuntimeResourceSnapshot {
   resources: RuntimeResourceStatus[];
 }
 
-export type ResourcePackageKind = "single_file" | "tar_bz2" | "generated";
+export type ResourcePackageKind = "single_file" | "multi_file" | "tar_bz2" | "generated";
 
 export interface ResourceInstallManifest {
   id: string;
@@ -93,6 +93,7 @@ export interface ResourceInstallResult {
 
 export interface VoiceCapabilities {
   tts_available: boolean;
+  /** Compatibility field name: this now means the primary local STT runtime is compiled. */
   whisper_compiled: boolean;
   model_path?: string | null;
   model_available: boolean;

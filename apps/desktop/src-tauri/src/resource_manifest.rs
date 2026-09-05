@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-pub const WHISPER_RESOURCE_ID: &str = "whisper";
+pub const STT_RESOURCE_ID: &str = "stt_zipformer_vi";
 pub const WAKE_RESOURCE_ID: &str = "wake_word";
 pub const WAKE_KEYWORDS_RESOURCE_ID: &str = "wake_keywords";
 
@@ -8,6 +8,7 @@ pub const WAKE_KEYWORDS_RESOURCE_ID: &str = "wake_keywords";
 #[serde(rename_all = "snake_case")]
 pub enum ResourcePackageKind {
     SingleFile,
+    MultiFile,
     TarBz2,
     Generated,
 }
@@ -27,34 +28,32 @@ pub struct ResourceInstallManifest {
 }
 
 pub fn manifests() -> Vec<ResourceInstallManifest> {
-    vec![
-        whisper_manifest(),
-        wake_manifest(),
-        wake_keywords_manifest(),
-    ]
+    vec![stt_manifest(), wake_manifest(), wake_keywords_manifest()]
 }
 
 pub fn manifest(resource_id: &str) -> Option<ResourceInstallManifest> {
     match resource_id {
-        WHISPER_RESOURCE_ID => Some(whisper_manifest()),
+        STT_RESOURCE_ID => Some(stt_manifest()),
         WAKE_RESOURCE_ID => Some(wake_manifest()),
         WAKE_KEYWORDS_RESOURCE_ID => Some(wake_keywords_manifest()),
         _ => None,
     }
 }
 
-pub fn whisper_manifest() -> ResourceInstallManifest {
+pub fn stt_manifest() -> ResourceInstallManifest {
     ResourceInstallManifest {
-        id: WHISPER_RESOURCE_ID,
-        version: "ggerganov-whisper.cpp@5359861c739e955e79d9a303bcbc70fb988958b1/base",
-        package_kind: ResourcePackageKind::SingleFile,
+        id: STT_RESOURCE_ID,
+        version: "csukuangfj2/sherpa-onnx-zipformer-vi-30M-int8-2026-02-09@83e140d",
+        package_kind: ResourcePackageKind::MultiFile,
         installable: true,
-        source_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin?download=true",
-        source_page: "https://huggingface.co/ggerganov/whisper.cpp/tree/5359861c739e955e79d9a303bcbc70fb988958b1",
-        license: "MIT",
-        expected_bytes: 147_951_465,
-        sha256: Some("60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
-        note: "Pinned multilingual Whisper base model. Automatic install is allowed only because source revision, byte size and SHA-256 are pinned.",
+        source_url: "https://huggingface.co/csukuangfj2/sherpa-onnx-zipformer-vi-30M-int8-2026-02-09/tree/83e140db6d23fbb8480fd5fb868f74ab80e7092c",
+        source_page: "https://huggingface.co/hynt/Zipformer-30M-RNNT-6000h",
+        license: "CC-BY-NC-ND-4.0",
+        // Exact pinned bytes for encoder + decoder + joiner + bpe.model.
+        // tokens.txt is a small commit-pinned text file validated structurally by the installer.
+        expected_bytes: 34_165_670,
+        sha256: None,
+        note: "Primary Vietnamese CPU STT. The installer downloads an immutable five-file sherpa-onnx bundle, verifies SHA-256 for all LFS model assets, validates tokens.txt structure, then promotes the staging directory atomically. The upstream model license is non-commercial/no-derivatives; the model is downloaded at runtime and is not bundled with the application.",
     }
 }
 
