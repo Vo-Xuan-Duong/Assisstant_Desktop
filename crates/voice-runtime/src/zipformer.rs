@@ -17,14 +17,24 @@ pub const ZIPFORMER_BPE_FILE: &str = "bpe.model";
 #[derive(Debug, Clone)]
 pub struct ZipformerConfig {
     pub model_dir: PathBuf,
+    /// Kept so the existing desktop voice state can continue assigning `vi`
+    /// during the migration away from the historical Whisper symbol names.
+    pub language: Option<String>,
     pub threads: usize,
     pub provider: String,
 }
 
 impl ZipformerConfig {
-    pub fn new(model_dir: impl Into<PathBuf>) -> Self {
+    pub fn new(model_path_or_dir: impl Into<PathBuf>) -> Self {
+        let path = model_path_or_dir.into();
+        let model_dir = if path.file_name().and_then(|name| name.to_str()) == Some(ZIPFORMER_ENCODER_FILE) {
+            path.parent().map(Path::to_path_buf).unwrap_or(path)
+        } else {
+            path
+        };
         Self {
-            model_dir: model_dir.into(),
+            model_dir,
+            language: Some("vi".into()),
             threads: 4,
             provider: "cpu".into(),
         }
@@ -72,6 +82,7 @@ impl ZipformerModelPaths {
 #[derive(Clone)]
 pub struct ZipformerRecognizer {
     recognizer: Arc<OfflineRecognizer>,
+    language: Option<String>,
 }
 
 impl ZipformerRecognizer {
@@ -112,6 +123,7 @@ impl ZipformerRecognizer {
 
         Ok(Self {
             recognizer: Arc::new(recognizer),
+            language: config.language,
         })
     }
 
@@ -140,7 +152,7 @@ impl ZipformerRecognizer {
 
         Ok(Transcript {
             text,
-            language: Some("vi".into()),
+            language: self.language.clone().or_else(|| Some("vi".into())),
             engine: "sherpa-onnx/zipformer-vi-30m-int8".into(),
             source_duration_seconds,
         })
