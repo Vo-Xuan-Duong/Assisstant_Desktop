@@ -1,8 +1,6 @@
 use serde::Serialize;
 
-/// Compatibility id retained so existing frontend/resource APIs keep working.
-/// The resource behind it is now Vietnamese Zipformer STT, not Whisper.
-pub const WHISPER_RESOURCE_ID: &str = "whisper";
+pub const STT_RESOURCE_ID: &str = "stt_zipformer_vi";
 pub const WAKE_RESOURCE_ID: &str = "wake_word";
 pub const WAKE_KEYWORDS_RESOURCE_ID: &str = "wake_keywords";
 
@@ -10,6 +8,7 @@ pub const WAKE_KEYWORDS_RESOURCE_ID: &str = "wake_keywords";
 #[serde(rename_all = "snake_case")]
 pub enum ResourcePackageKind {
     SingleFile,
+    MultiFile,
     TarBz2,
     Generated,
 }
@@ -29,37 +28,32 @@ pub struct ResourceInstallManifest {
 }
 
 pub fn manifests() -> Vec<ResourceInstallManifest> {
-    vec![
-        whisper_manifest(),
-        wake_manifest(),
-        wake_keywords_manifest(),
-    ]
+    vec![stt_manifest(), wake_manifest(), wake_keywords_manifest()]
 }
 
 pub fn manifest(resource_id: &str) -> Option<ResourceInstallManifest> {
     match resource_id {
-        WHISPER_RESOURCE_ID => Some(whisper_manifest()),
+        STT_RESOURCE_ID => Some(stt_manifest()),
         WAKE_RESOURCE_ID => Some(wake_manifest()),
         WAKE_KEYWORDS_RESOURCE_ID => Some(wake_keywords_manifest()),
         _ => None,
     }
 }
 
-pub fn whisper_manifest() -> ResourceInstallManifest {
+pub fn stt_manifest() -> ResourceInstallManifest {
     ResourceInstallManifest {
-        id: WHISPER_RESOURCE_ID,
-        version: "sherpa-onnx-zipformer-vi-30M-int8-2026-02-09",
-        package_kind: ResourcePackageKind::TarBz2,
-        // The existing installer intentionally supports verified single files
-        // only. Keep automatic installation disabled until the multi-file
-        // transaction can verify and atomically promote the complete bundle.
-        installable: false,
-        source_url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-vi-30M-int8-2026-02-09.tar.bz2",
-        source_page: "https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/zipformer-transducer-models.html",
-        license: "SEE_UPSTREAM_MODEL_CARD",
-        expected_bytes: 0,
+        id: STT_RESOURCE_ID,
+        version: "csukuangfj2/sherpa-onnx-zipformer-vi-30M-int8-2026-02-09@83e140d",
+        package_kind: ResourcePackageKind::MultiFile,
+        installable: true,
+        source_url: "https://huggingface.co/csukuangfj2/sherpa-onnx-zipformer-vi-30M-int8-2026-02-09/tree/83e140db6d23fbb8480fd5fb868f74ab80e7092c",
+        source_page: "https://huggingface.co/hynt/Zipformer-30M-RNNT-6000h",
+        license: "CC-BY-NC-ND-4.0",
+        // Exact pinned bytes for encoder + decoder + joiner + bpe.model.
+        // tokens.txt is a small commit-pinned text file validated structurally by the installer.
+        expected_bytes: 34_165_670,
         sha256: None,
-        note: "Primary Vietnamese STT model. Install the upstream archive into the displayed model directory so encoder.int8.onnx, decoder.onnx, joiner.int8.onnx and tokens.txt are present. Whisper remains optional fallback only.",
+        note: "Primary Vietnamese CPU STT. The installer downloads an immutable five-file sherpa-onnx bundle, verifies SHA-256 for all LFS model assets, validates tokens.txt structure, then promotes the staging directory atomically. The upstream model license is non-commercial/no-derivatives; the model is downloaded at runtime and is not bundled with the application.",
     }
 }
 
