@@ -14,8 +14,10 @@ use std::sync::{Arc, Mutex};
 use std::{path::PathBuf, time::Duration};
 
 use antigravity_bridge::{AntigravityClient, AntigravityConfig, CliHealth};
-use assistant_common::{AssistantEvent, AssistantState, SessionId, UserRequest};
-use assistant_core::{AssistantCore, EventSink};
+use assistant_common::{AssistantEvent, AssistantState, SessionId, ToolRisk, UserRequest};
+use assistant_core::{
+    match_local_safe_intent, AssistantCore, CoreError, EventSink, LocalSafeIntent,
+};
 use async_trait::async_trait;
 use context_engine::{ContextConfig, ContextEngine};
 use permission_desktop::PermissionDesktopService;
@@ -48,7 +50,10 @@ use voice_runtime::{
 #[cfg(feature = "wake-word")]
 use voice_runtime::wake_runtime::WakeRuntimeEvent;
 use wake_desktop::{WakeService, WakeStatus};
-use windows_tools::window::{self, WindowHandle};
+use windows_tools::{
+    apps as windows_apps, audio, system as windows_system, tool_definition,
+    window::{self, WindowHandle},
+};
 
 const AUTOSTART_BACKGROUND_ARG: &str = "--background";
 
@@ -166,6 +171,16 @@ async fn complete_prompt(prompt: &str, state: &DesktopState) -> Result<String, S
         state.core.recover().await.map_err(|error| error.to_string())?;
     }
 
+    if let Some(intent) = match_local_safe_intent(prompt) {
+        let tool_name = intent.tool_name();
+        debug!(%tool_name, "handling deterministic read-only request locally");
+        return state
+            .core
+            .handle_local_safe_tool(tool_name, || execute_local_safe_intent(intent))
+            .await
+            .map_err(|error| error.to_string());
+    }
+
     let source_window = state
         .source_window
         .lock()
@@ -195,6 +210,100 @@ async fn complete_prompt(prompt: &str, state: &DesktopState) -> Result<String, S
         .handle_text(UserRequest::new(session_id, enriched_prompt))
         .await
         .map_err(|error| error.to_string())
+}
+
+fn execute_local_safe_intent(intent: LocalSafeIntent) -> Result<String, CoreError> {
+    let tool_name = intent.tool_name();
+    let definition = tool_definition(tool_name).ok_or_else(|| {
+        CoreError::LocalTool(format!(
+            "safe intent references unknown Windows tool `{tool_name}`"
+        ))
+    })?;
+    if definition.risk != ToolRisk::Safe {
+        return Err(CoreError::LocalTool(format!(
+            "local fast-path refused non-Safe tool `{tool_name}`"
+        )));
+    }
+
+    match intent {
+        LocalSafeIntent::GetVolume => {
+            let state = audio::get_state().map_err(|error| CoreError::LocalTool(error.to_string()))?;
+            let level = state.volume_percent.round().clamp(0.0, 100.0) as u32;
+            if state.muted {
+                Ok(format!(
+                    "Âm lượng hiện tại là {level}% và loa đang tắt tiếng."
+                ))
+            } else {
+                Ok(format!("Âm lượng hiện tại là {level}%."))
+            }
+        }
+        LocalSafeIntent::ListRunningApps => {
+            let running = windows_apps::list_running()
+                .map_err(|error| CoreError::LocalTool(error.to_string()))?;
+            let mut names = Vec::<String>::new();
+            for app in running {
+                if names
+                    .last()
+                    .is_some_and(|last| last.eq_ignore_ascii_case(&app.executable))
+                {
+                    continue;
+                }
+                names.push(app.executable);
+            }
+
+            if names.is_empty() {
+                return Ok("Không tìm thấy ứng dụng hoặc tiến trình nào đang chạy.".into());
+            }
+
+            let total = names.len();
+            let shown = names
+                .iter()
+                .take(20)
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            if total > 20 {
+                Ok(format!(
+                    "Có {total} ứng dụng/tiến trình đang chạy. 20 mục đầu: {shown}."
+                ))
+            } else {
+                Ok(format!(
+                    "Có {total} ứng dụng/tiến trình đang chạy: {shown}."
+                ))
+            }
+        }
+        LocalSafeIntent::GetActiveWindow => {
+            let active = window::get_active().map_err(|error| CoreError::LocalTool(error.to_string()))?;
+            let title = if active.title.trim().is_empty() {
+                "(không có tiêu đề)"
+            } else {
+                active.title.as_str()
+            };
+            match active.executable {
+                Some(executable) => Ok(format!(
+                    "Cửa sổ đang active là `{title}` — {executable} (PID {}).",
+                    active.process_id
+                )),
+                None => Ok(format!(
+                    "Cửa sổ đang active là `{title}` (PID {}).",
+                    active.process_id
+                )),
+            }
+        }
+        LocalSafeIntent::GetSystemInfo => {
+            let info = windows_system::get_info()
+                .map_err(|error| CoreError::LocalTool(error.to_string()))?;
+            let gib = 1024.0_f64 * 1024.0 * 1024.0;
+            let total_gib = info.memory_total_bytes as f64 / gib;
+            let available_gib = info.memory_available_bytes as f64 / gib;
+            let used_gib = (total_gib - available_gib).max(0.0);
+            let computer = info.computer_name.as_deref().unwrap_or("Windows PC");
+            Ok(format!(
+                "{computer}: RAM đang dùng khoảng {used_gib:.1}/{total_gib:.1} GiB ({}%), còn {available_gib:.1} GiB; {} CPU logic.",
+                info.memory_load_percent, info.logical_cpus
+            ))
+        }
+    }
 }
 
 #[tauri::command]
