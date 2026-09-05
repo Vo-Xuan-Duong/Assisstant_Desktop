@@ -37,6 +37,20 @@ execFileSync("cargo", cargoArgs, {
   stdio: "inherit",
 });
 
+const assistantArgs = [
+  "build",
+  "-p",
+  "assisstant-desktop",
+  "--bin",
+  "assistant",
+  "--locked",
+];
+if (requestedProfile === "release") assistantArgs.push("--release");
+execFileSync("cargo", assistantArgs, {
+  cwd: repoRoot,
+  stdio: "inherit",
+});
+
 // Sherpa stays in DLLs to isolate its bundled protobuf from SentencePiece's.
 const voiceArgs = ["build", "-p", "voice-runtime", "--features", "wake-sherpa", "--locked"];
 if (requestedProfile === "release") voiceArgs.push("--release");
@@ -50,6 +64,10 @@ const source = path.join(targetDir, requestedProfile, "assistant-mcp.exe");
 if (!existsSync(source)) {
   throw new Error(`Expected sidecar binary was not produced: ${source}`);
 }
+const assistantSource = path.join(targetDir, requestedProfile, "assistant.exe");
+if (!existsSync(assistantSource)) {
+  throw new Error(`Expected management CLI was not produced: ${assistantSource}`);
+}
 
 const binariesDir = path.join(tauriDir, "binaries");
 mkdirSync(binariesDir, { recursive: true });
@@ -58,6 +76,11 @@ const destination = path.join(
   `assistant-mcp-${targetTriple}.exe`,
 );
 copyFileSync(source, destination);
+const assistantDestination = path.join(
+  binariesDir,
+  `assistant-${targetTriple}.exe`,
+);
+copyFileSync(assistantSource, assistantDestination);
 
 const runtimeDir = path.join(targetDir, requestedProfile);
 const runtimeDlls = readdirSync(runtimeDir).filter((name) =>
@@ -75,3 +98,4 @@ for (const name of runtimeDlls) {
 }
 
 console.log(`Staged assistant-mcp sidecar: ${destination}`);
+console.log(`Staged assistant management CLI: ${assistantDestination}`);
