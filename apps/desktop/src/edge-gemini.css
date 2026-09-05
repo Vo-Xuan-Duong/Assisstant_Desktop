@@ -1,0 +1,84 @@
+/*
+ * Refinement layer for the desktop perimeter halo.
+ * The base edge.css owns geometry and state-specific safety colors; this file
+ * makes the default/assistant states closer to Gemini's smooth Android glow.
+ */
+
+.edge-stipple {
+  opacity: .1;
+}
+
+.edge-mode-ready {
+  --edge-opacity: .46;
+  --edge-scale: .46;
+  --flow-duration: 4.6s;
+}
+
+.edge-mode-ready .edge-ambient {
+  opacity: .58;
+  filter: blur(19px);
+}
+
+.edge-mode-ready .edge-flow {
+  opacity: .48;
+  filter: blur(5px);
+}
+
+.edge-mode-ready .edge-shimmer {
+  opacity: .22;
+}
+
+.edge-mode-ready .edge-core {
+  opacity: .68;
+}
+
+.edge-bottom.edge-mode-ready {
+  --edge-opacity: .58;
+  --edge-scale: .56;
+}
+
+.edge-mode-activated {
+  --edge-opacity: 1;
+  --edge-scale: .92;
+  --flow-duration: 1.18s;
+}
+
+.edge-mode-activated .edge-ambient {
+  opacity: .92;
+  filter: blur(22px) saturate(1.14);
+}
+
+.edge-mode-activated .edge-flow {
+  opacity: .94;
+}
+
+.edge-mode-processing,
+.edge-mode-executing {
+  --edge-opacity: .84;
+}
+
+.edge-mode-processing .edge-stipple,
+.edge-mode-executing .edge-stipple,
+.edge-mode-speaking .edge-stipple,
+.edge-mode-ready .edge-stipple {
+  opacity: .055;
+}
+
+.edge-mode-listening .edge-core {
+  opacity: calc(.72 + var(--voice-level) * .28);
+}
+
+.edge-mode-listening .edge-flow {
+  opacity: calc(.58 + var(--voice-level) * .34);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edge-surface,
+  .edge-ambient,
+  .edge-stipple,
+  .edge-flow,
+  .edge-shimmer,
+  .edge-core {
+    animation: none !important;
+  }
+}

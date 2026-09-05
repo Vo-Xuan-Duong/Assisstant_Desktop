@@ -1,6 +1,7 @@
 mod antigravity_settings;
 mod edge;
 mod permission_desktop;
+mod quick_panel;
 mod readiness;
 mod resource_api;
 mod resource_installer;
@@ -244,21 +245,25 @@ async fn complete_prompt(prompt: &str, state: &DesktopState) -> Result<String, S
             .map_err(|error| error.to_string())?;
     }
 
-    if let Some(intent) = match_local_safe_intent(prompt) {
-        let tool_name = intent.tool_name();
-        debug!(%tool_name, "handling deterministic read-only request locally");
-        return state
-            .core
-            .handle_local_safe_tool(tool_name, || execute_local_safe_intent(intent))
-            .await
-            .map_err(|error| error.to_string());
-    }
-
+    // The quick overlay takes foreground focus by design. Keep the external
+    // source HWND captured before activation so local Safe window queries and
+    // contextual prompts still refer to the application the user was using.
     let source_window = state
         .source_window
         .lock()
         .map(|guard| *guard)
         .unwrap_or(None);
+
+    if let Some(intent) = match_local_safe_intent(prompt) {
+        let tool_name = intent.tool_name();
+        debug!(%tool_name, "handling deterministic read-only request locally");
+        return state
+            .core
+            .handle_local_safe_tool(tool_name, || execute_local_safe_intent(intent, source_window))
+            .await
+            .map_err(|error| error.to_string());
+    }
+
     let context = state
         .context
         .collect_for_window(prompt, source_window)
@@ -288,7 +293,10 @@ async fn complete_prompt(prompt: &str, state: &DesktopState) -> Result<String, S
         .map_err(|error| error.to_string())
 }
 
-fn execute_local_safe_intent(intent: LocalSafeIntent) -> Result<String, CoreError> {
+fn execute_local_safe_intent(
+    intent: LocalSafeIntent,
+    source_window: Option<WindowHandle>,
+) -> Result<String, CoreError> {
     let tool_name = intent.tool_name();
     let definition = tool_definition(tool_name).ok_or_else(|| {
         CoreError::LocalTool(format!(
@@ -350,8 +358,11 @@ fn execute_local_safe_intent(intent: LocalSafeIntent) -> Result<String, CoreErro
             }
         }
         LocalSafeIntent::GetActiveWindow => {
-            let active =
-                window::get_active().map_err(|error| CoreError::LocalTool(error.to_string()))?;
+            let active = match source_window {
+                Some(handle) => window::get(handle),
+                None => window::get_active(),
+            }
+            .map_err(|error| CoreError::LocalTool(error.to_string()))?;
             let title = if active.title.trim().is_empty() {
                 "(không có tiêu đề)"
             } else {
@@ -616,6 +627,17 @@ async fn assistant_reset(state: State<'_, DesktopState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn assistant_quick_hide(app: AppHandle) {
+    hide_quick_window(&app);
+}
+
+#[tauri::command]
+fn assistant_quick_expand(app: AppHandle) {
+    quick_panel::hide(&app);
+    show_main_window(&app);
+}
+
 fn current_external_window() -> Option<WindowHandle> {
     let handle = window::get_active_handle().ok()?;
     let info = window::get(handle).ok()?;
@@ -643,6 +665,7 @@ fn source_window(app: &AppHandle) -> Option<WindowHandle> {
 
 fn show_main_window(app: &AppHandle) {
     remember_source_window(app);
+    quick_panel::hide(app);
     edge::activate(app, source_window(app));
 
     if let Some(window) = app.get_webview_window("main") {
@@ -652,7 +675,32 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+fn show_quick_window(app: &AppHandle, reason: &'static str) {
+    remember_source_window(app);
+    let source = source_window(app);
+    edge::activate(app, source);
+
+    if let Err(error) = quick_panel::show(app, source, reason) {
+        warn!(%error, "failed to show quick assistant; falling back to full window");
+        show_main_window(app);
+    }
+}
+
+fn toggle_quick_window(app: &AppHandle) {
+    if quick_panel::is_visible(app) {
+        hide_quick_window(app);
+    } else {
+        show_quick_window(app, "shortcut");
+    }
+}
+
+fn hide_quick_window(app: &AppHandle) {
+    quick_panel::hide(app);
+    edge::hide(app);
+}
+
 fn hide_main_window(app: &AppHandle) {
+    quick_panel::hide(app);
     edge::hide(app);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
@@ -712,7 +760,7 @@ fn setup_wake_events(app: &AppHandle) {
                 Ok(event) => {
                     let _ = app.emit("wake:event", &event);
                     if matches!(event, WakeRuntimeEvent::Detected { .. }) {
-                        show_main_window(&app);
+                        show_quick_window(&app, "wake");
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
@@ -782,7 +830,7 @@ fn setup_shortcut(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>
         tauri_plugin_global_shortcut::Builder::new()
             .with_handler(move |app, shortcut, event| {
                 if shortcut == &handler_shortcut && event.state() == ShortcutState::Pressed {
-                    show_main_window(app);
+                    toggle_quick_window(app);
                 }
             })
             .build(),
@@ -884,6 +932,7 @@ pub fn run() {
             app.manage(wake_service);
 
             edge::setup(app.handle())?;
+            quick_panel::setup(app.handle())?;
             setup_wake_events(app.handle());
             setup_shortcut(app)?;
             setup_tray(app)?;
@@ -892,14 +941,25 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if window.label() == "main" {
+        .on_window_event(|window, event| match window.label() {
+            "main" => {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     edge::hide(window.app_handle());
                     let _ = window.hide();
                 }
             }
+            quick_panel::QUICK_WINDOW_LABEL => match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    hide_quick_window(window.app_handle());
+                }
+                WindowEvent::Focused(false) => {
+                    hide_quick_window(window.app_handle());
+                }
+                _ => {}
+            },
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             assistant_health,
@@ -918,6 +978,8 @@ pub fn run() {
             assistant_speak,
             assistant_restart,
             assistant_reset,
+            assistant_quick_hide,
+            assistant_quick_expand,
             permission_desktop::assistant_permission_respond,
             permission_desktop::assistant_permission_audit
         ])
