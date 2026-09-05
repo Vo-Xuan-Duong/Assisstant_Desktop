@@ -132,7 +132,7 @@ impl ResourceRegistry {
             file_status("tokens", &self.stt_model_dir.join(ZIPFORMER_TOKENS)),
         ];
         let present = files.iter().filter(|file| file.exists).count();
-        let compiled = cfg!(feature = "voice-stt");
+        let compiled = cfg!(any(feature = "voice-stt", feature = "voice-whisper"));
         let state = if !compiled {
             ResourceState::NotCompiled
         } else if present == files.len() {
