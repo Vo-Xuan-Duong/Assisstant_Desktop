@@ -2,11 +2,11 @@ use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use whisper_rs::{
-    install_logging_hooks, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
+    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, install_logging_hooks,
 };
 
 use crate::{
-    stt::{prepare_for_whisper, SpeechRecognizer, SttError, Transcript},
+    stt::{SpeechRecognizer, SttError, Transcript, prepare_for_whisper},
     vad::Utterance,
 };
 
@@ -50,8 +50,7 @@ impl WhisperRecognizer {
 
         let mut context_params = WhisperContextParameters::default();
         context_params.use_gpu = config.use_gpu;
-        let model_path = config.model_path.to_string_lossy();
-        let context = WhisperContext::new_with_params(&model_path, context_params)
+        let context = WhisperContext::new_with_params(&config.model_path, context_params)
             .map_err(|error| SttError::Backend(error.to_string()))?;
 
         Ok(Self {

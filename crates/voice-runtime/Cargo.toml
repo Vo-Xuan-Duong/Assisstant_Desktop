@@ -19,7 +19,7 @@ serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-sherpa-onnx = { version = "1.13.7", optional = true }
+sherpa-onnx = { version = "1.13.7", optional = true, default-features = false, features = ["shared"] }
 whisper-rs = { version = "0.16.0", optional = true, default-features = false, features = ["tracing_backend"] }
 windows = { workspace = true, features = [
     "Win32_Media_Speech",

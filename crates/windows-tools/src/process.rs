@@ -4,7 +4,7 @@ use windows::Win32::{
     System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess},
 };
 
-use crate::{apps, ToolError, ToolResult};
+use crate::{ToolError, ToolResult, apps};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProcessTerminateResult {

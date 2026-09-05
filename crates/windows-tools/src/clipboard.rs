@@ -4,8 +4,10 @@ use serde::Serialize;
 use windows::Win32::{
     Foundation::{GlobalFree, HANDLE, HGLOBAL},
     System::{
-        DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData},
-        Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
+        DataExchange::{
+            CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
+        },
+        Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock},
         Ole::CF_UNICODETEXT,
     },
 };

@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
 use windows::{
-    core::{Error as WindowsError, Interface},
     Win32::{
         Foundation::RECT,
         System::Com::{
-            CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
+            CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
         },
         UI::Accessibility::{
             CUIAutomation, ExpandCollapseState, ExpandCollapseState_Collapsed,
@@ -21,9 +20,10 @@ use windows::{
             UIA_ValuePatternId,
         },
     },
+    core::{Error as WindowsError, Interface},
 };
 
-use crate::{window::WindowHandle, ToolError, ToolResult};
+use crate::{ToolError, ToolResult, window::WindowHandle};
 
 const DEFAULT_MAX_DEPTH: u32 = 4;
 const DEFAULT_MAX_NODES: usize = 160;
@@ -260,11 +260,8 @@ pub fn focus(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
 pub fn invoke(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
     let client = AutomationClient::new(handle)?;
     let element = client.resolve(path)?;
-    let pattern = get_pattern::<IUIAutomationInvokePattern>(
-        &element,
-        UIA_InvokePatternId,
-        "InvokePattern",
-    )?;
+    let pattern =
+        get_pattern::<IUIAutomationInvokePattern>(&element, UIA_InvokePatternId, "InvokePattern")?;
     unsafe { pattern.Invoke()? };
     Ok(())
 }
@@ -279,11 +276,8 @@ pub fn set_value(handle: WindowHandle, path: &[u32], value: &str) -> ToolResult<
 
     let client = AutomationClient::new(handle)?;
     let element = client.resolve(path)?;
-    let pattern = get_pattern::<IUIAutomationValuePattern>(
-        &element,
-        UIA_ValuePatternId,
-        "ValuePattern",
-    )?;
+    let pattern =
+        get_pattern::<IUIAutomationValuePattern>(&element, UIA_ValuePatternId, "ValuePattern")?;
 
     let read_only = unsafe { pattern.CurrentIsReadOnly()? }.as_bool();
     if read_only {
@@ -430,7 +424,8 @@ impl AutomationClient {
         }
         let com = ComGuard;
 
-        let automation: IUIAutomation = unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL)? };
+        let automation: IUIAutomation =
+            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL)? };
         let root = unsafe { automation.ElementFromHandle(handle.hwnd())? };
 
         Ok(Self {
@@ -515,7 +510,10 @@ fn snapshot_element(
         bounds: unsafe { element.CurrentBoundingRectangle() }
             .ok()
             .map(UiRect::from),
-        supports_invoke: supports_pattern::<IUIAutomationInvokePattern>(element, UIA_InvokePatternId),
+        supports_invoke: supports_pattern::<IUIAutomationInvokePattern>(
+            element,
+            UIA_InvokePatternId,
+        ),
         supports_value: supports_pattern::<IUIAutomationValuePattern>(element, UIA_ValuePatternId),
         supports_scroll_item: supports_pattern::<IUIAutomationScrollItemPattern>(
             element,
@@ -532,12 +530,14 @@ fn snapshot_element(
                     read_only: unsafe { pattern.CurrentIsReadOnly().ok()? }.as_bool(),
                 })
             }),
-        grid: pattern::<IUIAutomationGridPattern>(element, UIA_GRID_PATTERN_ID).and_then(|pattern| {
-            Some(UiGridSnapshot {
-                row_count: unsafe { pattern.CurrentRowCount().ok()? },
-                column_count: unsafe { pattern.CurrentColumnCount().ok()? },
-            })
-        }),
+        grid: pattern::<IUIAutomationGridPattern>(element, UIA_GRID_PATTERN_ID).and_then(
+            |pattern| {
+                Some(UiGridSnapshot {
+                    row_count: unsafe { pattern.CurrentRowCount().ok()? },
+                    column_count: unsafe { pattern.CurrentColumnCount().ok()? },
+                })
+            },
+        ),
         grid_item: pattern::<IUIAutomationGridItemPattern>(element, UIA_GRID_ITEM_PATTERN_ID)
             .and_then(|pattern| {
                 Some(UiGridItemSnapshot {
@@ -604,10 +604,7 @@ fn normalize_expand_collapse_state(state: ExpandCollapseState) -> UiExpandCollap
     }
 }
 
-fn pattern<T: Interface>(
-    element: &IUIAutomationElement,
-    pattern_id: UIA_PATTERN_ID,
-) -> Option<T> {
+fn pattern<T: Interface>(element: &IUIAutomationElement, pattern_id: UIA_PATTERN_ID) -> Option<T> {
     unsafe { element.GetCurrentPattern(pattern_id) }
         .ok()
         .and_then(|pattern| pattern.cast::<T>().ok())
@@ -629,9 +626,7 @@ fn supports_pattern<T: Interface>(
     pattern::<T>(element, pattern_id).is_some()
 }
 
-fn bstr_or_default(
-    getter: impl FnOnce() -> windows::core::Result<windows::core::BSTR>,
-) -> String {
+fn bstr_or_default(getter: impl FnOnce() -> windows::core::Result<windows::core::BSTR>) -> String {
     getter().map(|value| value.to_string()).unwrap_or_default()
 }
 

@@ -4,11 +4,7 @@ mod ui_tools;
 mod virtualized_tools;
 mod window_tools;
 
-use rmcp::{
-    handler::server::router::tool::ToolRouter,
-    tool_handler,
-    ServerHandler,
-};
+use rmcp::{ServerHandler, handler::server::router::tool::ToolRouter, tool_handler};
 use serde::Serialize;
 use windows_tools::ToolError;
 

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$AssetsOnly
 )
 
@@ -40,7 +40,11 @@ function Materialize-ReleaseIcon {
     }
 
     [IO.File]::WriteAllBytes($IconOutput, $bytes)
-    $actualHash = (Get-FileHash -Algorithm SHA256 $IconOutput).Hash.ToLowerInvariant()
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $actualHash = [BitConverter]::ToString($sha256.ComputeHash([IO.File]::ReadAllBytes($IconOutput))).Replace("-", "").ToLowerInvariant()
+    }
+    finally { $sha256.Dispose() }
     if ($actualHash -ne $ExpectedIconSha256) {
         Remove-Item $IconOutput -Force -ErrorAction SilentlyContinue
         throw "Release icon SHA-256 mismatch. Expected $ExpectedIconSha256, got $actualHash."

@@ -54,7 +54,6 @@ pub struct PermissionPolicy {
     safe: PermissionDecision,
     moderate: PermissionDecision,
     sensitive: PermissionDecision,
-    blocked: PermissionDecision,
     overrides: HashMap<String, PermissionDecision>,
 }
 
@@ -64,7 +63,6 @@ impl Default for PermissionPolicy {
             safe: PermissionDecision::Allow,
             moderate: PermissionDecision::Allow,
             sensitive: PermissionDecision::Ask,
-            blocked: PermissionDecision::Deny,
             overrides: HashMap::new(),
         }
     }
@@ -119,7 +117,10 @@ impl PermissionEngine {
         let decision = self.policy.decision_for(tool_name, risk);
         let reason = match decision {
             PermissionDecision::Allow => {
-                format!("tool risk `{}` is allowed by the current permission policy", risk_name(risk))
+                format!(
+                    "tool risk `{}` is allowed by the current permission policy",
+                    risk_name(risk)
+                )
             }
             PermissionDecision::Ask => format!(
                 "tool risk `{}` requires explicit user confirmation before execution",

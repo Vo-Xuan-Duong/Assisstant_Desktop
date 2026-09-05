@@ -92,8 +92,10 @@ export default function EdgeOverlay() {
       style={style}
       aria-hidden="true"
     >
-      <div className="edge-aura" />
+      <div className="edge-ambient" />
+      <div className="edge-stipple" />
       <div className="edge-flow" />
+      <div className="edge-shimmer" />
       <div className="edge-core" />
     </div>
   );

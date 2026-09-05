@@ -10,16 +10,15 @@ use tauri::{AppHandle, State};
 use uuid::Uuid;
 #[cfg(feature = "wake-word")]
 use voice_runtime::{
-    sherpa_wake::SherpaWakeWordDetector,
-    wake::SherpaWakeConfig,
+    sherpa_wake::SherpaWakeWordDetector, wake::SherpaWakeConfig,
     wake_keywords::prepare_gigaspeech_keyword,
 };
 
 use super::{
-    resource_installer::{ResourceInstallResult, ResourceInstaller},
-    resource_manifest::{manifests, ResourceInstallManifest},
-    wake_desktop::WakeService,
     DesktopState,
+    resource_installer::{ResourceInstallResult, ResourceInstaller},
+    resource_manifest::{ResourceInstallManifest, manifests},
+    wake_desktop::WakeService,
 };
 
 const WAKE_KEYWORDS_ACTION_ID: &str = "wake_keywords";
@@ -62,8 +61,7 @@ async fn prepare_wake_keywords(
     state: &DesktopState,
     wake: &WakeService,
 ) -> Result<ResourceInstallResult, String> {
-    let phrase = phrase
-        .ok_or_else(|| "wake keyword preparation requires a phrase".to_owned())?;
+    let phrase = phrase.ok_or_else(|| "wake keyword preparation requires a phrase".to_owned())?;
     let model_dir = state.resources.wake_model_dir().to_path_buf();
     let bpe_model = state.resources.wake_bpe_model_path().to_path_buf();
     let tokens = state.resources.wake_tokens_path();
@@ -115,7 +113,10 @@ async fn prepare_wake_keywords(
         let _ = fs::remove_file(backup);
     }
 
-    let sha256 = format!("{:x}", Sha256::digest(&content));
+    let sha256 = Sha256::digest(&content)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     Ok(ResourceInstallResult {
         resource_id: WAKE_KEYWORDS_ACTION_ID.to_owned(),
         path: destination.display().to_string(),
@@ -224,7 +225,10 @@ async fn prepare_wake_keywords(
     _state: &DesktopState,
     _wake: &WakeService,
 ) -> Result<ResourceInstallResult, String> {
-    Err("Bản build hiện tại chưa bật feature `wake-word`; không thể tokenize wake phrase local.".into())
+    Err(
+        "Bản build hiện tại chưa bật feature `wake-word`; không thể tokenize wake phrase local."
+            .into(),
+    )
 }
 
 fn installer() -> Result<&'static ResourceInstaller, String> {

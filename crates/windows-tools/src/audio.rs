@@ -3,8 +3,8 @@ use std::ptr;
 use serde::Serialize;
 use windows::{
     Win32::{
-        Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator},
         Media::Audio::Endpoints::IAudioEndpointVolume,
+        Media::Audio::{IMMDeviceEnumerator, MMDeviceEnumerator, eConsole, eRender},
         System::Com::{
             CLSCTX_ALL, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance,
             CoInitializeEx, CoUninitialize,

@@ -2,17 +2,17 @@ use std::{ffi::c_void, mem::size_of};
 
 use serde::Serialize;
 use windows::{
-    core::Error as WindowsError,
     Win32::{
         Foundation::HWND,
         Graphics::Gdi::{
-            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+            GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
         },
         UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId},
     },
+    core::Error as WindowsError,
 };
 
-use crate::{apps, ToolError, ToolResult};
+use crate::{ToolError, ToolResult, apps};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct WindowHandle(pub isize);
@@ -60,7 +60,9 @@ pub fn get(handle: WindowHandle) -> ToolResult<ActiveWindow> {
         let mut process_id = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut process_id));
         if process_id == 0 {
-            return Err(ToolError::NotFound("window process no longer exists".into()));
+            return Err(ToolError::NotFound(
+                "window process no longer exists".into(),
+            ));
         }
 
         let mut buffer = vec![0u16; 2048];

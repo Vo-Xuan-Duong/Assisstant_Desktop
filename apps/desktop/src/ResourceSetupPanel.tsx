@@ -37,10 +37,21 @@ function formatBytes(value: number): string {
 
 interface ResourceSetupPanelProps {
   onResourcesChanged?: () => void | Promise<void>;
+  open?: boolean;
+  onClose?: () => void;
+  showTrigger?: boolean;
 }
 
-export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetupPanelProps) {
-  const [open, setOpen] = useState(false);
+export default function ResourceSetupPanel({
+  onResourcesChanged,
+  open: controlledOpen,
+  onClose,
+  showTrigger = true,
+}: ResourceSetupPanelProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+
   const [loading, setLoading] = useState(false);
   const [snapshot, setSnapshot] = useState<RuntimeResourceSnapshot | null>(null);
   const [catalog, setCatalog] = useState<ResourceInstallManifest[]>([]);
@@ -49,6 +60,14 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
   const [wakePhrase, setWakePhrase] = useState("HEY ASSISTANT");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const handleClose = useCallback(() => {
+    if (isControlled) {
+      onClose?.();
+    } else {
+      setInternalOpen(false);
+    }
+  }, [isControlled, onClose]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -70,6 +89,23 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
   }, []);
 
   useEffect(() => {
+    if (open && !snapshot && !loading) {
+      void refresh();
+    }
+  }, [open, snapshot, loading, refresh]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        handleClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, handleClose]);
+
+  useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
 
@@ -87,12 +123,16 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
   }, []);
 
   const toggle = useCallback(() => {
-    setOpen((current) => {
-      const next = !current;
-      if (next && !snapshot && !loading) void refresh();
-      return next;
-    });
-  }, [loading, refresh, snapshot]);
+    if (isControlled) {
+      if (open) onClose?.();
+    } else {
+      setInternalOpen((current) => {
+        const next = !current;
+        if (next && !snapshot && !loading) void refresh();
+        return next;
+      });
+    }
+  }, [isControlled, loading, onClose, open, refresh, snapshot]);
 
   const manifestById = useMemo(
     () => new Map(catalog.map((manifest) => [manifest.id, manifest])),
@@ -128,26 +168,45 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
 
   return (
     <div className="resource-root">
-      <button
-        type="button"
-        className={`resource-trigger ${needsSetup ? "resource-trigger-warning" : ""}`}
-        onClick={toggle}
-        aria-expanded={open}
-      >
-        Resources
-      </button>
+      {showTrigger && (
+        <button
+          type="button"
+          className={`resource-trigger ${needsSetup ? "resource-trigger-warning" : ""}`}
+          onClick={toggle}
+          aria-expanded={open}
+        >
+          Resources
+        </button>
+      )}
 
       {open && (
-        <section className="resource-panel" aria-label="Runtime resource setup">
-          <div className="resource-header">
-            <div>
-              <span className="section-label">VERIFIED LOCAL RESOURCES</span>
-              <strong>{needsSetup ? "Cần bổ sung local resource" : "Resource registry"}</strong>
+        <div className="resource-backdrop" onClick={handleClose} role="presentation">
+          <section
+            className="resource-panel"
+            aria-label="Runtime resource setup"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="resource-header">
+              <div>
+                <span className="section-label">VERIFIED LOCAL RESOURCES</span>
+                <strong>{needsSetup ? "Cần bổ sung local resource" : "Resource registry"}</strong>
+              </div>
+              <div className="resource-header-actions">
+                <button type="button" className="resource-refresh" disabled={loading} onClick={() => void refresh()}>
+                  {loading ? "Đang kiểm tra" : "Kiểm tra lại"}
+                </button>
+                <button
+                  type="button"
+                  className="resource-close"
+                  onClick={handleClose}
+                  aria-label="Đóng"
+                >
+                  ×
+                </button>
+              </div>
             </div>
-            <button type="button" className="resource-refresh" disabled={loading} onClick={() => void refresh()}>
-              {loading ? "Đang kiểm tra" : "Kiểm tra lại"}
-            </button>
-          </div>
 
           <p className="resource-note">
             Whisper có verified installer. Wake model archive vẫn cài thủ công; wake phrase có thể được tạo hoặc cập nhật local và hot-reload ngay.
@@ -297,6 +356,7 @@ export default function ResourceSetupPanel({ onResourcesChanged }: ResourceSetup
             {!snapshot && !error && <p>{loading ? "Đang đọc resource registry..." : "Chưa có dữ liệu."}</p>}
           </div>
         </section>
+        </div>
       )}
     </div>
   );

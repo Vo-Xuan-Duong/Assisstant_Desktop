@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use assistant_common::ToolRisk;
 use serde::{Deserialize, Serialize};
@@ -12,7 +7,7 @@ use thiserror::Error;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
-    sync::{mpsc, oneshot, Mutex},
+    sync::{Mutex, mpsc, oneshot},
     time::timeout,
 };
 use uuid::Uuid;
@@ -106,8 +101,10 @@ pub struct BrokerClient {
 
 impl BrokerClient {
     pub fn from_environment(response_timeout: Duration) -> Result<Self, BrokerError> {
-        let address = std::env::var(ENV_BROKER_ADDR).map_err(|_| BrokerError::MissingEnvironment)?;
-        let secret = std::env::var(ENV_BROKER_SECRET).map_err(|_| BrokerError::MissingEnvironment)?;
+        let address =
+            std::env::var(ENV_BROKER_ADDR).map_err(|_| BrokerError::MissingEnvironment)?;
+        let secret =
+            std::env::var(ENV_BROKER_SECRET).map_err(|_| BrokerError::MissingEnvironment)?;
         if secret.trim().is_empty() {
             return Err(BrokerError::MissingEnvironment);
         }
@@ -126,10 +123,7 @@ impl BrokerClient {
         })
     }
 
-    pub async fn request(
-        &self,
-        request: PermissionRequest,
-    ) -> Result<UserDecision, BrokerError> {
+    pub async fn request(&self, request: PermissionRequest) -> Result<UserDecision, BrokerError> {
         let request_id = request.request_id;
         let stream = timeout(CONNECT_TIMEOUT, TcpStream::connect(self.endpoint.address))
             .await
@@ -152,9 +146,12 @@ impl BrokerClient {
 
         let mut reader = BufReader::new(read_half);
         let mut line = String::new();
-        let read = timeout(self.response_timeout + RESPONSE_GRACE, reader.read_line(&mut line))
-            .await
-            .map_err(|_| BrokerError::Timeout)??;
+        let read = timeout(
+            self.response_timeout + RESPONSE_GRACE,
+            reader.read_line(&mut line),
+        )
+        .await
+        .map_err(|_| BrokerError::Timeout)??;
         if read == 0 {
             return Err(BrokerError::ChannelClosed);
         }
@@ -197,7 +194,9 @@ impl BrokerHandle {
                 "permission request is no longer pending".into(),
             ));
         };
-        sender.send(decision).map_err(|_| BrokerError::ChannelClosed)
+        sender
+            .send(decision)
+            .map_err(|_| BrokerError::ChannelClosed)
     }
 }
 
@@ -233,14 +232,8 @@ pub async fn bind_local(
             let pending = Arc::clone(&pending);
             let request_tx = request_tx.clone();
             tokio::spawn(async move {
-                let _ = handle_connection(
-                    stream,
-                    endpoint,
-                    pending,
-                    request_tx,
-                    response_timeout,
-                )
-                .await;
+                let _ = handle_connection(stream, endpoint, pending, request_tx, response_timeout)
+                    .await;
             });
         }
     });

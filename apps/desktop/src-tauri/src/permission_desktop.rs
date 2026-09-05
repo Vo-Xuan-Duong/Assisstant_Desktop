@@ -6,21 +6,16 @@ use std::{
 };
 
 use assistant_common::ToolRisk;
-use permission_broker::{
-    bind_local, BrokerError, BrokerHandle, PermissionRequest, UserDecision,
-};
+use permission_broker::{BrokerError, BrokerHandle, PermissionRequest, UserDecision, bind_local};
 use permission_engine::{
-    PermissionDecision, PermissionOverrideSnapshot, ENV_PERMISSION_POLICY_PATH,
+    ENV_PERMISSION_POLICY_PATH, PermissionDecision, PermissionOverrideSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
-use tokio::{
-    io::AsyncWriteExt,
-    sync::Mutex,
-};
+use tokio::{io::AsyncWriteExt, sync::Mutex};
 use tracing::warn;
 use uuid::Uuid;
-use windows_tools::{tool_definition, TOOL_CATALOG};
+use windows_tools::{TOOL_CATALOG, tool_definition};
 
 const CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RECENT_AUDIT: usize = 100;
@@ -91,16 +86,20 @@ pub struct PermissionDesktopService {
 
 impl PermissionDesktopService {
     pub fn setup(app: &AppHandle) -> Result<(Self, Vec<(String, String)>), BrokerError> {
-        let local_data = app
-            .path()
-            .app_local_data_dir()
-            .map_err(|error| BrokerError::Rejected(format!("cannot resolve app local data directory: {error}")))?;
+        let local_data = app.path().app_local_data_dir().map_err(|error| {
+            BrokerError::Rejected(format!("cannot resolve app local data directory: {error}"))
+        })?;
         let audit_path = local_data.join("audit").join("permissions.jsonl");
         let policy_path = local_data.join("permissions").join("policy.json");
         let (policy, policy_load_error) = load_policy_snapshot(&policy_path);
 
-        let (broker, mut requests) = tauri::async_runtime::block_on(bind_local(CONFIRMATION_TIMEOUT))?;
-        let mut environment = broker.endpoint().environment().into_iter().collect::<Vec<_>>();
+        let (broker, mut requests) =
+            tauri::async_runtime::block_on(bind_local(CONFIRMATION_TIMEOUT))?;
+        let mut environment = broker
+            .endpoint()
+            .environment()
+            .into_iter()
+            .collect::<Vec<_>>();
         environment.push((
             ENV_PERMISSION_POLICY_PATH.to_owned(),
             policy_path.to_string_lossy().into_owned(),
@@ -167,7 +166,8 @@ impl PermissionDesktopService {
         if let Err(error) = emit_request(app, &request) {
             warn!(%error, %request_id, "failed to emit permission request to desktop UI");
             let _ = self.broker.respond(request_id, UserDecision::Deny).await;
-            self.finish_request(app, request_id, "ui_unavailable_deny").await;
+            self.finish_request(app, request_id, "ui_unavailable_deny")
+                .await;
             return;
         }
 
@@ -397,7 +397,7 @@ fn setup_policy_events(app: &AppHandle, service: &PermissionDesktopService) {
     let set_app = app.clone();
     let set_service = service.clone();
     app.listen(POLICY_SET_EVENT, move |event| {
-        let request = serde_json::from_str::<PermissionPolicySetEvent>(&event.data);
+        let request = serde_json::from_str::<PermissionPolicySetEvent>(event.payload());
         let app = set_app.clone();
         let service = set_service.clone();
         tauri::async_runtime::spawn(async move {
@@ -436,8 +436,8 @@ pub async fn assistant_permission_respond(
     allow: bool,
     permission: State<'_, PermissionDesktopService>,
 ) -> Result<(), String> {
-    let request_id = Uuid::parse_str(&request_id)
-        .map_err(|_| "permission request id is invalid".to_owned())?;
+    let request_id =
+        Uuid::parse_str(&request_id).map_err(|_| "permission request id is invalid".to_owned())?;
     let decision = if allow {
         UserDecision::AllowOnce
     } else {
@@ -450,6 +450,6 @@ pub async fn assistant_permission_respond(
 pub async fn assistant_permission_audit(
     limit: Option<usize>,
     permission: State<'_, PermissionDesktopService>,
-) -> Vec<PermissionAuditEntry> {
-    permission.recent(limit.unwrap_or(20)).await
+) -> Result<Vec<PermissionAuditEntry>, String> {
+    Ok(permission.recent(limit.unwrap_or(20)).await)
 }

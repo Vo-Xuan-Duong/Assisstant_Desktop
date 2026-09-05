@@ -1,12 +1,13 @@
 use serde::Serialize;
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
-    WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
 };
 use tracing::warn;
 use windows_tools::window::{self, MonitorBounds, WindowHandle};
 
-const EDGE_THICKNESS: u32 = 24;
+const EDGE_TOP_THICKNESS: u32 = 28;
+const EDGE_SIDE_THICKNESS: u32 = 32;
+const EDGE_BOTTOM_THICKNESS: u32 = 54;
 const EDGE_LABELS: [&str; 4] = ["edge-top", "edge-right", "edge-bottom", "edge-left"];
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,46 +108,28 @@ fn resolve_monitor_bounds(
 }
 
 fn position_windows(app: &AppHandle, bounds: MonitorBounds) -> Result<(), String> {
-    let thickness = EDGE_THICKNESS.min(bounds.width).min(bounds.height).max(1);
+    let top_h = EDGE_TOP_THICKNESS.min(bounds.height).max(1);
+    let bottom_h = EDGE_BOTTOM_THICKNESS.min(bounds.height).max(1);
+    let side_w = EDGE_SIDE_THICKNESS.min(bounds.width).max(1);
+
     let right_x = bounds
         .x
-        .saturating_add(bounds.width.saturating_sub(thickness) as i32);
+        .saturating_add(bounds.width.saturating_sub(side_w) as i32);
     let bottom_y = bounds
         .y
-        .saturating_add(bounds.height.saturating_sub(thickness) as i32);
+        .saturating_add(bounds.height.saturating_sub(bottom_h) as i32);
 
-    set_geometry(
-        app,
-        "edge-top",
-        bounds.x,
-        bounds.y,
-        bounds.width,
-        thickness,
-    )?;
-    set_geometry(
-        app,
-        "edge-right",
-        right_x,
-        bounds.y,
-        thickness,
-        bounds.height,
-    )?;
+    set_geometry(app, "edge-top", bounds.x, bounds.y, bounds.width, top_h)?;
+    set_geometry(app, "edge-right", right_x, bounds.y, side_w, bounds.height)?;
     set_geometry(
         app,
         "edge-bottom",
         bounds.x,
         bottom_y,
         bounds.width,
-        thickness,
+        bottom_h,
     )?;
-    set_geometry(
-        app,
-        "edge-left",
-        bounds.x,
-        bounds.y,
-        thickness,
-        bounds.height,
-    )?;
+    set_geometry(app, "edge-left", bounds.x, bounds.y, side_w, bounds.height)?;
     Ok(())
 }
 

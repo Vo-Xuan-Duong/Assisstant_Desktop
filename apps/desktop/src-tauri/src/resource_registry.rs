@@ -1,4 +1,7 @@
-use std::{env, path::{Path, PathBuf}};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 use serde::Serialize;
 use voice_runtime::wake::SherpaWakeConfig;
@@ -87,10 +90,12 @@ impl ResourceRegistry {
         &self.wake_keywords
     }
 
+    #[cfg(feature = "wake-word")]
     pub fn wake_bpe_model_path(&self) -> &Path {
         &self.wake_bpe_model
     }
 
+    #[cfg(feature = "wake-word")]
     pub fn wake_tokens_path(&self) -> PathBuf {
         self.wake_model_dir.join("tokens.txt")
     }

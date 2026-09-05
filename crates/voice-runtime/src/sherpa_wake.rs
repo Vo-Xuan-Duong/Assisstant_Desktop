@@ -1,8 +1,8 @@
 use sherpa_onnx::{KeywordSpotter, KeywordSpotterConfig, OnlineStream};
 
 use crate::{
-    wake::{SherpaWakeConfig, WakeDetection, WakeError, WakeWordDetector},
     AudioChunk,
+    wake::{SherpaWakeConfig, WakeDetection, WakeError, WakeWordDetector},
 };
 
 /// Streaming keyword detector backed by sherpa-onnx.

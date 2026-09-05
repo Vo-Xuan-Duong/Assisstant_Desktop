@@ -2,19 +2,19 @@ use std::mem::size_of;
 
 use serde::Serialize;
 use windows::{
-    core::{BOOL, Error as WindowsError},
     Win32::{
         Foundation::{LPARAM, RECT},
         Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO},
         UI::WindowsAndMessaging::{
-            SetWindowPos, MONITORINFOF_PRIMARY, SWP_NOACTIVATE, SWP_NOZORDER,
+            MONITORINFOF_PRIMARY, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos,
         },
     },
+    core::{BOOL, Error as WindowsError},
 };
 
 use crate::{
-    window::{self, ActiveWindow, WindowHandle},
     ToolError, ToolResult,
+    window::{self, ActiveWindow, WindowHandle},
 };
 
 const HARD_MAX_MONITORS: usize = 32;

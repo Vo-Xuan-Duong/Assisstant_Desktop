@@ -27,16 +27,14 @@ pub enum CliHealth {
 pub async fn probe_cli(config: &AntigravityConfig) -> CliHealth {
     match Command::new(&config.binary).arg("--help").output().await {
         Ok(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let detail = stdout
-                .lines()
-                .chain(stderr.lines())
-                .map(str::trim)
-                .find(|line| !line.is_empty())
-                .map(ToOwned::to_owned);
+            let detail = match &config.model {
+                Some(model) => format!("Google Antigravity CLI · Model: {model}"),
+                None => "Google Antigravity CLI · Gemini (Default)".to_string(),
+            };
 
-            CliHealth::Available { detail }
+            CliHealth::Available {
+                detail: Some(detail),
+            }
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();

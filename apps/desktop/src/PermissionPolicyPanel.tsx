@@ -19,11 +19,51 @@ function effectiveDecision(tool: PermissionPolicyTool): PermissionDecision {
   return tool.override_decision ?? tool.default_decision;
 }
 
-export default function PermissionPolicyPanel() {
-  const [open, setOpen] = useState(false);
+interface PermissionPolicyPanelProps {
+  open?: boolean;
+  onClose?: () => void;
+  showTrigger?: boolean;
+}
+
+export default function PermissionPolicyPanel({
+  open: controlledOpen,
+  onClose,
+  showTrigger = true,
+}: PermissionPolicyPanelProps = {}) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+
   const [view, setView] = useState<PermissionPolicyView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savingTool, setSavingTool] = useState<string | null>(null);
+
+  const handleClose = () => {
+    if (isControlled) {
+      onClose?.();
+    } else {
+      setInternalOpen(false);
+    }
+  };
+
+  const handleToggle = () => {
+    if (isControlled) {
+      if (open) onClose?.();
+    } else {
+      setInternalOpen((curr) => !curr);
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        handleClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
 
   useEffect(() => {
     let disposed = false;
@@ -79,72 +119,86 @@ export default function PermissionPolicyPanel() {
   }
 
   return (
-    <aside className={`permission-policy-shell ${open ? "permission-policy-open" : ""}`}>
-      <button
-        type="button"
-        className="permission-policy-trigger"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-      >
-        Permissions{overriddenCount ? ` · ${overriddenCount}` : ""}
-      </button>
+    <>
+      {showTrigger && (
+        <button
+          type="button"
+          className="permission-policy-trigger"
+          onClick={handleToggle}
+          aria-expanded={open}
+        >
+          Permissions{overriddenCount ? ` · ${overriddenCount}` : ""}
+        </button>
+      )}
 
       {open && (
-        <section className="permission-policy-panel" aria-label="Runtime permission policy">
-          <header>
-            <div>
-              <span>RUNTIME POLICY</span>
-              <strong>Moderate tools</strong>
+        <div className="permission-policy-backdrop" onClick={handleClose} role="presentation">
+          <section
+            className="permission-policy-panel"
+            aria-label="Runtime permission policy"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <header>
+              <div>
+                <span>RUNTIME POLICY</span>
+                <strong>Moderate tools</strong>
+              </div>
+              <button
+                type="button"
+                className="permission-policy-close"
+                onClick={handleClose}
+                aria-label="Đóng"
+              >
+                ×
+              </button>
+            </header>
+
+            <p className="permission-policy-note">
+              Chỉ các tool Moderate có thể override. Sensitive vẫn luôn cần xác nhận; Blocked luôn bị từ chối.
+            </p>
+
+            {error && <p className="permission-policy-error">{error}</p>}
+
+            <div className="permission-policy-list">
+              {view?.tools.map((tool) => {
+                const selected: PolicySelectValue = tool.override_decision ?? DEFAULT_VALUE;
+                const effective = effectiveDecision(tool);
+                return (
+                  <label key={tool.name} className="permission-policy-row">
+                    <div>
+                      <strong>{tool.name}</strong>
+                      <small>{tool.description}</small>
+                      <span>Effective: {effective}</span>
+                    </div>
+                    <select
+                      value={selected}
+                      disabled={savingTool === tool.name}
+                      onChange={(event) =>
+                        void changePolicy(tool.name, event.target.value as PolicySelectValue)
+                      }
+                    >
+                      <option value={DEFAULT_VALUE}>Default ({tool.default_decision})</option>
+                      <option value="allow">Allow</option>
+                      <option value="ask">Ask</option>
+                      <option value="deny">Deny</option>
+                    </select>
+                  </label>
+                );
+              })}
+              {!view && <p className="permission-policy-loading">Đang tải policy…</p>}
             </div>
-            <button type="button" onClick={() => setOpen(false)} aria-label="Đóng">
-              ×
-            </button>
-          </header>
 
-          <p className="permission-policy-note">
-            Chỉ các tool Moderate có thể override. Sensitive vẫn luôn cần xác nhận;
-            Blocked luôn bị từ chối.
-          </p>
-
-          {error && <p className="permission-policy-error">{error}</p>}
-
-          <div className="permission-policy-list">
-            {view?.tools.map((tool) => {
-              const selected: PolicySelectValue = tool.override_decision ?? DEFAULT_VALUE;
-              const effective = effectiveDecision(tool);
-              return (
-                <label key={tool.name} className="permission-policy-row">
-                  <div>
-                    <strong>{tool.name}</strong>
-                    <small>{tool.description}</small>
-                    <span>Effective: {effective}</span>
-                  </div>
-                  <select
-                    value={selected}
-                    disabled={savingTool === tool.name}
-                    onChange={(event) =>
-                      void changePolicy(tool.name, event.target.value as PolicySelectValue)
-                    }
-                  >
-                    <option value={DEFAULT_VALUE}>Default ({tool.default_decision})</option>
-                    <option value="allow">Allow</option>
-                    <option value="ask">Ask</option>
-                    <option value="deny">Deny</option>
-                  </select>
-                </label>
-              );
-            })}
-            {!view && <p className="permission-policy-loading">Đang tải policy…</p>}
-          </div>
-
-          <footer>
-            <span>Revision {view?.revision ?? 0}</span>
-            <button type="button" onClick={() => void requestPermissionPolicy()}>
-              Refresh
-            </button>
-          </footer>
-        </section>
+            <footer>
+              <span>Revision {view?.revision ?? 0}</span>
+              <button type="button" onClick={() => void requestPermissionPolicy()}>
+                Refresh
+              </button>
+            </footer>
+          </section>
+        </div>
       )}
-    </aside>
+    </>
   );
 }

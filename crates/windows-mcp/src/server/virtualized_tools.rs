@@ -6,7 +6,7 @@ use windows_tools::{
     window::{self, ActiveWindow, WindowHandle},
 };
 
-use super::{to_json, tool_error, WindowsMcpServer};
+use super::{WindowsMcpServer, to_json, tool_error};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct VirtualizedItemInput {

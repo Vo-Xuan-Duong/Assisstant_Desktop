@@ -1,3 +1,4 @@
+mod antigravity_settings;
 mod edge;
 mod permission_desktop;
 mod readiness;
@@ -10,13 +11,18 @@ mod wake_desktop;
 
 use std::sync::{Arc, Mutex};
 
+use antigravity_settings::{
+    AntigravitySettings, AntigravitySettingsStore, AntigravitySettingsView, fetch_available_models,
+    launch_cli_login,
+};
+
 #[cfg(feature = "voice-whisper")]
 use std::{path::PathBuf, time::Duration};
 
 use antigravity_bridge::{AntigravityClient, AntigravityConfig, CliHealth};
 use assistant_common::{AssistantEvent, AssistantState, SessionId, ToolRisk, UserRequest};
 use assistant_core::{
-    match_local_safe_intent, AssistantCore, CoreError, EventSink, LocalSafeIntent,
+    AssistantCore, CoreError, EventSink, LocalSafeIntent, match_local_safe_intent,
 };
 use async_trait::async_trait;
 use context_engine::{ContextConfig, ContextEngine};
@@ -25,30 +31,28 @@ use resource_registry::{ResourceRegistry, ResourceState, RuntimeResourceSnapshot
 use runtime_paths::RuntimePaths;
 use serde::Serialize;
 use tauri::{
+    AppHandle, Emitter, Manager, State, WindowEvent,
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, State, WindowEvent,
 };
 #[cfg(windows)]
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
-use tauri_plugin_global_shortcut::{
-    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
-};
-use tokio::sync::RwLock;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 #[cfg(feature = "voice-whisper")]
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use tracing_subscriber::EnvFilter;
 use voice_runtime::tts::{TextToSpeech, WindowsSapiTts};
+#[cfg(feature = "wake-word")]
+use voice_runtime::wake_runtime::WakeRuntimeEvent;
 #[cfg(feature = "voice-whisper")]
 use voice_runtime::{
+    MicrophoneConfig, MicrophoneStream,
     stt::SpeechRecognizer,
     vad::{Utterance, UtteranceSegmenter, VadEvent},
     whisper::{WhisperConfig, WhisperRecognizer},
-    MicrophoneConfig, MicrophoneStream,
 };
-#[cfg(feature = "wake-word")]
-use voice_runtime::wake_runtime::WakeRuntimeEvent;
 use wake_desktop::{WakeService, WakeStatus};
 use windows_tools::{
     apps as windows_apps, audio, system as windows_system, tool_definition,
@@ -86,6 +90,7 @@ struct DesktopState {
     context: ContextEngine,
     runtime_paths: RuntimePaths,
     resources: ResourceRegistry,
+    antigravity_store: AntigravitySettingsStore,
     tts: WindowsSapiTts,
     session_id: RwLock<SessionId>,
     source_window: Mutex<Option<WindowHandle>>,
@@ -116,9 +121,9 @@ struct VoiceTurnResult {
 }
 
 #[tauri::command]
-async fn assistant_health(state: State<'_, DesktopState>) -> RuntimeHealth {
+async fn assistant_health(state: State<'_, DesktopState>) -> Result<RuntimeHealth, String> {
     let conversation_id = state.client.conversation_id().await;
-    match state.client.health().await {
+    Ok(match state.client.health().await {
         CliHealth::Available { detail } => RuntimeHealth {
             state: "available",
             detail,
@@ -126,7 +131,7 @@ async fn assistant_health(state: State<'_, DesktopState>) -> RuntimeHealth {
         },
         CliHealth::Missing => RuntimeHealth {
             state: "missing",
-            detail: Some("Không tìm thấy lệnh `agy` trong PATH.".into()),
+            detail: Some("Không tìm thấy lệnh `agy` trong PATH hoặc thư mục cài đặt chuẩn.".into()),
             conversation_id,
         },
         CliHealth::Unhealthy { message } => RuntimeHealth {
@@ -134,7 +139,71 @@ async fn assistant_health(state: State<'_, DesktopState>) -> RuntimeHealth {
             detail: Some(message),
             conversation_id,
         },
-    }
+    })
+}
+
+#[tauri::command]
+async fn assistant_get_antigravity_settings(
+    state: State<'_, DesktopState>,
+) -> Result<AntigravitySettingsView, String> {
+    let settings = state.antigravity_store.load().unwrap_or_default();
+    let snapshot = state.client.get_config_snapshot().await;
+    let available_models = fetch_available_models(&snapshot.binary);
+    let health = state.client.health().await;
+    let is_authenticated = matches!(health, CliHealth::Available { .. });
+
+    Ok(AntigravitySettingsView {
+        current_model: settings.model.or(snapshot.model),
+        current_effort: settings.effort.or(snapshot.effort),
+        available_models,
+        cli_binary: snapshot.binary,
+        is_authenticated,
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct SaveAntigravitySettingsPayload {
+    model: Option<String>,
+    effort: Option<String>,
+}
+
+#[tauri::command]
+async fn assistant_save_antigravity_settings(
+    state: State<'_, DesktopState>,
+    payload: SaveAntigravitySettingsPayload,
+) -> Result<AntigravitySettingsView, String> {
+    let model = payload.model.and_then(|m| {
+        let trimmed = m.trim().to_string();
+        if trimmed.is_empty() || trimmed == "default" {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    let effort = payload.effort.and_then(|e| {
+        let trimmed = e.trim().to_string();
+        if trimmed.is_empty() || trimmed == "default" {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
+    let new_settings = AntigravitySettings {
+        model: model.clone(),
+        effort: effort.clone(),
+    };
+
+    state.antigravity_store.save(&new_settings)?;
+    state.client.update_model_config(model, effort).await;
+
+    assistant_get_antigravity_settings(state).await
+}
+
+#[tauri::command]
+async fn assistant_launch_antigravity_auth(state: State<'_, DesktopState>) -> Result<(), String> {
+    let snapshot = state.client.get_config_snapshot().await;
+    launch_cli_login(&snapshot.binary)
 }
 
 #[tauri::command]
@@ -142,17 +211,17 @@ async fn assistant_readiness(
     state: State<'_, DesktopState>,
     permission: State<'_, PermissionDesktopService>,
     wake: State<'_, WakeService>,
-) -> readiness::RuntimeReadinessReport {
-    readiness::collect(state.inner(), permission.inner(), wake.inner()).await
+) -> Result<readiness::RuntimeReadinessReport, String> {
+    Ok(readiness::collect(state.inner(), permission.inner(), wake.inner()).await)
 }
 
 #[tauri::command]
-async fn assistant_resources(state: State<'_, DesktopState>) -> RuntimeResourceSnapshot {
+fn assistant_resources(state: State<'_, DesktopState>) -> RuntimeResourceSnapshot {
     state.resources.snapshot()
 }
 
 #[tauri::command]
-async fn assistant_wake_status(wake: State<'_, WakeService>) -> WakeStatus {
+fn assistant_wake_status(wake: State<'_, WakeService>) -> WakeStatus {
     wake.status()
 }
 
@@ -168,7 +237,11 @@ async fn assistant_wake_set_enabled(
 
 async fn complete_prompt(prompt: &str, state: &DesktopState) -> Result<String, String> {
     if state.core.state().await == AssistantState::Error {
-        state.core.recover().await.map_err(|error| error.to_string())?;
+        state
+            .core
+            .recover()
+            .await
+            .map_err(|error| error.to_string())?;
     }
 
     if let Some(intent) = match_local_safe_intent(prompt) {
@@ -186,7 +259,10 @@ async fn complete_prompt(prompt: &str, state: &DesktopState) -> Result<String, S
         .lock()
         .map(|guard| *guard)
         .unwrap_or(None);
-    let context = state.context.collect_for_window(prompt, source_window).await;
+    let context = state
+        .context
+        .collect_for_window(prompt, source_window)
+        .await;
     for warning in &context.warnings {
         warn!(%warning, "desktop context source was unavailable");
     }
@@ -227,7 +303,8 @@ fn execute_local_safe_intent(intent: LocalSafeIntent) -> Result<String, CoreErro
 
     match intent {
         LocalSafeIntent::GetVolume => {
-            let state = audio::get_state().map_err(|error| CoreError::LocalTool(error.to_string()))?;
+            let state =
+                audio::get_state().map_err(|error| CoreError::LocalTool(error.to_string()))?;
             let level = state.volume_percent.round().clamp(0.0, 100.0) as u32;
             if state.muted {
                 Ok(format!(
@@ -273,7 +350,8 @@ fn execute_local_safe_intent(intent: LocalSafeIntent) -> Result<String, CoreErro
             }
         }
         LocalSafeIntent::GetActiveWindow => {
-            let active = window::get_active().map_err(|error| CoreError::LocalTool(error.to_string()))?;
+            let active =
+                window::get_active().map_err(|error| CoreError::LocalTool(error.to_string()))?;
             let title = if active.title.trim().is_empty() {
                 "(không có tiêu đề)"
             } else {
@@ -316,7 +394,7 @@ async fn assistant_submit(text: String, state: State<'_, DesktopState>) -> Resul
 }
 
 #[tauri::command]
-async fn assistant_voice_capabilities(state: State<'_, DesktopState>) -> VoiceCapabilities {
+fn assistant_voice_capabilities(state: State<'_, DesktopState>) -> VoiceCapabilities {
     let whisper = state.resources.whisper_status();
     VoiceCapabilities {
         tts_available: true,
@@ -351,7 +429,11 @@ async fn assistant_speak(
         return Err(error);
     }
 
-    let speak_result = state.tts.speak(text).await.map_err(|error| error.to_string());
+    let speak_result = state
+        .tts
+        .speak(text)
+        .await
+        .map_err(|error| error.to_string());
     let finish_result = state
         .core
         .finish_speaking()
@@ -381,7 +463,11 @@ async fn assistant_voice_turn(
     #[cfg(feature = "voice-whisper")]
     {
         if state.core.state().await == AssistantState::Error {
-            state.core.recover().await.map_err(|error| error.to_string())?;
+            state
+                .core
+                .recover()
+                .await
+                .map_err(|error| error.to_string())?;
         }
         if state.core.state().await != AssistantState::Idle {
             return Err("Assistant đang bận với một tác vụ khác.".into());
@@ -438,7 +524,12 @@ async fn run_voice_turn_inner(
         .begin_speaking()
         .await
         .map_err(|error| error.to_string())?;
-    let tts_error = state.tts.speak(&response).await.err().map(|error| error.to_string());
+    let tts_error = state
+        .tts
+        .speak(&response)
+        .await
+        .err()
+        .map(|error| error.to_string());
     if let Err(error) = state.core.finish_speaking().await {
         warn!(%error, "failed to finish voice speaking state");
     }
@@ -500,8 +591,16 @@ async fn capture_one_utterance(app: &AppHandle) -> Result<Utterance, String> {
 
 #[tauri::command]
 async fn assistant_restart(state: State<'_, DesktopState>) -> Result<(), String> {
-    state.client.restart().await.map_err(|error| error.to_string())?;
-    state.core.recover().await.map_err(|error| error.to_string())?;
+    state
+        .client
+        .restart()
+        .await
+        .map_err(|error| error.to_string())?;
+    state
+        .core
+        .recover()
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -509,7 +608,11 @@ async fn assistant_restart(state: State<'_, DesktopState>) -> Result<(), String>
 async fn assistant_reset(state: State<'_, DesktopState>) -> Result<(), String> {
     state.client.reset().await;
     *state.session_id.write().await = SessionId::new();
-    state.core.recover().await.map_err(|error| error.to_string())?;
+    state
+        .core
+        .recover()
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -671,7 +774,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
-fn setup_shortcut(app: &mut tauri::App) -> tauri::Result<()> {
+fn setup_shortcut(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let activation = Shortcut::new(Some(Modifiers::ALT), Code::Space);
     let handler_shortcut = activation;
 
@@ -701,7 +804,10 @@ pub fn run() {
     #[cfg(windows)]
     let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if !args.iter().any(|argument| argument == AUTOSTART_BACKGROUND_ARG) {
+            if !args
+                .iter()
+                .any(|argument| argument == AUTOSTART_BACKGROUND_ARG)
+            {
                 show_main_window(app);
             }
         }))
@@ -713,12 +819,29 @@ pub fn run() {
     builder
         .setup(|app| {
             let initial_source_window = current_external_window();
-            let runtime_paths = RuntimePaths::prepare(app.handle()).map_err(std::io::Error::other)?;
-            let resources = ResourceRegistry::resolve(&runtime_paths).map_err(std::io::Error::other)?;
-            let wake_service = WakeService::setup(&resources);
+            let runtime_paths =
+                RuntimePaths::prepare(app.handle()).map_err(std::io::Error::other)?;
+            let resources =
+                ResourceRegistry::resolve(&runtime_paths).map_err(std::io::Error::other)?;
+            // Setup runs on the UI thread; the wake worker uses tokio::spawn.
+            let wake_service =
+                tauri::async_runtime::block_on(async { WakeService::setup(&resources) });
             let (permission_service, broker_environment) =
                 PermissionDesktopService::setup(app.handle())?;
+            let antigravity_settings_path = runtime_paths
+                .app_local_data
+                .join("settings")
+                .join("antigravity.json");
+            let antigravity_store = AntigravitySettingsStore::new(antigravity_settings_path);
             let mut antigravity_config = AntigravityConfig::default();
+            if let Ok(saved) = antigravity_store.load() {
+                if saved.model.is_some() {
+                    antigravity_config.model = saved.model;
+                }
+                if saved.effort.is_some() {
+                    antigravity_config.effort = saved.effort;
+                }
+            }
             antigravity_config.working_directory = Some(runtime_paths.runtime_dir.clone());
             antigravity_config.set_environment(
                 "ASSISTANT_MCP_CONFIG",
@@ -746,6 +869,7 @@ pub fn run() {
                 context,
                 runtime_paths,
                 resources,
+                antigravity_store,
                 tts: WindowsSapiTts::default(),
                 session_id: RwLock::new(SessionId::new()),
                 source_window: Mutex::new(initial_source_window),
@@ -779,6 +903,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             assistant_health,
+            assistant_get_antigravity_settings,
+            assistant_save_antigravity_settings,
+            assistant_launch_antigravity_auth,
             assistant_readiness,
             assistant_resources,
             resource_api::assistant_resource_catalog,
@@ -791,7 +918,8 @@ pub fn run() {
             assistant_speak,
             assistant_restart,
             assistant_reset,
-            permission_desktop::assistant_permission_respond
+            permission_desktop::assistant_permission_respond,
+            permission_desktop::assistant_permission_audit
         ])
         .run(tauri::generate_context!())
         .expect("error while running Assisstant Desktop");

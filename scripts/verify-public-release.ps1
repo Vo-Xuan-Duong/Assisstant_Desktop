@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$Json
 )
 
@@ -16,7 +16,11 @@ if ($null -eq $property -or [string]::IsNullOrWhiteSpace([string]$property.Value
 }
 
 $command = [string]$property.Value
-if ($command -notmatch 'tauri\.windows\.signed\.conf\.json') {
+$nativeRunner = Join-Path $PSScriptRoot "run-native.ps1"
+$usesSignedRunner = $command -match 'run-native\.ps1\s+-Mode\s+build-public' -and
+    (Test-Path $nativeRunner -PathType Leaf) -and
+    ((Get-Content $nativeRunner -Raw) -match '"build-public"\s*\{\s*& pnpm --filter ''@assisstant/desktop'' tauri build --config src-tauri/tauri\.windows\.signed\.conf\.json\s*\}')
+if ($command -notmatch 'tauri\.windows\.signed\.conf\.json' -and -not $usesSignedRunner) {
     throw "Public build command does not load tauri.windows.signed.conf.json. Refusing a potentially unsigned public build."
 }
 if ($command -notmatch 'desktop:release:verify:public') {

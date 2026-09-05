@@ -1,18 +1,18 @@
 use serde::Serialize;
 use windows::{
-    core::{Error as WindowsError, Interface},
     Win32::{
         System::Com::{
-            CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
+            CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
         },
         UI::Accessibility::{
             CUIAutomation, IUIAutomation, IUIAutomationCondition, IUIAutomationElement,
             IUIAutomationVirtualizedItemPattern, TreeScope_Children, UIA_PATTERN_ID,
         },
     },
+    core::{Error as WindowsError, Interface},
 };
 
-use crate::{window::WindowHandle, ToolError, ToolResult};
+use crate::{ToolError, ToolResult, window::WindowHandle};
 
 const UIA_VIRTUALIZED_ITEM_PATTERN_ID: UIA_PATTERN_ID = UIA_PATTERN_ID(10020);
 const MAX_PATH_DEPTH: usize = 16;
@@ -44,13 +44,11 @@ pub fn status(handle: WindowHandle, path: &[u32]) -> ToolResult<VirtualizedItemS
 pub fn realize(handle: WindowHandle, path: &[u32]) -> ToolResult<()> {
     let client = VirtualizedClient::new(handle)?;
     let element = client.resolve(path)?;
-    let pattern = pattern::<IUIAutomationVirtualizedItemPattern>(
-        &element,
-        UIA_VIRTUALIZED_ITEM_PATTERN_ID,
-    )
-    .ok_or_else(|| {
-        ToolError::Unsupported("element does not expose VirtualizedItemPattern".into())
-    })?;
+    let pattern =
+        pattern::<IUIAutomationVirtualizedItemPattern>(&element, UIA_VIRTUALIZED_ITEM_PATTERN_ID)
+            .ok_or_else(|| {
+            ToolError::Unsupported("element does not expose VirtualizedItemPattern".into())
+        })?;
 
     unsafe { pattern.Realize()? };
     Ok(())

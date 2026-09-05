@@ -169,3 +169,16 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
 }
+
+export interface AntigravityModelInfo {
+  id: string;
+  label: string;
+}
+
+export interface AntigravitySettingsView {
+  current_model: string | null;
+  current_effort: string | null;
+  available_models: AntigravityModelInfo[];
+  cli_binary: string;
+  is_authenticated: boolean;
+}

@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::json;
 use windows_tools::{display_control, files, input, power, process};
 
-use super::{to_json, tool_error, WindowsMcpServer};
+use super::{WindowsMcpServer, to_json, tool_error};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ProcessTerminateInput {
@@ -74,7 +74,9 @@ impl WindowsMcpServer {
         description = "Log off the current Windows user session immediately. Sensitive action; unsaved work may be lost and desktop confirmation is required."
     )]
     async fn system_logoff(&self) -> Result<String, String> {
-        self.permissions.authorize("system_logoff", json!({})).await?;
+        self.permissions
+            .authorize("system_logoff", json!({}))
+            .await?;
         let value = run_blocking(|| power::logoff().map_err(tool_error)).await?;
         to_json(&value)
     }
@@ -84,7 +86,9 @@ impl WindowsMcpServer {
         description = "Request immediate Windows shutdown. Sensitive action; always requires desktop confirmation."
     )]
     async fn system_shutdown(&self) -> Result<String, String> {
-        self.permissions.authorize("system_shutdown", json!({})).await?;
+        self.permissions
+            .authorize("system_shutdown", json!({}))
+            .await?;
         let value = run_blocking(|| power::shutdown().map_err(tool_error)).await?;
         to_json(&value)
     }
@@ -94,7 +98,9 @@ impl WindowsMcpServer {
         description = "Request immediate Windows restart. Sensitive action; always requires desktop confirmation."
     )]
     async fn system_restart(&self) -> Result<String, String> {
-        self.permissions.authorize("system_restart", json!({})).await?;
+        self.permissions
+            .authorize("system_restart", json!({}))
+            .await?;
         let value = run_blocking(|| power::restart().map_err(tool_error)).await?;
         to_json(&value)
     }
@@ -104,7 +110,9 @@ impl WindowsMcpServer {
         description = "Ask Windows to power off attached displays. A later user/input event normally wakes them again."
     )]
     async fn display_turn_off(&self) -> Result<String, String> {
-        self.permissions.authorize("display_turn_off", json!({})).await?;
+        self.permissions
+            .authorize("display_turn_off", json!({}))
+            .await?;
         let value = run_blocking(|| display_control::turn_off().map_err(tool_error)).await?;
         to_json(&value)
     }
@@ -169,7 +177,8 @@ impl WindowsMcpServer {
             )
             .await?;
         let max_entries = max_entries.map(|value| value as usize);
-        let value = run_blocking(move || files::list(&directory, max_entries).map_err(tool_error)).await?;
+        let value =
+            run_blocking(move || files::list(&directory, max_entries).map_err(tool_error)).await?;
         to_json(&value)
     }
 
@@ -184,7 +193,8 @@ impl WindowsMcpServer {
         self.permissions
             .authorize("file_create_directory", json!({ "path": &path }))
             .await?;
-        let value = run_blocking(move || files::create_directory(&path).map_err(tool_error)).await?;
+        let value =
+            run_blocking(move || files::create_directory(&path).map_err(tool_error)).await?;
         to_json(&value)
     }
 
@@ -205,7 +215,9 @@ impl WindowsMcpServer {
                 json!({ "source": &source, "destination": &destination }),
             )
             .await?;
-        let value = run_blocking(move || files::copy_file(&source, &destination).map_err(tool_error)).await?;
+        let value =
+            run_blocking(move || files::copy_file(&source, &destination).map_err(tool_error))
+                .await?;
         to_json(&value)
     }
 
@@ -226,7 +238,9 @@ impl WindowsMcpServer {
                 json!({ "source": &source, "destination": &destination }),
             )
             .await?;
-        let value = run_blocking(move || files::move_path(&source, &destination).map_err(tool_error)).await?;
+        let value =
+            run_blocking(move || files::move_path(&source, &destination).map_err(tool_error))
+                .await?;
         to_json(&value)
     }
 

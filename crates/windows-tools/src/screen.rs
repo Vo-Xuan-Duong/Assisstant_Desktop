@@ -11,8 +11,8 @@ use windows::Win32::{
 };
 
 use crate::{
-    window::{self, WindowHandle},
     ToolError, ToolResult,
+    window::{self, WindowHandle},
 };
 
 #[derive(Debug, Clone)]
@@ -41,7 +41,7 @@ struct MemoryDc(HDC);
 impl Drop for MemoryDc {
     fn drop(&mut self) {
         unsafe {
-            DeleteDC(self.0);
+            let _ = DeleteDC(self.0);
         }
     }
 }
@@ -113,7 +113,7 @@ pub fn capture(handle: WindowHandle) -> ToolResult<ScreenFrame> {
             0,
         )?;
         if bits.is_null() {
-            DeleteObject(HGDIOBJ(bitmap.0));
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
             return Err(ToolError::Unsupported(
                 "Windows created an empty context capture bitmap".into(),
             ));
@@ -121,7 +121,7 @@ pub fn capture(handle: WindowHandle) -> ToolResult<ScreenFrame> {
 
         let old_object = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
         if old_object.0.is_null() {
-            DeleteObject(HGDIOBJ(bitmap.0));
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
             return Err(ToolError::Unsupported(
                 "Windows could not select the context capture bitmap".into(),
             ));
@@ -143,16 +143,18 @@ pub fn capture(handle: WindowHandle) -> ToolResult<ScreenFrame> {
         SelectObject(memory_dc, old_object);
 
         if let Err(error) = capture_result {
-            DeleteObject(HGDIOBJ(bitmap.0));
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
             return Err(ToolError::Windows(error));
         }
 
         let length = (width as usize)
             .checked_mul(height as usize)
             .and_then(|pixels| pixels.checked_mul(4))
-            .ok_or_else(|| ToolError::Unsupported("capture dimensions overflow memory size".into()))?;
+            .ok_or_else(|| {
+                ToolError::Unsupported("capture dimensions overflow memory size".into())
+            })?;
         let bgra = std::slice::from_raw_parts(bits.cast::<u8>(), length).to_vec();
-        DeleteObject(HGDIOBJ(bitmap.0));
+        let _ = DeleteObject(HGDIOBJ(bitmap.0));
 
         Ok(ScreenFrame {
             width: width as u32,

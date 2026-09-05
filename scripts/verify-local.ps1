@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$Json
 )
 
@@ -38,7 +38,17 @@ function Get-CommandInfo {
         [bool]$Required
     )
 
-    $command = Get-Command $Name -ErrorAction SilentlyContinue
+    $commandName = $Name
+    if ($Name -eq "agy") {
+        $installedAgy = Join-Path $env:LOCALAPPDATA "agy\bin\agy.exe"
+        $geminiAgy = Join-Path $env:USERPROFILE ".gemini\bin\agy.exe"
+        if (-not [string]::IsNullOrWhiteSpace($env:ASSISTANT_ANTIGRAVITY_BIN)) {
+            $commandName = $env:ASSISTANT_ANTIGRAVITY_BIN
+        }
+        elseif (Test-Path $installedAgy -PathType Leaf) { $commandName = $installedAgy }
+        elseif (Test-Path $geminiAgy -PathType Leaf) { $commandName = $geminiAgy }
+    }
+    $command = Get-Command $commandName -ErrorAction SilentlyContinue
     if (-not $command) {
         Add-Result $Name ($(if ($Required) { "blocking" } else { "optional" })) "Không tìm thấy command trong PATH."
         return $null
@@ -46,7 +56,7 @@ function Get-CommandInfo {
 
     $version = ""
     try {
-        $version = (& $Name @VersionArgs 2>&1 | Select-Object -First 1 | Out-String).Trim()
+        $version = (& $commandName @VersionArgs 2>&1 | Select-Object -First 1 | Out-String).Trim()
     }
     catch {
         $version = "Command tồn tại nhưng không đọc được version: $($_.Exception.Message)"
@@ -99,10 +109,10 @@ else {
     Add-Result "msvc_cl" "info" "Không thấy cl.exe trong PATH. Cargo MSVC vẫn có thể hoạt động nếu Visual Studio Build Tools được Rust toolchain tìm thấy; nếu linker lỗi, mở Developer PowerShell hoặc cài C++ Build Tools."
 }
 
-$WebViewCandidates = @(
+$WebViewCandidates = @(@(
     (Join-Path ${env:ProgramFiles(x86)} "Microsoft\EdgeWebView\Application"),
     (Join-Path $env:LOCALAPPDATA "Microsoft\EdgeWebView\Application")
-) | Where-Object { $_ -and (Test-Path $_) }
+) | Where-Object { $_ -and (Test-Path $_) })
 
 if ($WebViewCandidates.Count -gt 0) {
     Add-Result "webview2" "ready" "Tìm thấy Microsoft Edge WebView2 runtime directory." $WebViewCandidates[0]

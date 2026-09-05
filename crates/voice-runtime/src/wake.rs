@@ -95,9 +95,7 @@ impl SherpaWakeConfig {
                 "keywords_score must be a positive finite value".into(),
             ));
         }
-        if !self.keywords_threshold.is_finite()
-            || !(0.0..=1.0).contains(&self.keywords_threshold)
-        {
+        if !self.keywords_threshold.is_finite() || !(0.0..=1.0).contains(&self.keywords_threshold) {
             return Err(WakeError::InvalidConfig(
                 "keywords_threshold must be a finite value from 0 to 1".into(),
             ));

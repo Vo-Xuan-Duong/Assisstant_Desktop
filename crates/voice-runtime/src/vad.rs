@@ -96,14 +96,14 @@ impl UtteranceSegmenter {
         if !self.active_started {
             self.push_pre_roll(&chunk.samples, sample_rate);
             if speech {
-                self.speech_run_samples = self
-                    .speech_run_samples
-                    .saturating_add(chunk.samples.len());
+                self.speech_run_samples =
+                    self.speech_run_samples.saturating_add(chunk.samples.len());
             } else {
                 self.speech_run_samples = 0;
             }
 
-            if self.speech_run_samples >= samples_for_ms(sample_rate, self.config.start_trigger_ms) {
+            if self.speech_run_samples >= samples_for_ms(sample_rate, self.config.start_trigger_ms)
+            {
                 self.active.extend(self.pre_roll.drain(..));
                 self.active_started = true;
                 self.speech_run_samples = 0;
@@ -118,15 +118,13 @@ impl UtteranceSegmenter {
         if speech {
             self.silence_run_samples = 0;
         } else {
-            self.silence_run_samples = self
-                .silence_run_samples
-                .saturating_add(chunk.samples.len());
+            self.silence_run_samples = self.silence_run_samples.saturating_add(chunk.samples.len());
         }
 
-        let reached_silence = self.silence_run_samples
-            >= samples_for_ms(sample_rate, self.config.end_silence_ms);
-        let reached_max = self.active.len()
-            >= samples_for_ms(sample_rate, self.config.max_utterance_ms);
+        let reached_silence =
+            self.silence_run_samples >= samples_for_ms(sample_rate, self.config.end_silence_ms);
+        let reached_max =
+            self.active.len() >= samples_for_ms(sample_rate, self.config.max_utterance_ms);
 
         if reached_silence || reached_max {
             return self.finish();
@@ -191,8 +189,7 @@ impl Default for UtteranceSegmenter {
 }
 
 fn samples_for_ms(sample_rate: u32, milliseconds: u32) -> usize {
-    ((u64::from(sample_rate) * u64::from(milliseconds)) / 1000)
-        .min(usize::MAX as u64) as usize
+    ((u64::from(sample_rate) * u64::from(milliseconds)) / 1000).min(usize::MAX as u64) as usize
 }
 
 #[cfg(test)]

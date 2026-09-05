@@ -37,7 +37,9 @@ pub struct FileMutationResult {
 fn absolute_path(raw: &str, field: &str) -> ToolResult<PathBuf> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return Err(ToolError::InvalidArgument(format!("{field} cannot be empty")));
+        return Err(ToolError::InvalidArgument(format!(
+            "{field} cannot be empty"
+        )));
     }
     let path = PathBuf::from(raw);
     if !path.is_absolute() {
@@ -75,7 +77,10 @@ fn entry_from_path(path: &Path) -> ToolResult<FileEntry> {
 pub fn info(path: &str) -> ToolResult<FileEntry> {
     let path = absolute_path(path, "path")?;
     if !path.exists() {
-        return Err(ToolError::NotFound(format!("{} does not exist", path.display())));
+        return Err(ToolError::NotFound(format!(
+            "{} does not exist",
+            path.display()
+        )));
     }
     entry_from_path(&path)
 }
@@ -89,7 +94,9 @@ pub fn list(directory: &str, max_entries: Option<usize>) -> ToolResult<FileListR
         )));
     }
 
-    let limit = max_entries.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, MAX_LIST_LIMIT);
+    let limit = max_entries
+        .unwrap_or(DEFAULT_LIST_LIMIT)
+        .clamp(1, MAX_LIST_LIMIT);
     let mut entries = Vec::new();
     let mut truncated = false;
     for item in fs::read_dir(&directory)? {
@@ -136,7 +143,8 @@ pub fn copy_file(source: &str, destination: &str) -> ToolResult<FileMutationResu
     let metadata = fs::symlink_metadata(&source)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(ToolError::Unsupported(
-            "file_copy only accepts a regular file source; directory/symlink copy is not exposed".into(),
+            "file_copy only accepts a regular file source; directory/symlink copy is not exposed"
+                .into(),
         ));
     }
     if destination.exists() {

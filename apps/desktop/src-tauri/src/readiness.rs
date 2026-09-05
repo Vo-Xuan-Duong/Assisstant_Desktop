@@ -4,11 +4,11 @@ use antigravity_bridge::CliHealth;
 use serde::Serialize;
 
 use super::{
+    DesktopState,
     permission_desktop::PermissionDesktopService,
     resource_registry::{ResourceState, RuntimeResourceStatus},
     runtime_paths::McpBinarySource,
     wake_desktop::WakeService,
-    DesktopState,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -90,7 +90,7 @@ async fn antigravity_check(state: &DesktopState) -> ReadinessCheck {
             id: "antigravity",
             label: "Antigravity CLI",
             level: ReadinessLevel::Blocking,
-            detail: "Không tìm thấy `agy` trong PATH; AI backend chưa thể khởi động.".into(),
+            detail: "Không tìm thấy `agy` trong PATH hoặc thư mục cài đặt chuẩn; AI backend chưa thể khởi động.".into(),
             path: None,
         },
         CliHealth::Unhealthy { message } => ReadinessCheck {
@@ -116,9 +116,9 @@ fn mcp_check(state: &DesktopState) -> ReadinessCheck {
         };
     }
 
-    if let Err(error) = fs::read(&paths.mcp_config_path)
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).map_err(std::io::Error::other))
-    {
+    if let Err(error) = fs::read(&paths.mcp_config_path).and_then(|bytes| {
+        serde_json::from_slice::<serde_json::Value>(&bytes).map_err(std::io::Error::other)
+    }) {
         return ReadinessCheck {
             id: "windows_mcp",
             label: "Windows MCP",
@@ -170,7 +170,8 @@ async fn permission_check(permission: &PermissionDesktopService) -> ReadinessChe
             id: "permission_broker",
             label: "Permission Broker",
             level: ReadinessLevel::Blocking,
-            detail: "Permission broker chưa bind; Sensitive tools phải bị coi là không khả dụng.".into(),
+            detail: "Permission broker chưa bind; Sensitive tools phải bị coi là không khả dụng."
+                .into(),
             path: None,
         };
     }
@@ -277,9 +278,9 @@ fn wake_check(resource: RuntimeResourceStatus, wake: &WakeService) -> ReadinessC
             id: "wake_word",
             label: "Wake Word",
             level: ReadinessLevel::OptionalMissing,
-            detail: status
-                .detail
-                .unwrap_or_else(|| "Wake resources đầy đủ nhưng detector runtime chưa khởi tạo được.".into()),
+            detail: status.detail.unwrap_or_else(|| {
+                "Wake resources đầy đủ nhưng detector runtime chưa khởi tạo được.".into()
+            }),
             path: status.model_dir.or(Some(resource.root_path)),
         };
     }

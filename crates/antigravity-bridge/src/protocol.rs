@@ -30,11 +30,6 @@ pub struct Usage {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct InitEvent {
-    pub conversation_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
 pub struct StepUpdate {
     pub conversation_id: Option<String>,
     pub step_index: Option<u64>,

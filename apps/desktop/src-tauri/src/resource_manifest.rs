@@ -27,7 +27,11 @@ pub struct ResourceInstallManifest {
 }
 
 pub fn manifests() -> Vec<ResourceInstallManifest> {
-    vec![whisper_manifest(), wake_manifest(), wake_keywords_manifest()]
+    vec![
+        whisper_manifest(),
+        wake_manifest(),
+        wake_keywords_manifest(),
+    ]
 }
 
 pub fn manifest(resource_id: &str) -> Option<ResourceInstallManifest> {

@@ -5,13 +5,17 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
+    "desktop:native:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\prepare-native.ps1",
+    "test": "pnpm desktop:native:prepare && pnpm desktop:assets:prepare && pnpm --filter @assisstant/desktop sidecar:stage:dev && powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-native.ps1 -Mode test",
+    "check": "cargo fmt --all -- --check && pnpm --filter @assisstant/desktop build",
+    "test:models": "pnpm desktop:native:prepare && pnpm --filter @assisstant/desktop sidecar:stage:dev && powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-native.ps1 -Mode test-models",
     "desktop:assets:prepare": "powershell -ExecutionPolicy Bypass -File .\\scripts\\prepare-release.ps1 -AssetsOnly",
-    "desktop:dev": "pnpm desktop:assets:prepare && pnpm --filter @assisstant/desktop tauri dev",
-    "desktop:build": "pnpm desktop:assets:prepare && pnpm --filter @assisstant/desktop tauri build",
+    "desktop:dev": "pnpm desktop:native:prepare && pnpm desktop:assets:prepare && powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-native.ps1 -Mode dev",
+    "desktop:build": "pnpm desktop:native:prepare && pnpm desktop:assets:prepare && powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-native.ps1 -Mode build",
     "desktop:release:prepare": "powershell -ExecutionPolicy Bypass -File .\\scripts\\prepare-release.ps1",
     "desktop:release:verify": "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-release.ps1",
     "desktop:release:verify:public": "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-public-release.ps1",
-    "desktop:release:build": "pnpm desktop:assets:prepare && pnpm desktop:release:verify && pnpm --filter @assisstant/desktop tauri build",
-    "desktop:release:build:public": "pnpm desktop:assets:prepare && pnpm desktop:release:verify:public && pnpm --filter @assisstant/desktop tauri build --config src-tauri/tauri.windows.signed.conf.json"
+    "desktop:release:build": "pnpm desktop:native:prepare && pnpm desktop:assets:prepare && pnpm desktop:release:verify && powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-native.ps1 -Mode build",
+    "desktop:release:build:public": "pnpm desktop:native:prepare && pnpm desktop:assets:prepare && pnpm desktop:release:verify:public && powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-native.ps1 -Mode build-public"
   }
 }

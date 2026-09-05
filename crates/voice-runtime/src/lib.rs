@@ -1,23 +1,23 @@
+#[cfg(feature = "wake-sherpa")]
+pub mod sherpa_wake;
 pub mod stt;
 pub mod tts;
 pub mod vad;
 pub mod wake;
-pub mod wake_runtime;
-#[cfg(feature = "wake-sherpa")]
-pub mod sherpa_wake;
 #[cfg(feature = "wake-sherpa")]
 pub mod wake_keywords;
+pub mod wake_runtime;
 #[cfg(feature = "whisper")]
 pub mod whisper;
 
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
 };
 
 use cpal::{
+    FromSample, I24, SampleFormat, SizedSample, Stream, StreamConfig, U24,
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    FromSample, SampleFormat, SizedSample, Stream, StreamConfig, I24, U24,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -51,7 +51,10 @@ pub struct AudioLevel {
 impl AudioLevel {
     pub fn from_samples(samples: &[f32]) -> Self {
         if samples.is_empty() {
-            return Self { rms: 0.0, peak: 0.0 };
+            return Self {
+                rms: 0.0,
+                peak: 0.0,
+            };
         }
 
         let mut sum_squares = 0.0f64;
@@ -121,7 +124,9 @@ pub struct MicrophoneStream {
 impl MicrophoneStream {
     pub fn open_default(config: MicrophoneConfig) -> Result<Self, VoiceError> {
         let host = cpal::default_host();
-        let device = host.default_input_device().ok_or(VoiceError::NoInputDevice)?;
+        let device = host
+            .default_input_device()
+            .ok_or(VoiceError::NoInputDevice)?;
         let supported = device.default_input_config()?;
         let sample_format = supported.sample_format();
         let stream_config: StreamConfig = supported.into();
@@ -182,10 +187,7 @@ impl MicrophoneStream {
     }
 
     pub fn last_error(&self) -> Option<String> {
-        self.last_error
-            .lock()
-            .ok()
-            .and_then(|error| error.clone())
+        self.last_error.lock().ok().and_then(|error| error.clone())
     }
 
     pub async fn next_chunk(&mut self) -> Option<AudioChunk> {
@@ -212,18 +214,42 @@ fn build_input_stream(
     last_error: Arc<Mutex<Option<String>>>,
 ) -> Result<Stream, VoiceError> {
     match sample_format {
-        SampleFormat::F32 => build_typed_stream::<f32>(device, config, sender, dropped_chunks, last_error),
-        SampleFormat::F64 => build_typed_stream::<f64>(device, config, sender, dropped_chunks, last_error),
-        SampleFormat::I8 => build_typed_stream::<i8>(device, config, sender, dropped_chunks, last_error),
-        SampleFormat::I16 => build_typed_stream::<i16>(device, config, sender, dropped_chunks, last_error),
-        SampleFormat::I24 => build_typed_stream::<I24>(device, config, sender, dropped_chunks, last_error),
-        SampleFormat::I32 => build_typed_stream::<i32>(device, config, sender, dropped_chunks, last_error),
-        SampleFormat::I64 => build_typed_stream::<i64>(device, config, sender, dropped_chunks, last_error),
-        SampleFormat::U8 => build_typed_stream::<u8>(device, config, sender, dropped_chunks, last_error),
-        SampleFormat::U16 => build_typed_stream::<u16>(device, config, sender, dropped_chunks, last_error),
-        SampleFormat::U24 => build_typed_stream::<U24>(device, config, sender, dropped_chunks, last_error),
-        SampleFormat::U32 => build_typed_stream::<u32>(device, config, sender, dropped_chunks, last_error),
-        SampleFormat::U64 => build_typed_stream::<u64>(device, config, sender, dropped_chunks, last_error),
+        SampleFormat::F32 => {
+            build_typed_stream::<f32>(device, config, sender, dropped_chunks, last_error)
+        }
+        SampleFormat::F64 => {
+            build_typed_stream::<f64>(device, config, sender, dropped_chunks, last_error)
+        }
+        SampleFormat::I8 => {
+            build_typed_stream::<i8>(device, config, sender, dropped_chunks, last_error)
+        }
+        SampleFormat::I16 => {
+            build_typed_stream::<i16>(device, config, sender, dropped_chunks, last_error)
+        }
+        SampleFormat::I24 => {
+            build_typed_stream::<I24>(device, config, sender, dropped_chunks, last_error)
+        }
+        SampleFormat::I32 => {
+            build_typed_stream::<i32>(device, config, sender, dropped_chunks, last_error)
+        }
+        SampleFormat::I64 => {
+            build_typed_stream::<i64>(device, config, sender, dropped_chunks, last_error)
+        }
+        SampleFormat::U8 => {
+            build_typed_stream::<u8>(device, config, sender, dropped_chunks, last_error)
+        }
+        SampleFormat::U16 => {
+            build_typed_stream::<u16>(device, config, sender, dropped_chunks, last_error)
+        }
+        SampleFormat::U24 => {
+            build_typed_stream::<U24>(device, config, sender, dropped_chunks, last_error)
+        }
+        SampleFormat::U32 => {
+            build_typed_stream::<u32>(device, config, sender, dropped_chunks, last_error)
+        }
+        SampleFormat::U64 => {
+            build_typed_stream::<u64>(device, config, sender, dropped_chunks, last_error)
+        }
         unsupported => Err(VoiceError::UnsupportedSampleFormat(unsupported.to_string())),
     }
 }

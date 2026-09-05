@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AntigravitySettingsView,
   AssistantEvent,
   AudioLevel,
   ResourceInstallManifest,
@@ -89,4 +90,19 @@ export function onWakeEvent(
   handler: (event: WakeRuntimeEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<WakeRuntimeEvent>("wake:event", ({ payload }) => handler(payload));
+}
+
+export function getAntigravitySettings(): Promise<AntigravitySettingsView> {
+  return invoke<AntigravitySettingsView>("assistant_get_antigravity_settings");
+}
+
+export function saveAntigravitySettings(payload: {
+  model?: string | null;
+  effort?: string | null;
+}): Promise<AntigravitySettingsView> {
+  return invoke<AntigravitySettingsView>("assistant_save_antigravity_settings", { payload });
+}
+
+export function launchAntigravityAuth(): Promise<void> {
+  return invoke<void>("assistant_launch_antigravity_auth");
 }

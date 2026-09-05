@@ -41,7 +41,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.85.0
+          toolchain: 1.98.1
           components: rustfmt
 
       - name: Cache Rust build
@@ -56,21 +56,23 @@ jobs:
         shell: powershell
         run: pnpm desktop:assets:prepare
 
+      - name: Prepare native build dependencies
+        run: pnpm desktop:native:prepare
+
       - name: Stage MCP sidecar
         run: pnpm --dir apps/desktop sidecar:stage:dev
 
       - name: Check Rust formatting
-        continue-on-error: true
         run: cargo fmt --all -- --check
 
       - name: Run Rust tests
-        run: cargo test --workspace --locked
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-native.ps1 -Mode test
 
       - name: Build frontend
         run: pnpm --filter @assisstant/desktop build
 
       - name: Check full desktop feature set
-        run: cargo check -p assisstant-desktop --locked --features voice-whisper,wake-word
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-native.ps1 -Mode check
 
       - name: Verify release contract
         shell: powershell

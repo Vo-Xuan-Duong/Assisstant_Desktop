@@ -106,6 +106,8 @@ pub fn match_local_safe_intent(text: &str) -> Option<LocalSafeIntent> {
         &normalized,
         &[
             "ứng dụng đang chạy",
+            "ứng dụng nào đang chạy",
+            "ung dung nao dang chay",
             "ung dung dang chay",
             "app đang chạy",
             "app dang chay",
@@ -477,10 +479,7 @@ mod tests {
 
     #[test]
     fn mutating_volume_request_does_not_use_safe_fast_path() {
-        assert_eq!(
-            match_local_safe_intent("Đặt âm lượng xuống 30%"),
-            None
-        );
+        assert_eq!(match_local_safe_intent("Đặt âm lượng xuống 30%"), None);
     }
 
     #[test]

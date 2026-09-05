@@ -2,12 +2,12 @@ use rmcp::{handler::server::wrapper::Parameters, schemars, tool, tool_router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use windows_tools::{
+    ToolError,
     automation::{self, UiInspectOptions, UiScrollAmount, UiTreeSnapshot},
     window::{self, ActiveWindow, WindowHandle},
-    ToolError,
 };
 
-use super::{to_json, tool_error, WindowsMcpServer};
+use super::{WindowsMcpServer, to_json, tool_error};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UiInspectInput {
@@ -272,7 +272,11 @@ impl WindowsMcpServer {
         let result = run_blocking(move || {
             let window_before_action = window::get(handle).map_err(tool_error)?;
             automation::set_value(handle, &path, &value).map_err(tool_error)?;
-            Ok(action_result(window_before_action, result_path, "set_value"))
+            Ok(action_result(
+                window_before_action,
+                result_path,
+                "set_value",
+            ))
         })
         .await?;
         to_json(&result)

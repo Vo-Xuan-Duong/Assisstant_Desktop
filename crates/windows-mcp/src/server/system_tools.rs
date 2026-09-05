@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::json;
 use windows_tools::{apps, audio, clipboard, media, system, window};
 
-use super::{to_json, tool_error, WindowsMcpServer};
+use super::{WindowsMcpServer, to_json, tool_error};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SetVolumeInput {
@@ -36,7 +36,9 @@ impl WindowsMcpServer {
         description = "Read the current master volume percentage and mute state of the default Windows output device. This is read-only."
     )]
     async fn audio_get_volume(&self) -> Result<String, String> {
-        self.permissions.authorize("audio_get_volume", json!({})).await?;
+        self.permissions
+            .authorize("audio_get_volume", json!({}))
+            .await?;
         audio::get_state()
             .map_err(tool_error)
             .and_then(|value| to_json(&value))

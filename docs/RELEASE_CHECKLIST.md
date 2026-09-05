@@ -18,7 +18,7 @@ assistant-mcp external sidecar
 ## Required local environment
 
 - Windows 10/11 x64.
-- Rust `1.85.0` as pinned by `rust-toolchain.toml`.
+- Rust `1.98.1` as pinned by `rust-toolchain.toml`.
 - Node.js `20.19+` or `22.12+`.
 - pnpm.
 - Microsoft Edge WebView2 prerequisites.
@@ -61,7 +61,7 @@ Do not fabricate or hand-edit resolved dependency entries.
 Before a release candidate is built, all of these must be true:
 
 - `LICENSE` matches the workspace MIT declaration;
-- Rust toolchain remains pinned to `1.85.0` for the current baseline;
+- Rust toolchain remains pinned to `1.98.1` for the current baseline;
 - `Cargo.lock` and `pnpm-lock.yaml` are committed;
 - tracked icon SVG/Base64 payload exists;
 - materialized `icons/icon.ico` matches the pinned SHA-256;

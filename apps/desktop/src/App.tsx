@@ -14,7 +14,10 @@ import {
   submitPrompt,
 } from "./api";
 import { onPermissionRequest, submitPermissionDecision } from "./permissionApi";
+import AntigravitySettingsPanel from "./AntigravitySettingsPanel";
+import PermissionPolicyPanel from "./PermissionPolicyPanel";
 import ReadinessPanel from "./ReadinessPanel";
+import ResourceSetupPanel from "./ResourceSetupPanel";
 import type {
   AssistantState,
   ChatMessage,
@@ -63,6 +66,13 @@ export default function App() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [wakeBusy, setWakeBusy] = useState(false);
+  const [readinessOpen, setReadinessOpen] = useState(false);
+  const [resourcesOpen, setResourcesOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [isCheckingHealth, setIsCheckingHealth] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const [permissionQueue, setPermissionQueue] = useState<PermissionRequest[]>([]);
   const [permissionRemaining, setPermissionRemaining] = useState(PERMISSION_UI_TIMEOUT_SECONDS);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -73,10 +83,13 @@ export default function App() {
   const activePermission = permissionQueue[0] ?? null;
 
   const refreshHealth = useCallback(async () => {
+    setIsCheckingHealth(true);
     try {
       setHealth(await getRuntimeHealth());
     } catch (error) {
       setHealth({ state: "unhealthy", detail: String(error) });
+    } finally {
+      setIsCheckingHealth(false);
     }
   }, []);
 
@@ -106,19 +119,24 @@ export default function App() {
   const voiceHint = useMemo(() => {
     if (!voice) return "Đang kiểm tra voice runtime";
     if (!voice.whisper_compiled) return "Build chưa bật feature voice-whisper";
-    if (!voice.model_available) return `Thiếu Whisper model${voice.model_path ? `: ${voice.model_path}` : ""}`;
+    if (!voice.model_available) return "Thiếu Whisper model (bấm Tài nguyên để tải)";
     return "Voice local sẵn sàng";
   }, [voice]);
 
   const wakeHint = useMemo(() => {
     if (!wake) return "Đang kiểm tra wake runtime";
     if (!wake.compiled) return "Build chưa bật feature wake-word";
-    if (!wake.available) return wake.detail || "Wake-word model chưa sẵn sàng";
+    if (!wake.available) {
+      if (wake.detail && (wake.detail.includes("missing") || wake.detail.includes("encoder"))) {
+        return "Chưa có Wake-word model (Sherpa ONNX)";
+      }
+      return wake.detail || "Wake-word model chưa sẵn sàng";
+    }
     if (wake.state === "listening") return voiceReady ? "Wake word đang nghe nền · auto voice turn" : "Wake word đang nghe nền";
     if (wake.state === "suspended") return "Wake word tạm dừng khi Assistant dùng microphone";
     if (wake.state === "cooldown") return "Wake word đang cooldown";
     if (wake.state === "error") return wake.detail || "Wake runtime gặp lỗi";
-    return wake.enabled ? "Wake word đang khởi tạo" : "Wake word đang tắt";
+    return wake.enabled ? "Wake word đang khởi tạo" : "Wake word đang tắt (bấm để bật)";
   }, [voiceReady, wake]);
 
   useEffect(() => {
@@ -359,8 +377,35 @@ export default function App() {
     await send(input);
   }
 
+  const handleVoiceTurnClick = useCallback(() => {
+    if (busyRef.current) return;
+    if (!voiceReadyRef.current) {
+      setResourcesOpen(true);
+      setMessages((current) => [
+        ...current,
+        message(
+          "system",
+          `Microphone / Whisper chưa sẵn sàng (${voiceHint}). Đang mở bảng Tài nguyên để tải và cài đặt mô hình Whisper.`,
+        ),
+      ]);
+      return;
+    }
+    void performVoiceTurn("manual");
+  }, [performVoiceTurn, voiceHint]);
+
   async function onWakeToggle() {
-    if (!wake?.available || wakeBusy) return;
+    if (wakeBusy) return;
+    if (!wake?.available) {
+      setResourcesOpen(true);
+      setMessages((current) => [
+        ...current,
+        message(
+          "system",
+          `Wake word chưa sẵn sàng (${wakeHint}). Đang mở bảng Tài nguyên để cấu hình mô hình hoặc wake phrase.`,
+        ),
+      ]);
+      return;
+    }
     setWakeBusy(true);
     try {
       setWake(await setWakeEnabled(!wake.enabled));
@@ -397,7 +442,8 @@ export default function App() {
   }
 
   async function onRestart() {
-    if (busyRef.current) return;
+    if (busyRef.current || isRestarting) return;
+    setIsRestarting(true);
     busyRef.current = true;
     setBusy(true);
     try {
@@ -410,11 +456,13 @@ export default function App() {
       await refreshHealth();
       busyRef.current = false;
       setBusy(false);
+      setIsRestarting(false);
     }
   }
 
   async function onNewConversation() {
-    if (busyRef.current) return;
+    if (busyRef.current || isResetting) return;
+    setIsResetting(true);
     busyRef.current = true;
     setBusy(true);
     try {
@@ -425,6 +473,7 @@ export default function App() {
       await refreshHealth();
       busyRef.current = false;
       setBusy(false);
+      setIsResetting(false);
     }
   }
 
@@ -452,22 +501,64 @@ export default function App() {
         <div className="runtime-actions">
           <button
             type="button"
-            className={`wake-toggle ${wake?.enabled ? "wake-toggle-on" : ""}`}
-            disabled={!wake?.available || wakeBusy}
-            title={wakeHint}
+            className={`wake-toggle ${wake?.enabled ? "wake-toggle-on" : ""} ${!wake?.available ? "wake-toggle-unready" : ""}`}
+            disabled={wakeBusy}
+            title={wake?.available ? wakeHint : `${wakeHint} - Bấm để mở bảng Tài nguyên`}
             onClick={() => void onWakeToggle()}
           >
-            Wake {wake?.enabled ? "ON" : "OFF"}
+            {wakeBusy ? "Wake..." : wake?.available ? (wake.enabled ? "Wake ON" : "Wake OFF") : "Wake (setup)"}
           </button>
-          <ReadinessPanel onWakeChanged={refreshWake} />
-          <button type="button" className="secondary" disabled={busy} onClick={() => void refreshHealth()}>
-            Kiểm tra
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setReadinessOpen(true)}
+          >
+            Readiness
           </button>
-          <button type="button" className="secondary" disabled={busy} onClick={() => void onRestart()}>
-            Restart
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setResourcesOpen(true)}
+          >
+            Tài nguyên
           </button>
-          <button type="button" className="secondary" disabled={busy} onClick={() => void onNewConversation()}>
-            Phiên mới
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setPermissionsOpen(true)}
+          >
+            Quyền hạn
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setAiSettingsOpen(true)}
+          >
+            Cài đặt AI
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy || isCheckingHealth}
+            onClick={() => void refreshHealth()}
+          >
+            {isCheckingHealth ? "Đang kiểm tra..." : "Kiểm tra"}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy || isRestarting}
+            onClick={() => void onRestart()}
+          >
+            {isRestarting ? "Đang restart..." : "Restart"}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy || isResetting}
+            onClick={() => void onNewConversation()}
+          >
+            {isResetting ? "Đang tạo..." : "Phiên mới"}
           </button>
         </div>
       </section>
@@ -520,13 +611,13 @@ export default function App() {
         <div className="composer-actions">
           <button
             type="button"
-            className="voice-button"
-            title={voiceHint}
+            className={`voice-button ${!voiceReady ? "voice-button-unready" : ""}`}
+            title={voiceReady ? "Bắt đầu thu âm giọng nói" : `${voiceHint} - Bấm để mở cài đặt`}
             aria-label="Bắt đầu voice turn"
-            disabled={busy || !voiceReady}
-            onClick={() => void performVoiceTurn("manual")}
+            disabled={busy}
+            onClick={handleVoiceTurnClick}
           >
-            Mic
+            {voiceReady ? "Mic" : "Cài Mic"}
           </button>
           <button type="submit" className="primary" disabled={busy || !input.trim()}>
             Gửi
@@ -601,6 +692,39 @@ export default function App() {
           </section>
         </div>
       )}
+
+      <ReadinessPanel
+        open={readinessOpen}
+        onClose={() => setReadinessOpen(false)}
+        showTrigger={false}
+        onWakeChanged={refreshWake}
+      />
+
+      <ResourceSetupPanel
+        open={resourcesOpen}
+        onClose={() => setResourcesOpen(false)}
+        showTrigger={false}
+        onResourcesChanged={async () => {
+          await refreshVoice();
+          await refreshWake();
+          await refreshHealth();
+        }}
+      />
+
+      <PermissionPolicyPanel
+        open={permissionsOpen}
+        onClose={() => setPermissionsOpen(false)}
+        showTrigger={false}
+      />
+
+      <AntigravitySettingsPanel
+        open={aiSettingsOpen}
+        onClose={() => setAiSettingsOpen(false)}
+        showTrigger={false}
+        onSettingsSaved={async () => {
+          await refreshHealth();
+        }}
+      />
     </main>
   );
 }

@@ -59,7 +59,7 @@ pub fn resample_mono(
 
     let output_len = ((samples.len() as u128 * u128::from(target_rate))
         .div_ceil(u128::from(source_rate)))
-        .min(usize::MAX as u128) as usize;
+    .min(usize::MAX as u128) as usize;
     let mut output = Vec::with_capacity(output_len);
     let ratio = source_rate as f64 / target_rate as f64;
 

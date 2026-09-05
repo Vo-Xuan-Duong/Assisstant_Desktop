@@ -1,18 +1,18 @@
 use serde::Serialize;
 use windows::{
-    core::BOOL,
     Win32::{
         Foundation::{HWND, LPARAM},
         UI::WindowsAndMessaging::{
-            EnumWindows, GetForegroundWindow, IsIconic, IsWindowVisible, SetForegroundWindow,
-            ShowWindow, SW_RESTORE,
+            EnumWindows, GetForegroundWindow, IsIconic, IsWindowVisible, SW_RESTORE,
+            SetForegroundWindow, ShowWindow,
         },
     },
+    core::BOOL,
 };
 
 use crate::{
-    window::{self, ActiveWindow, WindowHandle},
     ToolError, ToolResult,
+    window::{self, ActiveWindow, WindowHandle},
 };
 
 const DEFAULT_MAX_WINDOWS: usize = 80;
@@ -67,10 +67,7 @@ pub fn list_top_level(max_windows: Option<usize>) -> ToolResult<Vec<TopLevelWind
 /// Windows can legitimately refuse `SetForegroundWindow` because foreground
 /// activation is governed by OS focus-stealing rules. That refusal is surfaced
 /// to the caller rather than falling back to synthetic keyboard/mouse input.
-pub fn activate(
-    handle: WindowHandle,
-    expected_process_id: u32,
-) -> ToolResult<ActiveWindow> {
+pub fn activate(handle: WindowHandle, expected_process_id: u32) -> ToolResult<ActiveWindow> {
     if expected_process_id == 0 {
         return Err(ToolError::InvalidArgument(
             "expected_process_id must not be zero".into(),

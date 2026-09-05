@@ -295,7 +295,11 @@ mod tests {
             "input_type_text",
         ] {
             let tool = tool_definition(name).expect("tool must exist");
-            assert_eq!(tool.risk, ToolRisk::Sensitive, "{name} must require confirmation");
+            assert_eq!(
+                tool.risk,
+                ToolRisk::Sensitive,
+                "{name} must require confirmation"
+            );
         }
     }
 }

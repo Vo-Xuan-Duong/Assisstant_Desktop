@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 use thiserror::Error;
 use windows::{
-    core::{BSTR, Error as WindowsError},
     Win32::{
         Media::Speech::{ISpeechVoice, SpVoice, SpeechVoiceSpeakFlags},
         System::Com::{
-            CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
+            CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
         },
     },
+    core::{BSTR, Error as WindowsError},
 };
 
 #[derive(Debug, Error)]

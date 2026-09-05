@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 use windows::Win32::{
     Foundation::{LPARAM, WPARAM},
     UI::WindowsAndMessaging::{
-        PostMessageW, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
+        PostMessageW, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, ShowWindow, WM_CLOSE,
     },
 };
 
 use crate::{
-    window::{self, ActiveWindow, WindowHandle},
     ToolError, ToolResult,
+    window::{self, ActiveWindow, WindowHandle},
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -49,10 +49,7 @@ pub fn set_visual_state(
 /// This is intentionally not a force-terminate primitive. The target application
 /// remains free to show an unsaved-changes dialog, cancel closing, or perform its
 /// normal shutdown handling.
-pub fn request_close(
-    handle: WindowHandle,
-    expected_process_id: u32,
-) -> ToolResult<ActiveWindow> {
+pub fn request_close(handle: WindowHandle, expected_process_id: u32) -> ToolResult<ActiveWindow> {
     let before = validate_target(handle, expected_process_id)?;
     unsafe {
         PostMessageW(Some(handle.hwnd()), WM_CLOSE, WPARAM(0), LPARAM(0))?;

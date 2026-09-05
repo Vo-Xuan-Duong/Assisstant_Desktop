@@ -9,14 +9,14 @@ use std::{
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::{broadcast, Mutex},
+    sync::{Mutex, broadcast},
     task::JoinHandle,
 };
 use tracing::{debug, warn};
 
 use crate::{
-    protocol::{ResultPayload, StreamEvent, UserInputEvent},
     BridgeError,
+    protocol::{ResultPayload, StreamEvent, UserInputEvent},
 };
 
 const MAX_DIAGNOSTIC_LINES: usize = 32;
@@ -52,14 +52,43 @@ impl fmt::Debug for AntigravityConfig {
 impl Default for AntigravityConfig {
     fn default() -> Self {
         Self {
-            binary: "agy".into(),
-            model: None,
-            agent: None,
-            effort: None,
+            binary: default_binary(),
+            model: std::env::var("ASSISTANT_ANTIGRAVITY_MODEL")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
+            agent: std::env::var("ASSISTANT_ANTIGRAVITY_AGENT")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
+            effort: std::env::var("ASSISTANT_ANTIGRAVITY_EFFORT")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
             working_directory: None,
             environment: BTreeMap::new(),
         }
     }
+}
+
+fn default_binary() -> String {
+    if let Ok(binary) = std::env::var("ASSISTANT_ANTIGRAVITY_BIN") {
+        if !binary.trim().is_empty() {
+            return binary;
+        }
+    }
+    #[cfg(windows)]
+    if let Some(local_data) = std::env::var_os("LOCALAPPDATA") {
+        let installed = PathBuf::from(local_data).join("agy/bin/agy.exe");
+        if installed.is_file() {
+            return installed.to_string_lossy().into_owned();
+        }
+    }
+    #[cfg(windows)]
+    if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+        let installed = PathBuf::from(user_profile).join(".gemini/bin/agy.exe");
+        if installed.is_file() {
+            return installed.to_string_lossy().into_owned();
+        }
+    }
+    "agy".into()
 }
 
 impl AntigravityConfig {
@@ -227,10 +256,9 @@ impl AntigravitySession {
                     if result.status != "SUCCESS" {
                         return Err(BridgeError::Agent {
                             status: result.status.clone(),
-                            message: result
-                                .error
-                                .clone()
-                                .unwrap_or_else(|| "Antigravity returned an unsuccessful result".into()),
+                            message: result.error.clone().unwrap_or_else(|| {
+                                "Antigravity returned an unsuccessful result".into()
+                            }),
                         });
                     }
 
@@ -265,5 +293,16 @@ impl AntigravitySession {
             code,
             diagnostics: self.diagnostics().await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_binary_returns_usable_path_or_command() {
+        let binary = default_binary();
+        assert!(!binary.trim().is_empty());
     }
 }

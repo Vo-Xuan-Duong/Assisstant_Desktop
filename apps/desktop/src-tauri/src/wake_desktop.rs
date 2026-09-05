@@ -1,24 +1,20 @@
-use std::{
-    fs,
-    path::PathBuf,
-    sync::Mutex,
-    time::Duration,
-};
+use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "wake-word")]
 use uuid::Uuid;
 
 use super::resource_registry::ResourceRegistry;
 
 #[cfg(feature = "wake-word")]
-use tokio::sync::{broadcast, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, broadcast};
 #[cfg(feature = "wake-word")]
 use voice_runtime::{
     sherpa_wake::SherpaWakeWordDetector,
     wake::SherpaWakeConfig,
     wake_runtime::{
-        spawn_wake_runtime, WakeRuntimeConfig, WakeRuntimeEvent, WakeRuntimeHandle,
-        WakeRuntimeState,
+        WakeRuntimeConfig, WakeRuntimeEvent, WakeRuntimeHandle, WakeRuntimeState,
+        spawn_wake_runtime,
     },
 };
 
@@ -44,12 +40,13 @@ impl WakeSettingsStore {
         if !self.path.is_file() {
             return Ok(WakePreferences::default());
         }
-        let bytes = fs::read(&self.path)
-            .map_err(|error| format!("cannot read wake settings: {error}"))?;
+        let bytes =
+            fs::read(&self.path).map_err(|error| format!("cannot read wake settings: {error}"))?;
         serde_json::from_slice(&bytes)
             .map_err(|error| format!("cannot parse wake settings: {error}"))
     }
 
+    #[cfg(feature = "wake-word")]
     fn save(&self, preferences: &WakePreferences) -> Result<(), String> {
         let parent = self
             .path
@@ -115,6 +112,7 @@ pub struct WakeService {
     reload_gate: AsyncMutex<()>,
     model_dir: Option<PathBuf>,
     keywords_path: Option<PathBuf>,
+    #[cfg(feature = "wake-word")]
     settings: WakeSettingsStore,
     preferences: Mutex<WakePreferences>,
     detail: Mutex<Option<String>>,
@@ -135,13 +133,11 @@ impl WakeService {
 
         #[cfg(not(feature = "wake-word"))]
         {
-            let detail = settings_error.unwrap_or_else(|| {
-                "Bản build hiện tại chưa bật feature `wake-word`.".into()
-            });
+            let detail = settings_error
+                .unwrap_or_else(|| "Bản build hiện tại chưa bật feature `wake-word`.".into());
             Self {
                 model_dir: Some(resources.wake_model_dir().to_path_buf()),
                 keywords_path: Some(resources.wake_keywords_path().to_path_buf()),
-                settings,
                 preferences: Mutex::new(preferences),
                 detail: Mutex::new(Some(detail)),
             }
@@ -214,7 +210,10 @@ impl WakeService {
                         WakeRuntimeState::Disabled | WakeRuntimeState::Stopped
                     ),
                     state: state_name(state).into(),
-                    model_dir: self.model_dir.as_ref().map(|path| path.display().to_string()),
+                    model_dir: self
+                        .model_dir
+                        .as_ref()
+                        .map(|path| path.display().to_string()),
                     keywords_path: self
                         .keywords_path
                         .as_ref()
@@ -229,7 +228,10 @@ impl WakeService {
                 available: false,
                 enabled: false,
                 state: "unavailable".into(),
-                model_dir: self.model_dir.as_ref().map(|path| path.display().to_string()),
+                model_dir: self
+                    .model_dir
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
                 keywords_path: self
                     .keywords_path
                     .as_ref()
@@ -245,7 +247,10 @@ impl WakeService {
             available: false,
             enabled: false,
             state: "not_compiled".into(),
-            model_dir: self.model_dir.as_ref().map(|path| path.display().to_string()),
+            model_dir: self
+                .model_dir
+                .as_ref()
+                .map(|path| path.display().to_string()),
             keywords_path: self
                 .keywords_path
                 .as_ref()
@@ -258,7 +263,9 @@ impl WakeService {
     pub async fn set_enabled(&self, enabled: bool) -> Result<(), String> {
         #[cfg(feature = "wake-word")]
         {
-            let handle = self.current_handle().ok_or_else(|| self.unavailable_message())?;
+            let handle = self
+                .current_handle()
+                .ok_or_else(|| self.unavailable_message())?;
             handle.set_enabled(enabled).await?;
             let persist = self.update_preferences(|preferences| preferences.enabled = enabled);
             self.record_persistence_result(persist);
@@ -356,16 +363,11 @@ impl WakeService {
 
     #[cfg(feature = "wake-word")]
     fn current_handle(&self) -> Option<WakeRuntimeHandle> {
-        self.handle
-            .lock()
-            .ok()
-            .and_then(|handle| handle.clone())
+        self.handle.lock().ok().and_then(|handle| handle.clone())
     }
 
-    fn update_preferences(
-        &self,
-        update: impl FnOnce(&mut WakePreferences),
-    ) -> Result<(), String> {
+    #[cfg(feature = "wake-word")]
+    fn update_preferences(&self, update: impl FnOnce(&mut WakePreferences)) -> Result<(), String> {
         let next = {
             let mut preferences = self
                 .preferences
@@ -377,11 +379,12 @@ impl WakeService {
         self.settings.save(&next)
     }
 
+    #[cfg(feature = "wake-word")]
     fn record_persistence_result(&self, result: Result<(), String>) {
         if let Ok(mut detail) = self.detail.lock() {
-            *detail = result
-                .err()
-                .map(|error| format!("Wake runtime updated, but settings persistence failed: {error}"));
+            *detail = result.err().map(|error| {
+                format!("Wake runtime updated, but settings persistence failed: {error}")
+            });
         }
     }
 
@@ -425,6 +428,7 @@ fn state_name(state: WakeRuntimeState) -> &'static str {
     }
 }
 
+#[cfg(feature = "wake-word")]
 fn env_bool(name: &str) -> Option<bool> {
     let value = std::env::var(name).ok()?;
     match value.trim().to_ascii_lowercase().as_str() {

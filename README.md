@@ -58,7 +58,7 @@ Whisper     Wake
 ## Locked stack
 
 - Rust — core, Antigravity bridge, MCP, permissions, Windows runtime and voice/resource services.
-- Rust `1.85.0` — pinned release baseline.
+- Rust `1.98.1` — pinned release baseline.
 - TypeScript + React — desktop UI.
 - Tauri 2 — Windows shell, tray, global shortcut, edge overlay and bundling.
 - Tokio — async runtime.
@@ -334,6 +334,36 @@ Never commit PFX files, private keys, passwords, client secrets, signing tokens 
 - explicit launch, tray click, `Alt + Space` or wake detection can surface the existing process.
 
 ## Local Windows preflight
+
+### Local development checks
+
+Install the locked frontend dependencies with `pnpm install --frozen-lockfile`.
+Run `pnpm check` for Rust formatting and the TypeScript/React production build.
+Run `pnpm test` for the entire Rust workspace, including Whisper and wake-word
+features; this also prepares the icon and MCP sidecar. The initial native build
+requires Visual Studio C++ Build Tools and CMake and can take several minutes.
+Whisper requires libclang to generate bindings for the Windows ABI.
+`pnpm desktop:native:prepare` downloads the pinned LLVM libclang 18.1.1 wheel,
+verifies its SHA-256 and extracts its DLL and license under `target/native/libclang`.
+`pnpm test` and desktop build/dev commands run this preparation automatically.
+An explicit `LIBCLANG_PATH` environment variable overrides the workspace default.
+The native runner locates MSVC/Windows SDK headers automatically. Rust, Whisper
+and SentencePiece use a consistent static C runtime. Sherpa is linked through
+DLLs to isolate its bundled protobuf from SentencePiece; sidecar staging copies
+the Sherpa/ONNX DLLs and the Windows bundle includes them.
+
+After installing model resources, run `pnpm test:models` to exercise SentencePiece,
+Sherpa and Whisper with synthetic audio without opening a microphone. This optional
+test uses the app-local-data models directory by default; set
+`ASSISTANT_TEST_MODELS_DIR` to use another directory.
+After staging the debug sidecar, `node scripts/smoke-mcp.mjs` verifies the MCP
+handshake, tool catalogue and a read-only native audio query.
+
+Start the desktop with `pnpm desktop:dev`. Antigravity CLI must be installed
+and signed in for AI requests; local read-only commands remain available without
+AI. Whisper and wake model resources are separate from the native build.
+The release verifier deliberately rejects uncommitted changes; use the development
+commands while reviewing fixes, and commit reviewed changes before packaging a release.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1

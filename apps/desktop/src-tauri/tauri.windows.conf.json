@@ -7,6 +7,9 @@
     ]
   },
   "bundle": {
+    "resources": {
+      "binaries/*.dll": "."
+    },
     "targets": [
       "nsis"
     ],

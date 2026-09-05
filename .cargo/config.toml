@@ -1,0 +1,10 @@
+[env]
+# Materialized by pnpm desktop:native:prepare; an explicit environment value wins.
+LIBCLANG_PATH = { value = "target/native/libclang", relative = true }
+# Whisper's CMake project otherwise selects /MD even with Rust's static CRT.
+CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"
+CMAKE_POLICY_DEFAULT_CMP0091 = "NEW"
+
+[target.x86_64-pc-windows-msvc]
+# Match sherpa-onnx's prebuilt MT runtime across Rust, Whisper and SentencePiece.
+rustflags = ["-C", "target-feature=+crt-static"]

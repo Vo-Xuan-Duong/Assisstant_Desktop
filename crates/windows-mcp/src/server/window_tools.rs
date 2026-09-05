@@ -8,7 +8,7 @@ use windows_tools::{
     window_discovery,
 };
 
-use super::{to_json, WindowsMcpServer};
+use super::{WindowsMcpServer, to_json};
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -104,11 +104,12 @@ impl WindowsMcpServer {
         description = "List Windows monitor geometry, including full bounds, work area, and primary-monitor state. This is read-only. Prefer work_area for window placement so taskbars and desktop reserved regions are not covered."
     )]
     async fn display_list(&self) -> Result<String, String> {
-        self.permissions.authorize("display_list", json!({})).await?;
-        let monitors = run_blocking(|| {
-            monitor_layout::list_monitors().map_err(|error| error.to_string())
-        })
-        .await?;
+        self.permissions
+            .authorize("display_list", json!({}))
+            .await?;
+        let monitors =
+            run_blocking(|| monitor_layout::list_monitors().map_err(|error| error.to_string()))
+                .await?;
         to_json(&monitors)
     }
 
@@ -193,15 +194,9 @@ impl WindowsMcpServer {
             .await?;
 
         let handle = explicit_window_handle(window_handle)?;
-        let before = monitor_layout::set_window_bounds(
-            handle,
-            expected_process_id,
-            x,
-            y,
-            width,
-            height,
-        )
-        .map_err(|error| error.to_string())?;
+        let before =
+            monitor_layout::set_window_bounds(handle, expected_process_id, x, y, width, height)
+                .map_err(|error| error.to_string())?;
         to_json(&WindowActionResult {
             ok: true,
             action: "set_bounds",

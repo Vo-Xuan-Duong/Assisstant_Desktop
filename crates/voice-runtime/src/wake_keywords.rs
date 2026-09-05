@@ -111,8 +111,8 @@ fn normalize_phrase(value: &str) -> Result<String, WakeKeywordError> {
 }
 
 fn read_vocabulary(path: &Path) -> Result<HashSet<String>, WakeKeywordError> {
-    let text = fs::read_to_string(path)
-        .map_err(|error| WakeKeywordError::Tokens(error.to_string()))?;
+    let text =
+        fs::read_to_string(path).map_err(|error| WakeKeywordError::Tokens(error.to_string()))?;
     let mut vocabulary = HashSet::new();
 
     for (line_number, line) in text.lines().enumerate() {

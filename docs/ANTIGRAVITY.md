@@ -15,6 +15,13 @@ The expected setup is:
 3. Start Assisstant Desktop.
 4. The bridge launches headless Antigravity using the CLI's cached credentials.
 
+On Windows, the bridge also finds the official installation at
+`%LOCALAPPDATA%\agy\bin\agy.exe` or `%USERPROFILE%\.gemini\bin\agy.exe`,
+including when the desktop inherited an old PATH. Set
+`ASSISTANT_ANTIGRAVITY_BIN` to use a different executable. The local
+preflight uses the same selection order. Installation instructions are at
+[Google Antigravity CLI installation](https://antigravity.google/docs/cli/install/).
+
 If the CLI reports authentication errors, they are classified as `BridgeFailureKind::Authentication` and should be surfaced by the UI as an actionable sign-in requirement.
 
 ## Continuous session

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -37,6 +37,11 @@ execFileSync("cargo", cargoArgs, {
   stdio: "inherit",
 });
 
+// Sherpa stays in DLLs to isolate its bundled protobuf from SentencePiece's.
+const voiceArgs = ["build", "-p", "voice-runtime", "--features", "wake-sherpa", "--locked"];
+if (requestedProfile === "release") voiceArgs.push("--release");
+execFileSync("cargo", voiceArgs, { cwd: repoRoot, stdio: "inherit" });
+
 const configuredTargetDir = process.env.CARGO_TARGET_DIR;
 const targetDir = configuredTargetDir
   ? path.resolve(repoRoot, configuredTargetDir)
@@ -53,5 +58,20 @@ const destination = path.join(
   `assistant-mcp-${targetTriple}.exe`,
 );
 copyFileSync(source, destination);
+
+const runtimeDir = path.join(targetDir, requestedProfile);
+const runtimeDlls = readdirSync(runtimeDir).filter((name) =>
+  /^(sherpa-onnx|onnxruntime).*\.dll$/i.test(name),
+);
+if (!runtimeDlls.some((name) => name === "sherpa-onnx-c-api.dll")) {
+  throw new Error("Sherpa runtime DLLs were not produced by the native build.");
+}
+for (const name of runtimeDlls) {
+  copyFileSync(path.join(runtimeDir, name), path.join(binariesDir, name));
+  // Test executables live in deps. Windows searches the executable directory
+  // before System32, which can contain an incompatible onnxruntime.dll.
+  mkdirSync(path.join(runtimeDir, "deps"), { recursive: true });
+  copyFileSync(path.join(runtimeDir, name), path.join(runtimeDir, "deps", name));
+}
 
 console.log(`Staged assistant-mcp sidecar: ${destination}`);

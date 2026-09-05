@@ -1,18 +1,14 @@
 use std::{collections::HashSet, path::Path, sync::Arc};
 
-use reqwest::{redirect::Policy, Client};
+use reqwest::{Client, redirect::Policy};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
-use tokio::{
-    fs,
-    io::AsyncWriteExt,
-    sync::Mutex,
-};
+use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
 use uuid::Uuid;
 
 use super::{
-    resource_manifest::{manifest, ResourceInstallManifest, ResourcePackageKind},
+    resource_manifest::{ResourceInstallManifest, ResourcePackageKind, manifest},
     resource_registry::ResourceRegistry,
 };
 
@@ -61,8 +57,8 @@ impl ResourceInstaller {
         resource_id: &str,
         resources: &ResourceRegistry,
     ) -> Result<ResourceInstallResult, String> {
-        let manifest = manifest(resource_id)
-            .ok_or_else(|| format!("unknown resource id: {resource_id}"))?;
+        let manifest =
+            manifest(resource_id).ok_or_else(|| format!("unknown resource id: {resource_id}"))?;
         if !manifest.installable {
             return Err(format!(
                 "resource `{}` is not enabled for automatic installation: {}",
@@ -82,7 +78,10 @@ impl ResourceInstaller {
         {
             let mut active = self.active.lock().await;
             if !active.insert(manifest.id.to_owned()) {
-                return Err(format!("resource `{}` is already being installed", manifest.id));
+                return Err(format!(
+                    "resource `{}` is already being installed",
+                    manifest.id
+                ));
             }
         }
 
@@ -102,7 +101,11 @@ impl ResourceInstaller {
     ) -> Result<ResourceInstallResult, String> {
         let destination = match manifest.id {
             "whisper" => resources.whisper_model_path(),
-            other => return Err(format!("no single-file destination is registered for `{other}`")),
+            other => {
+                return Err(format!(
+                    "no single-file destination is registered for `{other}`"
+                ));
+            }
         };
 
         if destination.exists() {
@@ -131,7 +134,10 @@ impl ResourceInstaller {
             "starting",
             0,
             manifest.expected_bytes,
-            format!("Downloading verified resource from {}", manifest.source_page),
+            format!(
+                "Downloading verified resource from {}",
+                manifest.source_page
+            ),
         );
 
         let result = self
@@ -274,7 +280,11 @@ impl ResourceInstaller {
             ));
         }
 
-        let actual_sha256 = format!("{:x}", hasher.finalize());
+        let actual_sha256 = hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
             return Err(format!(
                 "resource SHA-256 mismatch: expected {expected_sha256}, received {actual_sha256}"

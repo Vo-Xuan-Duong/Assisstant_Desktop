@@ -1,4 +1,8 @@
-use std::{fs::File, io::BufWriter, path::{Path, PathBuf}};
+use std::{
+    fs::File,
+    io::BufWriter,
+    path::{Path, PathBuf},
+};
 
 use serde::Serialize;
 use tracing::debug;
@@ -270,7 +274,9 @@ impl ContextEngine {
         }
 
         let config = self.config.clone();
-        match tokio::task::spawn_blocking(move || collect_blocking(intent, &config, source_window)).await {
+        match tokio::task::spawn_blocking(move || collect_blocking(intent, &config, source_window))
+            .await
+        {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 let mut snapshot = ContextSnapshot::empty(intent);
@@ -335,7 +341,11 @@ fn collect_blocking(
         }
     }
 
-    debug!(?intent, warnings = snapshot.warnings.len(), "desktop context collected");
+    debug!(
+        ?intent,
+        warnings = snapshot.warnings.len(),
+        "desktop context collected"
+    );
     snapshot
 }
 
@@ -369,7 +379,10 @@ fn capture_screen_artifact(
     })
 }
 
-fn write_png(path: &std::path::Path, frame: &screen::ScreenFrame) -> Result<(), Box<dyn std::error::Error>> {
+fn write_png(
+    path: &std::path::Path,
+    frame: &screen::ScreenFrame,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut rgba = frame.bgra.clone();
     for pixel in rgba.chunks_exact_mut(4) {
         pixel.swap(0, 2);

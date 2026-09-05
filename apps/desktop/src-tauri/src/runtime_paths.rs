@@ -100,7 +100,10 @@ fn resolve_mcp_binary(app: &AppHandle) -> Result<(PathBuf, McpBinarySource), Str
             return Ok((debug, McpBinarySource::DevDebug));
         }
 
-        let release = workspace.join("target").join("release").join(MCP_BINARY_NAME);
+        let release = workspace
+            .join("target")
+            .join("release")
+            .join(MCP_BINARY_NAME);
         if release.is_file() {
             return Ok((release, McpBinarySource::DevRelease));
         }

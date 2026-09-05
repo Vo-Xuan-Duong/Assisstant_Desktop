@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use assistant_common::ToolRisk;
 use permission_broker::{BrokerClient, PermissionRequest, UserDecision};
 use permission_engine::{
-    PermissionDecision, PermissionEngine, PermissionOverrideSnapshot, ENV_PERMISSION_POLICY_PATH,
+    ENV_PERMISSION_POLICY_PATH, PermissionDecision, PermissionEngine, PermissionOverrideSnapshot,
 };
 use serde_json::Value;
 use windows_tools::tool_definition;
@@ -30,9 +30,7 @@ impl Default for McpPermissionGateway {
 impl McpPermissionGateway {
     pub async fn authorize(&self, tool_name: &str, arguments: Value) -> Result<(), String> {
         let definition = tool_definition(tool_name).ok_or_else(|| {
-            format!(
-                "permission_denied: unknown tool `{tool_name}` has no risk catalogue entry"
-            )
+            format!("permission_denied: unknown tool `{tool_name}` has no risk catalogue entry")
         })?;
 
         let mut evaluation = self.engine.evaluate(tool_name, definition.risk);
@@ -65,9 +63,9 @@ impl McpPermissionGateway {
                 let request = PermissionRequest::new(tool_name, definition.risk, arguments);
                 match broker.request(request).await {
                     Ok(UserDecision::AllowOnce) => Ok(()),
-                    Ok(UserDecision::Deny) => Err(format!(
-                        "permission_denied: user denied tool `{tool_name}`"
-                    )),
+                    Ok(UserDecision::Deny) => {
+                        Err(format!("permission_denied: user denied tool `{tool_name}`"))
+                    }
                     Err(error) => Err(format!(
                         "permission_denied: confirmation for `{tool_name}` failed or timed out: {error}"
                     )),

@@ -6,6 +6,8 @@
 node_modules/
 dist/
 .vite/
+*.tsbuildinfo
+/apps/desktop/src-tauri/gen/
 
 # Tauri / Windows
 *.pdb

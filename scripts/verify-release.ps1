@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$Json,
     [switch]$PublicRelease
 )
@@ -95,8 +95,8 @@ $Paths = @{
     icon = Join-Path $TauriDir "icons\icon.ico"
 }
 
-$IsWindows = $env:OS -eq "Windows_NT"
-Add-Result "platform" $(if ($IsWindows) { "ready" } else { "blocking" }) $(if ($IsWindows) { "Windows host detected." } else { "Release packaging must be verified on Windows." })
+$IsWindowsHost = $env:OS -eq "Windows_NT"
+Add-Result "platform" $(if ($IsWindowsHost) { "ready" } else { "blocking" }) $(if ($IsWindowsHost) { "Windows host detected." } else { "Release packaging must be verified on Windows." })
 
 $tauri = Read-JsonFile "tauri_config" $Paths.tauri
 $windows = Read-JsonFile "tauri_windows_config" $Paths.windows
@@ -115,7 +115,7 @@ Require-File "icon_payload" $Paths.iconPayload "Reproducible ICO payload exists.
 
 if (Test-Path $Paths.rustToolchain -PathType Leaf) {
     $toolchain = Get-Content $Paths.rustToolchain -Raw
-    Add-Result "rust_toolchain" $(if ($toolchain -match 'channel\s*=\s*"1\.85\.0"') { "ready" } else { "blocking" }) $(if ($toolchain -match 'channel\s*=\s*"1\.85\.0"') { "Rust release toolchain is pinned to 1.85.0." } else { "rust-toolchain.toml must pin 1.85.0." }) $Paths.rustToolchain
+    Add-Result "rust_toolchain" $(if ($toolchain -match 'channel\s*=\s*"1\.98\.1"') { "ready" } else { "blocking" }) $(if ($toolchain -match 'channel\s*=\s*"1\.98\.1"') { "Rust release toolchain is pinned to 1.98.1." } else { "rust-toolchain.toml must pin 1.98.1." }) $Paths.rustToolchain
 }
 else {
     Add-Result "rust_toolchain" "blocking" "rust-toolchain.toml is missing." $Paths.rustToolchain
@@ -134,7 +134,11 @@ foreach ($lock in @(
 }
 
 if (Test-Path $Paths.icon -PathType Leaf) {
-    $iconHash = (Get-FileHash -Algorithm SHA256 $Paths.icon).Hash.ToLowerInvariant()
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $iconHash = [BitConverter]::ToString($sha256.ComputeHash([IO.File]::ReadAllBytes($Paths.icon))).Replace("-", "").ToLowerInvariant()
+    }
+    finally { $sha256.Dispose() }
     Add-Result "windows_icon" $(if ($iconHash -eq $ExpectedIconSha256) { "ready" } else { "blocking" }) $(if ($iconHash -eq $ExpectedIconSha256) { "Materialized icon matches the tracked payload." } else { "Materialized icon hash is wrong; run `pnpm desktop:assets:prepare`." }) $Paths.icon
 }
 else {
@@ -202,7 +206,7 @@ if ($PublicRelease) {
     }
     Add-Result "timestamp_url" $(if ($timestampValid) { "ready" } else { "blocking" }) $(if ($timestampValid) { "Timestamp URL is configured: $timestampUrl" } else { "Set ASSISTANT_WINDOWS_TIMESTAMP_URL to an absolute HTTP(S) RFC3161 timestamp URL." })
 
-    if ($IsWindows -and $thumbprintValid) {
+    if ($IsWindowsHost -and $thumbprintValid) {
         try {
             $certificate = Get-ChildItem Cert:\CurrentUser\My |
                 Where-Object { ($_.Thumbprint -replace '\s', '') -ieq $thumbprint } |
@@ -224,7 +228,7 @@ if ($PublicRelease) {
             Add-Result "signing_certificate" "blocking" "Could not inspect CurrentUser certificate store: $($_.Exception.Message)"
         }
     }
-    elseif (-not $IsWindows) {
+    elseif (-not $IsWindowsHost) {
         Add-Result "signing_certificate" "blocking" "Certificate-store verification requires Windows."
     }
 

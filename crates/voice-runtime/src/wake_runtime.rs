@@ -3,13 +3,13 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::{
     sync::{broadcast, mpsc, oneshot, watch},
-    time::{sleep, timeout, Instant},
+    time::{Instant, sleep, timeout},
 };
 use tracing::{debug, warn};
 
 use crate::{
-    wake::{WakeDetection, WakeWordDetector},
     AudioChunk, MicrophoneConfig, MicrophoneStream,
+    wake::{WakeDetection, WakeWordDetector},
 };
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -96,7 +96,10 @@ impl WakeRuntimeHandle {
 
         if !enabled {
             self.wait_for_state(|state| {
-                matches!(state, WakeRuntimeState::Disabled | WakeRuntimeState::Stopped)
+                matches!(
+                    state,
+                    WakeRuntimeState::Disabled | WakeRuntimeState::Stopped
+                )
             })
             .await?;
         }
@@ -183,10 +186,9 @@ impl WakeRuntimeHandle {
                 if predicate(current) {
                     return Ok(());
                 }
-                state
-                    .changed()
-                    .await
-                    .map_err(|_| "wake runtime stopped while waiting for state change".to_owned())?;
+                state.changed().await.map_err(|_| {
+                    "wake runtime stopped while waiting for state change".to_owned()
+                })?;
             }
         };
 
@@ -215,13 +217,7 @@ pub fn spawn_wake_runtime(
         events: event_tx.clone(),
     };
 
-    tokio::spawn(run_worker(
-        detector,
-        config,
-        command_rx,
-        state_tx,
-        event_tx,
-    ));
+    tokio::spawn(run_worker(detector, config, command_rx, state_tx, event_tx));
 
     handle
 }

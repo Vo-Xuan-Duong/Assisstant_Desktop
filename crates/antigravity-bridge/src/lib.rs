@@ -6,9 +6,9 @@ use assistant_common::UserRequest;
 use assistant_core::{AgentBackend, CoreError};
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, RwLock, broadcast};
 
-pub use health::{probe_cli, BridgeFailureKind, CliHealth};
+pub use health::{BridgeFailureKind, CliHealth, probe_cli};
 pub use protocol::{ResultPayload, StepUpdate, StreamEvent, Usage};
 pub use session::{AntigravityConfig, AntigravitySession, TurnResult};
 
@@ -69,7 +69,7 @@ impl BridgeError {
 }
 
 pub struct AntigravityClient {
-    config: AntigravityConfig,
+    config: RwLock<AntigravityConfig>,
     session: Mutex<Option<AntigravitySession>>,
     events: broadcast::Sender<StreamEvent>,
 }
@@ -78,14 +78,15 @@ impl AntigravityClient {
     pub fn new(config: AntigravityConfig) -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
-            config,
+            config: RwLock::new(config),
             session: Mutex::new(None),
             events,
         }
     }
 
     pub async fn health(&self) -> CliHealth {
-        probe_cli(&self.config).await
+        let config = self.config.read().await;
+        probe_cli(&config).await
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<StreamEvent> {
@@ -95,8 +96,9 @@ impl AntigravityClient {
     pub async fn start(&self) -> Result<(), BridgeError> {
         let mut session = self.session.lock().await;
         if session.is_none() {
+            let config = self.config.read().await;
             *session = Some(
-                AntigravitySession::spawn_with_events(&self.config, Some(self.events.clone())).await?,
+                AntigravitySession::spawn_with_events(&config, Some(self.events.clone())).await?,
             );
         }
         Ok(())
@@ -106,8 +108,9 @@ impl AntigravityClient {
         let mut session = self.session.lock().await;
 
         if session.is_none() {
+            let config = self.config.read().await;
             *session = Some(
-                AntigravitySession::spawn_with_events(&self.config, Some(self.events.clone())).await?,
+                AntigravitySession::spawn_with_events(&config, Some(self.events.clone())).await?,
             );
         }
 
@@ -128,6 +131,24 @@ impl AntigravityClient {
         }
 
         result
+    }
+
+    pub async fn update_model_config(&self, model: Option<String>, effort: Option<String>) {
+        {
+            let mut config = self.config.write().await;
+            config.model = model;
+            config.effort = effort;
+        }
+        self.reset().await;
+    }
+
+    pub async fn get_model_config(&self) -> (Option<String>, Option<String>) {
+        let config = self.config.read().await;
+        (config.model.clone(), config.effort.clone())
+    }
+
+    pub async fn get_config_snapshot(&self) -> AntigravityConfig {
+        self.config.read().await.clone()
     }
 
     pub async fn conversation_id(&self) -> Option<String> {
