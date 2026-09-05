@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   getAntigravitySettings,
   launchAntigravityAuth,
@@ -123,7 +123,7 @@ export default function AntigravitySettingsPanel({
       });
 
       applyViewToState(updated);
-      setSuccess("Đã lưu cấu hình AI thành công! Session hội thoại đã được reset với model mới.");
+      setSuccess("Đã lưu cấu hình AI. Session Antigravity hiện tại đã được reset để áp dụng model mới.");
       await onSettingsSaved?.();
     } catch (cause) {
       setError(`Không thể lưu cấu hình: ${String(cause)}`);
@@ -138,7 +138,7 @@ export default function AntigravitySettingsPanel({
     try {
       await launchAntigravityAuth();
       setSuccess(
-        "Đã mở cửa sổ đăng nhập Antigravity CLI. Hãy thực hiện xác thực trong cửa sổ dòng lệnh vừa mở, sau đó bấm 'Làm mới' để cập nhật trạng thái.",
+        "Đã mở Antigravity CLI. Hoàn tất đăng nhập trong cửa sổ CLI/trình duyệt nếu được yêu cầu, sau đó bấm 'Làm mới'.",
       );
     } catch (cause) {
       setError(`Không thể mở cửa sổ đăng nhập: ${String(cause)}`);
@@ -193,16 +193,15 @@ export default function AntigravitySettingsPanel({
               </button>
             </header>
 
-            {/* Tài khoản & Kết nối */}
             <div className="antigravity-settings-section">
               <div className="antigravity-section-title">
-                <span>Tài khoản & Kết nối CLI</span>
+                <span>CLI & tài khoản</span>
                 <span
                   className={`antigravity-status-badge ${
                     view?.is_authenticated ? "connected" : "disconnected"
                   }`}
                 >
-                  {view?.is_authenticated ? "● Đã kết nối" : "○ Chưa kết nối"}
+                  {view?.is_authenticated ? "● CLI khả dụng" : "○ CLI không khả dụng"}
                 </span>
               </div>
 
@@ -215,7 +214,7 @@ export default function AntigravitySettingsPanel({
 
               <div className="antigravity-auth-action">
                 <small style={{ color: "#8e9bb0" }}>
-                  Xác thực tài khoản Google với Antigravity CLI qua trình duyệt web.
+                  Trạng thái trên chỉ xác minh CLI có thể chạy. Antigravity xác minh tài khoản thực tế khi bắt đầu một phiên AI; nếu chưa đăng nhập, CLI sẽ yêu cầu xác thực.
                 </small>
                 <button
                   type="button"
@@ -228,7 +227,6 @@ export default function AntigravitySettingsPanel({
               </div>
             </div>
 
-            {/* Model & Reasoning */}
             <div className="antigravity-settings-section">
               <div className="antigravity-section-title">
                 <span>Model AI & Khả năng suy luận (Reasoning)</span>
@@ -251,12 +249,17 @@ export default function AntigravitySettingsPanel({
                       {m.label} ({m.id})
                     </option>
                   ))}
+                  {view && view.available_models.length === 0 && (
+                    <option value="__models_unavailable__" disabled>
+                      Không lấy được danh sách từ `agy models`
+                    </option>
+                  )}
                   <option value={CUSTOM_MODEL_VALUE}>
                     Tùy chỉnh (Nhập tên model khác)...
                   </option>
                 </select>
                 <small>
-                  Chọn mô hình AI chính dùng cho hội thoại và thực thi công cụ.
+                  Danh sách model chỉ lấy từ `agy models`; ứng dụng không chèn danh sách fallback có thể đã lỗi thời.
                 </small>
               </div>
 
@@ -267,13 +270,13 @@ export default function AntigravitySettingsPanel({
                     id="custom-model-input"
                     type="text"
                     className="antigravity-input"
-                    placeholder="ví dụ: gemini-3.7-flash hoặc claude-sonnet-4-6"
+                    placeholder="ví dụ: gemini-3.8-flash-high"
                     value={customModel}
                     disabled={loading || saving}
                     onChange={(e) => setCustomModel(e.target.value)}
                   />
                   <small>
-                    Nhập chính xác ID model được CLI Antigravity hỗ trợ.
+                    Nhập chính xác ID model được CLI Antigravity hiện tại hỗ trợ. Headless mode sẽ fail nếu model không hợp lệ.
                   </small>
                 </div>
               )}
@@ -293,7 +296,7 @@ export default function AntigravitySettingsPanel({
                   <option value="high">Cao (High - suy nghĩ kỹ)</option>
                 </select>
                 <small>
-                  Kiểm soát lượng token dùng cho bước suy nghĩ (thinking tokens) của model.
+                  Kiểm soát mức reasoning effort mà Antigravity CLI truyền cho model.
                 </small>
               </div>
             </div>
