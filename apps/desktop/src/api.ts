@@ -74,6 +74,14 @@ export function resetConversation(): Promise<void> {
   return invoke<void>("assistant_reset");
 }
 
+export function hideQuickAssistant(): Promise<void> {
+  return invoke<void>("assistant_quick_hide");
+}
+
+export function openFullAssistant(): Promise<void> {
+  return invoke<void>("assistant_quick_expand");
+}
+
 export function onAssistantEvent(
   handler: (event: AssistantEvent) => void,
 ): Promise<UnlistenFn> {
