@@ -89,6 +89,13 @@ impl ResourceRegistry {
         &self.stt_model_dir
     }
 
+    /// Temporary compatibility accessor for the current desktop voice state.
+    /// The returned path is the Zipformer encoder; the recognizer facade resolves
+    /// its parent directory and loads the complete Zipformer bundle.
+    pub fn whisper_model_path(&self) -> PathBuf {
+        self.stt_model_dir.join(ZIPFORMER_ENCODER)
+    }
+
     pub fn wake_model_dir(&self) -> &Path {
         &self.wake_model_dir
     }
@@ -149,7 +156,7 @@ impl ResourceRegistry {
                     "Vietnamese Zipformer chưa đầy đủ: {present}/{} runtime model file đã có. Xóa thư mục model dở dang rồi cài lại để đảm bảo bundle nhất quán.",
                     files.len()
                 ),
-                ResourceState::NotCompiled => "Build chưa bật feature `voice-stt`; model có thể được chuẩn bị trước nhưng runtime chưa sử dụng.".into(),
+                ResourceState::NotCompiled => "Build chưa bật voice STT runtime; model có thể được chuẩn bị trước nhưng chưa được sử dụng.".into(),
             },
             files,
             preparation_files: vec![file_status(
@@ -157,6 +164,12 @@ impl ResourceRegistry {
                 &self.stt_model_dir.join(ZIPFORMER_BPE),
             )],
         }
+    }
+
+    /// Temporary compatibility method. Existing readiness/UI code calls the old
+    /// name but receives the primary Zipformer STT status.
+    pub fn whisper_status(&self) -> RuntimeResourceStatus {
+        self.stt_status()
     }
 
     pub fn wake_status(&self) -> RuntimeResourceStatus {
