@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { onAssistantEvent, onVoiceLevel } from "./api";
 import type { AssistantState } from "./types";
 import "./edge.css";
+import "./edge-gemini.css";
 
 type Edge = "top" | "right" | "bottom" | "left";
 type EdgeMode = AssistantState | "activated" | "ready";
