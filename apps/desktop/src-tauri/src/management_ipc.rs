@@ -6,20 +6,24 @@ use std::{
 
 use antigravity_bridge::CliHealth;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tauri::{AppHandle, Manager};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     task::JoinHandle,
-    time::timeout,
+    time::{interval, timeout},
 };
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::{
-    DesktopState, hide_quick_window, quick_panel,
-    resource_registry::RuntimeResourceSnapshot, runtime_paths::RuntimePaths, show_quick_window,
+use crate::{
+    DesktopState,
+    antigravity_settings::AntigravitySettings,
+    hide_quick_window, quick_panel,
+    resource_registry::RuntimeResourceSnapshot,
+    runtime_paths::RuntimePaths,
+    show_quick_window,
     wake_desktop::WakeService,
 };
 
@@ -28,6 +32,7 @@ pub const MANAGEMENT_ENDPOINT_FILE: &str = "management.json";
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 const READ_TIMEOUT: Duration = Duration::from_secs(3);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(3);
+const SETTINGS_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagementEndpoint {
@@ -80,7 +85,8 @@ impl ManagementResponse {
 pub struct ManagementIpc {
     endpoint_path: PathBuf,
     secret: String,
-    task: JoinHandle<()>,
+    server_task: JoinHandle<()>,
+    settings_task: JoinHandle<()>,
 }
 
 impl ManagementIpc {
@@ -105,24 +111,36 @@ impl ManagementIpc {
         };
         write_endpoint_atomic(&endpoint_path, &endpoint)?;
 
-        let task_app = app.clone();
-        let task_secret = secret.clone();
-        let task = tauri::async_runtime::spawn(async move {
-            run_server(task_app, listener, task_secret).await;
+        let server_app = app.clone();
+        let server_secret = secret.clone();
+        let server_task = tauri::async_runtime::spawn(async move {
+            run_server(server_app, listener, server_secret).await;
+        });
+
+        let settings_app = app.clone();
+        let ai_settings = paths
+            .app_local_data
+            .join("settings")
+            .join("antigravity.json");
+        let wake_settings = paths.app_local_data.join("settings").join("wake.json");
+        let settings_task = tauri::async_runtime::spawn(async move {
+            watch_shared_settings(settings_app, ai_settings, wake_settings).await;
         });
 
         debug!(port = endpoint.port, "management IPC listening on loopback");
         Ok(Self {
             endpoint_path,
             secret,
-            task,
+            server_task,
+            settings_task,
         })
     }
 }
 
 impl Drop for ManagementIpc {
     fn drop(&mut self) {
-        self.task.abort();
+        self.server_task.abort();
+        self.settings_task.abort();
         remove_endpoint_if_owned(&self.endpoint_path, &self.secret);
     }
 }
@@ -141,9 +159,8 @@ async fn run_server(app: AppHandle, listener: TcpListener, secret: String) {
             continue;
         }
 
-        // Requests are deliberately handled one at a time. Management commands
-        // are low-volume, and serial execution avoids an accidental flood of
-        // concurrent runtime mutations from local scripts.
+        // Management traffic is low-volume and mutations are intentionally
+        // serialized. A local client cannot fan out concurrent state changes.
         if let Err(error) = handle_connection(&app, stream, &secret).await {
             warn!(%error, "management IPC request failed");
         }
@@ -307,25 +324,19 @@ async fn ai_get(app: &AppHandle) -> Result<Value, String> {
     }))
 }
 
-#[derive(Debug, Deserialize)]
-struct AiSetPayload {
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    effort: Option<String>,
-}
-
 async fn ai_set(app: &AppHandle, payload: Value) -> Result<Value, String> {
-    let payload: AiSetPayload = serde_json::from_value(payload)
-        .map_err(|error| format!("invalid ai.set payload: {error}"))?;
-    let model = normalize_optional(payload.model);
-    let effort = normalize_optional(payload.effort);
-    let settings = super::antigravity_settings::AntigravitySettings {
+    let object = payload
+        .as_object()
+        .ok_or_else(|| "ai.set payload must be a JSON object".to_owned())?;
+    let state = app.state::<DesktopState>();
+    let current = state.antigravity_store.load().unwrap_or_default();
+    let model = patch_optional_string(object, "model", current.model)?;
+    let effort = patch_optional_string(object, "effort", current.effort)?;
+    let settings = AntigravitySettings {
         model: model.clone(),
         effort: effort.clone(),
     };
 
-    let state = app.state::<DesktopState>();
     state.antigravity_store.save(&settings)?;
     state.client.update_model_config(model, effort).await;
     ai_get(app).await
@@ -350,15 +361,105 @@ fn serialize_resources(snapshot: RuntimeResourceSnapshot) -> Result<Value, Strin
         .map_err(|error| format!("cannot serialize resource snapshot: {error}"))
 }
 
-fn normalize_optional(value: Option<String>) -> Option<String> {
-    value.and_then(|value| {
-        let value = value.trim().to_owned();
-        if value.is_empty() || value.eq_ignore_ascii_case("default") {
-            None
-        } else {
-            Some(value)
+fn patch_optional_string(
+    object: &Map<String, Value>,
+    key: &str,
+    current: Option<String>,
+) -> Result<Option<String>, String> {
+    let Some(value) = object.get(key) else {
+        return Ok(current);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let value = value
+        .as_str()
+        .ok_or_else(|| format!("ai.set `{key}` must be a string or null"))?;
+    let value = value.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("default") {
+        Ok(None)
+    } else {
+        Ok(Some(value.to_owned()))
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct WakePreferencesFile {
+    #[serde(default)]
+    enabled: bool,
+}
+
+async fn watch_shared_settings(app: AppHandle, ai_path: PathBuf, wake_path: PathBuf) {
+    let mut last_ai = read_optional_file(&ai_path);
+    let mut last_wake = read_optional_file(&wake_path);
+    let mut ticker = interval(SETTINGS_POLL_INTERVAL);
+    // interval() ticks immediately; consume that tick because setup already
+    // loaded the same persisted values into the runtime.
+    ticker.tick().await;
+
+    loop {
+        ticker.tick().await;
+
+        let ai = read_optional_file(&ai_path);
+        if ai != last_ai {
+            last_ai = ai.clone();
+            if let Err(error) = apply_ai_file(&app, ai.as_deref()).await {
+                warn!(%error, path = %ai_path.display(), "failed to hot-reload CLI AI settings");
+            }
         }
-    })
+
+        let wake = read_optional_file(&wake_path);
+        if wake != last_wake {
+            last_wake = wake.clone();
+            if let Err(error) = apply_wake_file(&app, wake.as_deref()).await {
+                warn!(%error, path = %wake_path.display(), "failed to hot-reload CLI wake settings");
+            }
+        }
+    }
+}
+
+fn read_optional_file(path: &Path) -> Option<Vec<u8>> {
+    match fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            warn!(%error, path = %path.display(), "cannot inspect managed settings file");
+            None
+        }
+    }
+}
+
+async fn apply_ai_file(app: &AppHandle, bytes: Option<&[u8]>) -> Result<(), String> {
+    let settings = match bytes {
+        Some(bytes) => serde_json::from_slice::<AntigravitySettings>(bytes)
+            .map_err(|error| format!("cannot parse Antigravity settings: {error}"))?,
+        None => AntigravitySettings::default(),
+    };
+    let state = app.state::<DesktopState>();
+    let runtime = state.client.get_config_snapshot().await;
+    if runtime.model != settings.model || runtime.effort != settings.effort {
+        state
+            .client
+            .update_model_config(settings.model, settings.effort)
+            .await;
+        debug!("hot-reloaded Antigravity settings written by terminal management");
+    }
+    Ok(())
+}
+
+async fn apply_wake_file(app: &AppHandle, bytes: Option<&[u8]>) -> Result<(), String> {
+    let preferences = match bytes {
+        Some(bytes) => serde_json::from_slice::<WakePreferencesFile>(bytes)
+            .map_err(|error| format!("cannot parse wake settings: {error}"))?,
+        None => WakePreferencesFile::default(),
+    };
+    let wake = app.state::<WakeService>();
+    let status = wake.status();
+    if status.enabled != preferences.enabled {
+        wake.set_enabled(preferences.enabled).await?;
+        debug!(enabled = preferences.enabled, "hot-reloaded wake enabled state from terminal management");
+    }
+    Ok(())
 }
 
 fn secret_matches(expected: &str, supplied: &str) -> bool {
