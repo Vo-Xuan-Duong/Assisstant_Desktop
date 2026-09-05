@@ -8,10 +8,8 @@ repository.workspace = true
 
 [features]
 default = []
-# Compatibility feature name: the desktop currently enables `whisper`, but the
-# runtime now uses Vietnamese Zipformer through sherpa-onnx as the primary ASR
-# engine and retains whisper-rs only as a local fallback.
-whisper = ["dep:whisper-rs", "dep:sherpa-onnx"]
+zipformer = ["dep:sherpa-onnx"]
+whisper = ["dep:whisper-rs"]
 wake-sherpa = ["dep:sherpa-onnx", "dep:sentencepiece"]
 
 [dependencies]
