@@ -1,4 +1,4 @@
-# CLI / TUI management migration
+# CLI / terminal management migration
 
 ## Goal
 
@@ -11,10 +11,10 @@ The existing full React management UI remains temporarily available while capabi
 
 ## Phase 1 implemented
 
-A new workspace binary lives at:
+The terminal manager is a second binary target of the existing `assisstant-desktop` Rust package:
 
 ```text
-apps/cli
+apps/desktop/src-tauri/src/bin/assistant.rs
 ```
 
 Build output:
@@ -23,26 +23,30 @@ Build output:
 assistant.exe
 ```
 
-Running it without a subcommand opens a read-only TUI dashboard:
+Keeping it in the existing package means the first CLI migration adds no new crates and does not require changing the locked dependency graph.
+
+Running it without a subcommand opens an interactive terminal dashboard:
 
 ```powershell
 assistant
 ```
 
-The TUI currently exposes four views:
+The dashboard exposes four pages:
 
 - Dashboard
 - Resources
 - AI / Antigravity
 - Permissions
 
-Keyboard controls:
+Controls:
 
 ```text
-1-4 / Left / Right    switch view
-r                     refresh
-q / Esc               quit
+1-4    switch page
+r      refresh
+q      quit
 ```
+
+This first terminal surface deliberately uses the standard console instead of introducing a TUI framework dependency. Once local build/lock validation is part of the CLI migration, the same management model can be rendered with Ratatui without changing the command or IPC contracts.
 
 ## Command mode
 
@@ -172,17 +176,17 @@ runtime.shutdown
 runtime.restart
 ```
 
-Once IPC exists, CLI/TUI edits can apply immediately without restarting the assistant.
+Once IPC exists, CLI edits can apply immediately without restarting the assistant.
 
 ## Phase 3: retire the full management UI
 
-After the CLI/TUI has feature parity:
+After the CLI/terminal surface has feature parity:
 
 - remove normal navigation to the full React management surface;
 - keep Tauri only as the background Windows shell / overlay host;
 - retain graphical permission confirmation for Sensitive actions;
 - retain the quick Gemini-style overlay for text/voice interaction;
-- move resource installation, diagnostics, settings, permissions, and logs completely to CLI/TUI.
+- move resource installation, diagnostics, settings, permissions, and logs completely to terminal management.
 
 Target architecture:
 
@@ -200,21 +204,21 @@ Assisstant Desktop background runtime
               |
               v
          assistant.exe
-         CLI + Ratatui TUI
+         CLI / terminal UI
 ```
 
-## Verification policy
+## Local verification
 
 This migration was prepared source-first. Do not interpret source presence as target-Windows runtime verification. Local validation should cover:
 
 ```powershell
-cargo build -p assistant-cli
-assistant status
-assistant doctor
-assistant
-assistant ai show
-assistant resources list
-assistant permissions list
+cargo build -p assisstant-desktop --bin assistant
+.\target\debug\assistant.exe status
+.\target\debug\assistant.exe doctor
+.\target\debug\assistant.exe
+.\target\debug\assistant.exe ai show
+.\target\debug\assistant.exe resources list
+.\target\debug\assistant.exe permissions list
 ```
 
 No workflow dispatch is required for normal local validation.
