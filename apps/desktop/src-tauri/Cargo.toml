@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+default-run = "assisstant-desktop"
 
 [features]
 default = []
@@ -23,6 +24,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [[bin]]
 name = "assisstant-desktop"
 path = "src/main.rs"
+
+[[bin]]
+name = "assistant"
+path = "src/bin/assistant.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.6", features = [] }

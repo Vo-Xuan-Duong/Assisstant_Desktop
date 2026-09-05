@@ -31,7 +31,8 @@
     "active": true,
     "targets": "all",
     "externalBin": [
-      "binaries/assistant-mcp"
+      "binaries/assistant-mcp",
+      "binaries/assistant"
     ],
     "shortDescription": "Windows AI assistant powered by Antigravity and MCP"
   }
