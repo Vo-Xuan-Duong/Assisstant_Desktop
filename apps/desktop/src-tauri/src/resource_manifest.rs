@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+/// Compatibility id retained so existing frontend/resource APIs keep working.
+/// The resource behind it is now Vietnamese Zipformer STT, not Whisper.
 pub const WHISPER_RESOURCE_ID: &str = "whisper";
 pub const WAKE_RESOURCE_ID: &str = "wake_word";
 pub const WAKE_KEYWORDS_RESOURCE_ID: &str = "wake_keywords";
@@ -46,15 +48,18 @@ pub fn manifest(resource_id: &str) -> Option<ResourceInstallManifest> {
 pub fn whisper_manifest() -> ResourceInstallManifest {
     ResourceInstallManifest {
         id: WHISPER_RESOURCE_ID,
-        version: "ggerganov-whisper.cpp@5359861c739e955e79d9a303bcbc70fb988958b1/base",
-        package_kind: ResourcePackageKind::SingleFile,
-        installable: true,
-        source_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin?download=true",
-        source_page: "https://huggingface.co/ggerganov/whisper.cpp/tree/5359861c739e955e79d9a303bcbc70fb988958b1",
-        license: "MIT",
-        expected_bytes: 147_951_465,
-        sha256: Some("60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
-        note: "Pinned multilingual Whisper base model. Automatic install is allowed only because source revision, byte size and SHA-256 are pinned.",
+        version: "sherpa-onnx-zipformer-vi-30M-int8-2026-02-09",
+        package_kind: ResourcePackageKind::TarBz2,
+        // The existing installer intentionally supports verified single files
+        // only. Keep automatic installation disabled until the multi-file
+        // transaction can verify and atomically promote the complete bundle.
+        installable: false,
+        source_url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-vi-30M-int8-2026-02-09.tar.bz2",
+        source_page: "https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/zipformer-transducer-models.html",
+        license: "SEE_UPSTREAM_MODEL_CARD",
+        expected_bytes: 0,
+        sha256: None,
+        note: "Primary Vietnamese STT model. Install the upstream archive into the displayed model directory so encoder.int8.onnx, decoder.onnx, joiner.int8.onnx and tokens.txt are present. Whisper remains optional fallback only.",
     }
 }
 
