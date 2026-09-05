@@ -24,7 +24,7 @@ const stateLabel: Record<ResourceState, string> = {
 const wakeModelFileNames = new Set(["encoder", "decoder", "joiner", "tokens"]);
 
 function formatBytes(value: number): string {
-  if (value <= 0) return "Local generated";
+  if (value <= 0) return "See upstream package";
   const units = ["B", "KB", "MB", "GB"];
   let amount = value;
   let index = 0;
@@ -209,7 +209,7 @@ export default function ResourceSetupPanel({
             </div>
 
           <p className="resource-note">
-            Whisper có verified installer. Wake model archive vẫn cài thủ công; wake phrase có thể được tạo hoặc cập nhật local và hot-reload ngay.
+            STT chính hiện dùng Vietnamese Zipformer INT8. Gói STT nhiều file và wake model đang cài thủ công; installer tự động sẽ chỉ được bật khi toàn bộ bundle có thể được xác minh và cài atomically. Whisper chỉ còn là fallback tương thích.
           </p>
 
           {notice && <p className="resource-notice">{notice}</p>}
