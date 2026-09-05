@@ -8,6 +8,12 @@ use voice_runtime::wake::SherpaWakeConfig;
 
 use super::runtime_paths::RuntimePaths;
 
+const ZIPFORMER_DIR_NAME: &str = "sherpa-onnx-zipformer-vi-30M-int8-2026-02-09";
+const ZIPFORMER_ENCODER: &str = "encoder.int8.onnx";
+const ZIPFORMER_DECODER: &str = "decoder.onnx";
+const ZIPFORMER_JOINER: &str = "joiner.int8.onnx";
+const ZIPFORMER_TOKENS: &str = "tokens.txt";
+
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceState {
@@ -44,7 +50,10 @@ pub struct RuntimeResourceSnapshot {
 #[derive(Debug, Clone)]
 pub struct ResourceRegistry {
     app_local_data: PathBuf,
+    /// Compatibility anchor consumed by the existing desktop voice state. It is
+    /// now the Zipformer encoder rather than a Whisper model file.
     whisper_model: PathBuf,
+    zipformer_model_dir: PathBuf,
     wake_model_dir: PathBuf,
     wake_keywords: PathBuf,
     wake_bpe_model: PathBuf,
@@ -53,10 +62,11 @@ pub struct ResourceRegistry {
 impl ResourceRegistry {
     pub fn resolve(paths: &RuntimePaths) -> Result<Self, String> {
         let models_root = paths.app_local_data.join("models");
-        let whisper_model = absolute_override(
-            "ASSISTANT_WHISPER_MODEL",
-            models_root.join("whisper").join("ggml-base.bin"),
+        let zipformer_model_dir = absolute_override(
+            "ASSISTANT_ZIPFORMER_MODEL_DIR",
+            models_root.join("stt").join(ZIPFORMER_DIR_NAME),
         )?;
+        let whisper_model = zipformer_model_dir.join(ZIPFORMER_ENCODER);
         let wake_model_dir = absolute_override(
             "ASSISTANT_WAKE_MODEL_DIR",
             models_root
@@ -72,12 +82,15 @@ impl ResourceRegistry {
         Ok(Self {
             app_local_data: paths.app_local_data.clone(),
             whisper_model,
+            zipformer_model_dir,
             wake_model_dir,
             wake_keywords,
             wake_bpe_model,
         })
     }
 
+    /// Kept under the old method name so the current Tauri voice state does not
+    /// need a broad API migration. The returned path is the Zipformer encoder.
     pub fn whisper_model_path(&self) -> &Path {
         &self.whisper_model
     }
@@ -110,39 +123,44 @@ impl ResourceRegistry {
         }
     }
 
+    /// Compatibility method name. This status now represents the primary local
+    /// STT engine: sherpa-onnx Vietnamese Zipformer INT8. Whisper is an optional
+    /// fallback and is deliberately not required for `Ready`.
     pub fn whisper_status(&self) -> RuntimeResourceStatus {
-        let exists = self.whisper_model.is_file();
+        let files = vec![
+            file_status("encoder", &self.zipformer_model_dir.join(ZIPFORMER_ENCODER)),
+            file_status("decoder", &self.zipformer_model_dir.join(ZIPFORMER_DECODER)),
+            file_status("joiner", &self.zipformer_model_dir.join(ZIPFORMER_JOINER)),
+            file_status("tokens", &self.zipformer_model_dir.join(ZIPFORMER_TOKENS)),
+        ];
+        let present = files.iter().filter(|file| file.exists).count();
         let compiled = cfg!(feature = "voice-whisper");
         let state = if !compiled {
             ResourceState::NotCompiled
-        } else if exists {
+        } else if present == files.len() {
             ResourceState::Ready
-        } else {
+        } else if present == 0 {
             ResourceState::Missing
+        } else {
+            ResourceState::Incomplete
         };
 
         RuntimeResourceStatus {
             id: "whisper",
-            label: "Local Whisper STT",
+            label: "Vietnamese Zipformer STT",
             state,
             compiled,
-            root_path: self
-                .whisper_model
-                .parent()
-                .unwrap_or_else(|| Path::new(""))
-                .display()
-                .to_string(),
+            root_path: self.zipformer_model_dir.display().to_string(),
             detail: match state {
-                ResourceState::Ready => "Whisper feature và model file đều sẵn sàng.".into(),
-                ResourceState::Missing => "Build có Whisper nhưng model file chưa được cài.".into(),
-                ResourceState::NotCompiled => "Build chưa bật feature `voice-whisper`; model có thể được chuẩn bị trước nhưng chưa được runtime sử dụng.".into(),
-                ResourceState::Incomplete => unreachable!("Whisper is a single-file resource"),
+                ResourceState::Ready => "sherpa-onnx Vietnamese Zipformer INT8 và toàn bộ model file đã sẵn sàng.".into(),
+                ResourceState::Missing => "Chưa có Vietnamese Zipformer model. Voice runtime sẽ không bắt đầu cho tới khi model chính được cài.".into(),
+                ResourceState::Incomplete => format!(
+                    "Vietnamese Zipformer chưa đầy đủ: {present}/{} model file đã có.",
+                    files.len()
+                ),
+                ResourceState::NotCompiled => "Build chưa bật voice runtime; Zipformer có thể được chuẩn bị trước nhưng chưa được sử dụng.".into(),
             },
-            files: vec![ResourceFileStatus {
-                name: "model",
-                path: self.whisper_model.display().to_string(),
-                exists,
-            }],
+            files,
             preparation_files: Vec::new(),
         }
     }
