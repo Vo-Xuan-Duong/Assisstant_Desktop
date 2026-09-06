@@ -6,7 +6,7 @@ use assistant_common::UserRequest;
 use assistant_core::{AgentBackend, CoreError};
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::sync::{Mutex, RwLock, broadcast};
+use tokio::sync::{Mutex, RwLock, broadcast, watch};
 
 pub use health::{BridgeFailureKind, CliHealth, probe_cli};
 pub use protocol::{ResultPayload, StepUpdate, StreamEvent, Usage};
@@ -26,6 +26,8 @@ pub enum BridgeError {
     MissingStderr,
     #[error("prompt cannot be empty")]
     EmptyPrompt,
+    #[error("Antigravity turn was cancelled")]
+    Cancelled,
     #[error("Antigravity turn timed out after {seconds} seconds")]
     TurnTimeout { seconds: u64 },
     #[error("Antigravity session ended unexpectedly (exit code: {code:?}): {diagnostics:?}")]
@@ -47,7 +49,8 @@ impl BridgeError {
             Self::EmptyPrompt => BridgeFailureKind::InvalidInput,
             Self::Json(_) => BridgeFailureKind::Protocol,
             Self::Spawn(_) | Self::Io(_) => BridgeFailureKind::Transport,
-            Self::TurnTimeout { .. }
+            Self::Cancelled
+            | Self::TurnTimeout { .. }
             | Self::MissingStdin
             | Self::MissingStdout
             | Self::MissingStderr => BridgeFailureKind::Process,
@@ -64,10 +67,13 @@ impl BridgeError {
     }
 
     pub fn invalidates_session(&self) -> bool {
-        matches!(
-            self.kind(),
-            BridgeFailureKind::Transport | BridgeFailureKind::Process | BridgeFailureKind::Protocol
-        )
+        matches!(self, Self::Cancelled)
+            || matches!(
+                self.kind(),
+                BridgeFailureKind::Transport
+                    | BridgeFailureKind::Process
+                    | BridgeFailureKind::Protocol
+            )
     }
 }
 
@@ -75,15 +81,18 @@ pub struct AntigravityClient {
     config: RwLock<AntigravityConfig>,
     session: Mutex<Option<AntigravitySession>>,
     events: broadcast::Sender<StreamEvent>,
+    turn_cancel: watch::Sender<u64>,
 }
 
 impl AntigravityClient {
     pub fn new(config: AntigravityConfig) -> Self {
         let (events, _) = broadcast::channel(256);
+        let (turn_cancel, _) = watch::channel(0u64);
         Self {
             config: RwLock::new(config),
             session: Mutex::new(None),
             events,
+            turn_cancel,
         }
     }
 
@@ -108,6 +117,7 @@ impl AntigravityClient {
     }
 
     pub async fn ask(&self, prompt: &str) -> Result<TurnResult, BridgeError> {
+        let mut cancel = self.turn_cancel.subscribe();
         let mut session = self.session.lock().await;
 
         if session.is_none() {
@@ -120,7 +130,7 @@ impl AntigravityClient {
         let result = session
             .as_mut()
             .expect("session is initialized above")
-            .ask(prompt)
+            .ask(prompt, &mut cancel)
             .await;
 
         if result
@@ -134,6 +144,13 @@ impl AntigravityClient {
         }
 
         result
+    }
+
+    /// Signal the currently active Antigravity turn without taking the session
+    /// mutex. Returns true when at least one active receiver observed the signal.
+    pub fn cancel_active_turn(&self) -> bool {
+        let next = (*self.turn_cancel.borrow()).wrapping_add(1);
+        self.turn_cancel.send(next).is_ok()
     }
 
     pub async fn update_model_config(&self, model: Option<String>, effort: Option<String>) {
@@ -179,9 +196,10 @@ impl AntigravityClient {
 #[async_trait]
 impl AgentBackend for AntigravityClient {
     async fn complete(&self, request: &UserRequest) -> Result<String, CoreError> {
-        self.ask(&request.text)
-            .await
-            .map(|turn| turn.response)
-            .map_err(|error| CoreError::Backend(error.to_string()))
+        match self.ask(&request.text).await {
+            Ok(turn) => Ok(turn.response),
+            Err(BridgeError::Cancelled) => Err(CoreError::Cancelled),
+            Err(error) => Err(CoreError::Backend(error.to_string())),
+        }
     }
 }

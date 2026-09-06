@@ -6,7 +6,7 @@ use tauri::{
     AppHandle, Emitter, Listener, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
     WebviewWindowBuilder,
 };
-use tracing::warn;
+use tracing::{debug, warn};
 use windows_tools::window::{self, MonitorBounds, WindowHandle};
 
 pub const QUICK_WINDOW_LABEL: &str = "quick";
@@ -18,6 +18,7 @@ const QUICK_MAX_HEIGHT: u32 = 380;
 const QUICK_SIDE_MARGIN: u32 = 28;
 const QUICK_BOTTOM_MARGIN: u32 = 18;
 const QUICK_RESIZE_EVENT: &str = "quick:resize_request";
+const QUICK_CANCEL_EVENT: &str = "quick:cancel_request";
 
 #[derive(Debug, Clone, Serialize)]
 struct QuickShownEvent {
@@ -74,6 +75,19 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             Err(error) => {
                 warn!(%error, "ignored malformed quick assistant resize request");
             }
+        }
+    });
+
+    // Agent-turn cancellation is deliberately out-of-band from the session
+    // mutex. The active Antigravity session observes the signal and terminates
+    // its own child process, allowing the request future to unwind to Idle.
+    let cancel_app = app.clone();
+    app.listen(QUICK_CANCEL_EVENT, move |_| {
+        let state = cancel_app.state::<crate::DesktopState>();
+        if state.client.cancel_active_turn() {
+            debug!("requested cancellation of active Antigravity turn");
+        } else {
+            debug!("ignored Quick cancel request because no Antigravity turn was active");
         }
     });
 
