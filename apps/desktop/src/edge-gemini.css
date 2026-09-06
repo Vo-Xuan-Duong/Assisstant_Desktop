@@ -1,75 +1,465 @@
 /*
- * Refinement layer for the desktop perimeter halo.
- * The base edge.css owns geometry and state-specific safety colors; this file
- * makes the default/assistant states closer to Gemini's smooth Android glow.
+ * Aurora Pulse refinement layer.
+ *
+ * edge.css keeps the stable four-window geometry and state contract. This file
+ * replaces the dense rainbow-strip look with a thinner blue/violet/pink energy
+ * perimeter: soft ambient bloom, two offset orbit traces, a travelling pulse,
+ * and restrained corner flares. All surfaces remain click-through.
  */
 
+.edge-surface {
+  --aurora-blue: #37c8ff;
+  --aurora-electric: #557cff;
+  --aurora-violet: #8b63ff;
+  --aurora-magenta: #d969ff;
+  --aurora-pink: #ff72c7;
+  --aurora-white: #eefcff;
+  --aurora-flow-duration: 5.8s;
+  --aurora-pulse-duration: 3.8s;
+  --aurora-orbit-opacity: .34;
+  --aurora-bloom-opacity: .38;
+}
+
+.edge-ambient,
+.edge-flow,
+.edge-shimmer,
+.edge-orbit,
+.edge-pulse,
+.edge-core,
+.edge-corner {
+  pointer-events: none;
+}
+
+/* Remove the dotted-matrix feeling from the previous treatment. */
 .edge-stipple {
-  opacity: .1;
+  opacity: .018;
+  background-size: 14px 14px;
+}
+
+/* Base spectrum: cyan -> electric blue -> violet -> pink. */
+.edge-ambient,
+.edge-flow,
+.edge-core {
+  background-image: linear-gradient(
+    90deg,
+    var(--aurora-blue),
+    var(--aurora-electric) 24%,
+    var(--aurora-violet) 48%,
+    var(--aurora-magenta) 72%,
+    var(--aurora-pink),
+    var(--aurora-blue)
+  );
+  background-size: 240% 100%;
+}
+
+.edge-left .edge-ambient,
+.edge-left .edge-flow,
+.edge-left .edge-core,
+.edge-right .edge-ambient,
+.edge-right .edge-flow,
+.edge-right .edge-core {
+  background-image: linear-gradient(
+    180deg,
+    var(--aurora-blue),
+    var(--aurora-electric) 24%,
+    var(--aurora-violet) 48%,
+    var(--aurora-magenta) 72%,
+    var(--aurora-pink),
+    var(--aurora-blue)
+  );
+  background-size: 100% 240%;
+}
+
+.edge-ambient {
+  opacity: .56;
+  filter: blur(19px) saturate(1.12);
+  animation-duration: var(--aurora-flow-duration);
+}
+
+.edge-flow {
+  opacity: .38;
+  filter: blur(4.5px) saturate(1.16);
+  animation-duration: var(--aurora-flow-duration);
+}
+
+.edge-shimmer {
+  opacity: .12;
+  filter: blur(.8px);
+}
+
+/* A thin physical-light core. */
+.edge-core {
+  opacity: .84;
+  animation-duration: var(--aurora-flow-duration);
+}
+
+.edge-top .edge-core {
+  height: 1.5px;
+  box-shadow:
+    0 1px 2px rgba(238, 252, 255, .9),
+    0 3px 8px rgba(55, 200, 255, .62),
+    0 7px 18px rgba(139, 99, 255, .34);
+}
+
+.edge-bottom .edge-core {
+  height: 1.8px;
+  box-shadow:
+    0 -1px 2px rgba(238, 252, 255, .94),
+    0 -3px 9px rgba(55, 200, 255, .68),
+    0 -8px 22px rgba(139, 99, 255, .4);
+}
+
+.edge-left .edge-core {
+  width: 1.5px;
+  box-shadow:
+    1px 0 2px rgba(238, 252, 255, .9),
+    3px 0 8px rgba(55, 200, 255, .62),
+    7px 0 18px rgba(139, 99, 255, .34);
+}
+
+.edge-right .edge-core {
+  width: 1.5px;
+  box-shadow:
+    -1px 0 2px rgba(238, 252, 255, .9),
+    -3px 0 8px rgba(55, 200, 255, .62),
+    -7px 0 18px rgba(139, 99, 255, .34);
+}
+
+/* Two very thin traces create the flowing 'energy cable' appearance. */
+.edge-orbit {
+  position: absolute;
+  opacity: var(--aurora-orbit-opacity);
+  mix-blend-mode: screen;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 7%,
+    rgba(55, 200, 255, .1) 12%,
+    rgba(55, 200, 255, .95) 24%,
+    rgba(139, 99, 255, .82) 43%,
+    rgba(255, 114, 199, .9) 61%,
+    rgba(85, 124, 255, .78) 76%,
+    transparent 91%,
+    transparent 100%
+  );
+  background-size: 210% 100%;
+  animation: aurora-orbit-horizontal var(--aurora-flow-duration) linear infinite;
+}
+
+.edge-orbit-a {
+  filter: blur(.25px);
+}
+
+.edge-orbit-b {
+  opacity: calc(var(--aurora-orbit-opacity) * .58);
+  filter: blur(1.15px);
+  animation-direction: reverse;
+  animation-duration: calc(var(--aurora-flow-duration) * 1.35);
+}
+
+.edge-top .edge-orbit,
+.edge-bottom .edge-orbit {
+  left: -12%;
+  width: 124%;
+  height: 1px;
+}
+
+.edge-top .edge-orbit-a { top: 4px; }
+.edge-top .edge-orbit-b { top: 10px; }
+.edge-bottom .edge-orbit-a { bottom: 5px; }
+.edge-bottom .edge-orbit-b { bottom: 13px; }
+
+.edge-left .edge-orbit,
+.edge-right .edge-orbit {
+  top: -12%;
+  height: 124%;
+  width: 1px;
+  background-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    transparent 7%,
+    rgba(55, 200, 255, .1) 12%,
+    rgba(55, 200, 255, .95) 24%,
+    rgba(139, 99, 255, .82) 43%,
+    rgba(255, 114, 199, .9) 61%,
+    rgba(85, 124, 255, .78) 76%,
+    transparent 91%,
+    transparent 100%
+  );
+  background-size: 100% 210%;
+  animation-name: aurora-orbit-vertical;
+}
+
+.edge-left .edge-orbit-a { left: 4px; }
+.edge-left .edge-orbit-b { left: 10px; }
+.edge-right .edge-orbit-a { right: 4px; }
+.edge-right .edge-orbit-b { right: 10px; }
+
+/* A short bright packet travels around each edge. */
+.edge-pulse {
+  position: absolute;
+  opacity: .52;
+  mix-blend-mode: screen;
+  filter: blur(.45px) drop-shadow(0 0 5px rgba(94, 170, 255, .72));
+}
+
+.edge-top .edge-pulse,
+.edge-bottom .edge-pulse {
+  left: -28%;
+  width: 27%;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(55, 200, 255, .35) 20%,
+    var(--aurora-white) 50%,
+    rgba(217, 105, 255, .92) 68%,
+    transparent
+  );
+  animation: aurora-pulse-horizontal var(--aurora-pulse-duration) cubic-bezier(.4, 0, .2, 1) infinite;
+}
+
+.edge-top .edge-pulse { top: 0; }
+.edge-bottom .edge-pulse { bottom: 0; }
+
+.edge-left .edge-pulse,
+.edge-right .edge-pulse {
+  top: -28%;
+  width: 2px;
+  height: 27%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(55, 200, 255, .35) 20%,
+    var(--aurora-white) 50%,
+    rgba(217, 105, 255, .92) 68%,
+    transparent
+  );
+  animation: aurora-pulse-vertical var(--aurora-pulse-duration) cubic-bezier(.4, 0, .2, 1) infinite;
+}
+
+.edge-left .edge-pulse { left: 0; }
+.edge-right .edge-pulse { right: 0; }
+
+/* Four restrained corner flares are rendered by top/bottom windows only. */
+.edge-corner {
+  position: absolute;
+  width: 82px;
+  height: 82px;
+  opacity: var(--aurora-bloom-opacity);
+  border-radius: 999px;
+  mix-blend-mode: screen;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(238, 252, 255, .95) 0 2%, rgba(55, 200, 255, .82) 7%, rgba(139, 99, 255, .46) 24%, rgba(255, 114, 199, .2) 43%, transparent 70%);
+  filter: blur(2.5px);
+  animation: aurora-corner-breathe 2.8s ease-in-out infinite alternate;
+}
+
+.edge-left .edge-corner,
+.edge-right .edge-corner {
+  display: none;
+}
+
+.edge-top .edge-corner { top: -34px; }
+.edge-bottom .edge-corner { bottom: -34px; }
+.edge-corner-start { left: -28px; }
+.edge-corner-end { right: -28px; animation-delay: -1.2s; }
+
+/* ---------------------------------------------------------
+   Assistant states
+   --------------------------------------------------------- */
+
+.edge-mode-idle {
+  --edge-opacity: 0;
 }
 
 .edge-mode-ready {
-  --edge-opacity: .46;
-  --edge-scale: .46;
-  --flow-duration: 4.6s;
+  --edge-opacity: .42;
+  --edge-scale: .42;
+  --aurora-flow-duration: 7.2s;
+  --aurora-pulse-duration: 5.6s;
+  --aurora-orbit-opacity: .2;
+  --aurora-bloom-opacity: .18;
 }
 
-.edge-mode-ready .edge-ambient {
-  opacity: .58;
-  filter: blur(19px);
-}
-
-.edge-mode-ready .edge-flow {
-  opacity: .48;
-  filter: blur(5px);
-}
-
-.edge-mode-ready .edge-shimmer {
-  opacity: .22;
-}
-
-.edge-mode-ready .edge-core {
-  opacity: .68;
-}
-
-.edge-bottom.edge-mode-ready {
-  --edge-opacity: .58;
-  --edge-scale: .56;
-}
+.edge-mode-ready .edge-ambient { opacity: .42; }
+.edge-mode-ready .edge-flow { opacity: .24; }
+.edge-mode-ready .edge-core { opacity: .52; }
+.edge-mode-ready .edge-pulse { opacity: .22; }
+.edge-mode-ready .edge-shimmer { opacity: .05; }
 
 .edge-mode-activated {
   --edge-opacity: 1;
-  --edge-scale: .92;
-  --flow-duration: 1.18s;
+  --edge-scale: .94;
+  --aurora-flow-duration: 1.65s;
+  --aurora-pulse-duration: 1.05s;
+  --aurora-orbit-opacity: .8;
+  --aurora-bloom-opacity: .95;
+  animation: aurora-activation 900ms cubic-bezier(.16, 1, .3, 1) both;
 }
 
 .edge-mode-activated .edge-ambient {
   opacity: .92;
-  filter: blur(22px) saturate(1.14);
+  filter: blur(23px) saturate(1.25);
+}
+.edge-mode-activated .edge-flow { opacity: .76; }
+.edge-mode-activated .edge-pulse { opacity: 1; }
+.edge-mode-activated .edge-core { opacity: 1; }
+
+.edge-mode-listening {
+  --edge-opacity: calc(.56 + var(--voice-level) * .42);
+  --edge-scale: calc(.52 + var(--voice-level) * .36);
+  --aurora-flow-duration: calc(4.2s - var(--voice-level) * 1.6s);
+  --aurora-pulse-duration: calc(3.1s - var(--voice-level) * 1.35s);
+  --aurora-orbit-opacity: calc(.28 + var(--voice-level) * .48);
+  --aurora-bloom-opacity: calc(.28 + var(--voice-level) * .54);
 }
 
-.edge-mode-activated .edge-flow {
-  opacity: .94;
+.edge-mode-listening .edge-ambient {
+  opacity: calc(.58 + var(--voice-level) * .32);
+  filter: blur(calc(18px + var(--voice-level) * 10px)) saturate(1.2);
 }
-
-.edge-mode-processing,
-.edge-mode-executing {
-  --edge-opacity: .84;
+.edge-mode-listening .edge-pulse {
+  opacity: calc(.5 + var(--voice-level) * .48);
 }
-
-.edge-mode-processing .edge-stipple,
-.edge-mode-executing .edge-stipple,
-.edge-mode-speaking .edge-stipple,
-.edge-mode-ready .edge-stipple {
-  opacity: .055;
-}
-
 .edge-mode-listening .edge-core {
   opacity: calc(.72 + var(--voice-level) * .28);
 }
 
-.edge-mode-listening .edge-flow {
-  opacity: calc(.58 + var(--voice-level) * .34);
+.edge-mode-processing,
+.edge-mode-executing {
+  --edge-opacity: .86;
+  --edge-scale: .68;
+  --aurora-flow-duration: 2.15s;
+  --aurora-pulse-duration: 1.38s;
+  --aurora-orbit-opacity: .58;
+  --aurora-bloom-opacity: .42;
+}
+
+.edge-mode-executing {
+  --edge-opacity: .94;
+  --aurora-flow-duration: 1.5s;
+  --aurora-pulse-duration: .92s;
+}
+
+.edge-mode-processing .edge-pulse,
+.edge-mode-executing .edge-pulse { opacity: .82; }
+
+.edge-mode-speaking {
+  --edge-opacity: .82;
+  --edge-scale: .64;
+  --aurora-flow-duration: 4.4s;
+  --aurora-pulse-duration: 3.3s;
+  --aurora-orbit-opacity: .42;
+  --aurora-bloom-opacity: .38;
+  animation: aurora-speaking-breathe 1.6s ease-in-out infinite alternate;
+}
+
+/* Permission confirmation remains visually distinct. */
+.edge-mode-confirming {
+  --edge-opacity: .9;
+  --aurora-flow-duration: 3.1s;
+  --aurora-pulse-duration: 2.1s;
+  --aurora-orbit-opacity: .48;
+  --aurora-bloom-opacity: .5;
+}
+
+.edge-mode-confirming .edge-ambient,
+.edge-mode-confirming .edge-flow,
+.edge-mode-confirming .edge-core,
+.edge-mode-confirming .edge-orbit {
+  background-image: linear-gradient(90deg, #ffb020, #ffd166 35%, #ff8a3d 68%, #ffb020);
+}
+.edge-left.edge-mode-confirming .edge-ambient,
+.edge-left.edge-mode-confirming .edge-flow,
+.edge-left.edge-mode-confirming .edge-core,
+.edge-left.edge-mode-confirming .edge-orbit,
+.edge-right.edge-mode-confirming .edge-ambient,
+.edge-right.edge-mode-confirming .edge-flow,
+.edge-right.edge-mode-confirming .edge-core,
+.edge-right.edge-mode-confirming .edge-orbit {
+  background-image: linear-gradient(180deg, #ffb020, #ffd166 35%, #ff8a3d 68%, #ffb020);
+}
+.edge-mode-confirming .edge-pulse {
+  background-image: linear-gradient(90deg, transparent, #ffbd4a, #fff2b2 50%, #ff8a3d, transparent);
+}
+.edge-left.edge-mode-confirming .edge-pulse,
+.edge-right.edge-mode-confirming .edge-pulse {
+  background-image: linear-gradient(180deg, transparent, #ffbd4a, #fff2b2 50%, #ff8a3d, transparent);
+}
+
+.edge-mode-error {
+  --edge-opacity: .96;
+  --aurora-flow-duration: 1.65s;
+  --aurora-pulse-duration: .86s;
+  --aurora-orbit-opacity: .7;
+  --aurora-bloom-opacity: .72;
+  animation: aurora-error-pulse .7s ease-in-out infinite alternate;
+}
+
+.edge-mode-error .edge-ambient,
+.edge-mode-error .edge-flow,
+.edge-mode-error .edge-core,
+.edge-mode-error .edge-orbit {
+  background-image: linear-gradient(90deg, #ff416c, #ff5a74 38%, #ff7a9e 68%, #ff416c);
+}
+.edge-left.edge-mode-error .edge-ambient,
+.edge-left.edge-mode-error .edge-flow,
+.edge-left.edge-mode-error .edge-core,
+.edge-left.edge-mode-error .edge-orbit,
+.edge-right.edge-mode-error .edge-ambient,
+.edge-right.edge-mode-error .edge-flow,
+.edge-right.edge-mode-error .edge-core,
+.edge-right.edge-mode-error .edge-orbit {
+  background-image: linear-gradient(180deg, #ff416c, #ff5a74 38%, #ff7a9e 68%, #ff416c);
+}
+.edge-mode-error .edge-pulse {
+  background-image: linear-gradient(90deg, transparent, #ff4f74, #fff0f4 50%, #ff4f74, transparent);
+}
+.edge-left.edge-mode-error .edge-pulse,
+.edge-right.edge-mode-error .edge-pulse {
+  background-image: linear-gradient(180deg, transparent, #ff4f74, #fff0f4 50%, #ff4f74, transparent);
+}
+
+@keyframes aurora-orbit-horizontal {
+  from { background-position: 0% 50%; }
+  to { background-position: 210% 50%; }
+}
+
+@keyframes aurora-orbit-vertical {
+  from { background-position: 50% 0%; }
+  to { background-position: 50% 210%; }
+}
+
+@keyframes aurora-pulse-horizontal {
+  from { transform: translateX(0); }
+  to { transform: translateX(575%); }
+}
+
+@keyframes aurora-pulse-vertical {
+  from { transform: translateY(0); }
+  to { transform: translateY(575%); }
+}
+
+@keyframes aurora-corner-breathe {
+  from { transform: scale(.84); opacity: calc(var(--aurora-bloom-opacity) * .58); }
+  to { transform: scale(1.08); opacity: var(--aurora-bloom-opacity); }
+}
+
+@keyframes aurora-activation {
+  0% { opacity: 0; filter: brightness(1.8) saturate(1.3); }
+  30% { opacity: 1; filter: brightness(1.42) saturate(1.24); }
+  100% { opacity: var(--edge-opacity); filter: brightness(1) saturate(1); }
+}
+
+@keyframes aurora-speaking-breathe {
+  from { filter: brightness(.9) saturate(.96); }
+  to { filter: brightness(1.16) saturate(1.14); }
+}
+
+@keyframes aurora-error-pulse {
+  from { filter: brightness(.88); }
+  to { filter: brightness(1.3); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -78,7 +468,14 @@
   .edge-stipple,
   .edge-flow,
   .edge-shimmer,
-  .edge-core {
+  .edge-orbit,
+  .edge-pulse,
+  .edge-core,
+  .edge-corner {
     animation: none !important;
+  }
+
+  .edge-pulse {
+    opacity: .18;
   }
 }
