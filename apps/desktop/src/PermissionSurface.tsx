@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { hideQuickAssistant } from "./api";
 import { onPermissionRequest, submitPermissionDecision } from "./permissionApi";
 import type { PermissionRequest } from "./types";
 import "./permission-surface.css";
@@ -90,7 +91,13 @@ export default function PermissionSurface() {
   useEffect(() => {
     if (active || queue.length > 0 || !hasReceivedRequestRef.current) return;
     const timer = window.setTimeout(() => {
-      void getCurrentWindow().hide();
+      void (async () => {
+        try {
+          await hideQuickAssistant();
+        } finally {
+          await getCurrentWindow().hide();
+        }
+      })();
     }, 120);
     return () => window.clearTimeout(timer);
   }, [active, queue.length]);
