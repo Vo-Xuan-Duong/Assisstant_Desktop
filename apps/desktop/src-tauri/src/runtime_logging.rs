@@ -24,7 +24,8 @@ pub fn init() {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
     };
 
-    match RotatingLogWriter::open(resolve_log_path()) {
+    let persistent = resolve_log_path().and_then(RotatingLogWriter::open);
+    match persistent {
         Ok(file_writer) => {
             let path = file_writer.path().to_path_buf();
             let make_writer = file_writer.clone();
@@ -45,6 +46,7 @@ pub fn init() {
         Err(error) => {
             let _ = tracing_subscriber::fmt()
                 .with_env_filter(filter())
+                .with_ansi(false)
                 .with_writer(io::stderr)
                 .try_init();
             tracing::warn!(%error, "persistent runtime log is unavailable; using stderr only");
@@ -95,8 +97,7 @@ struct RotatingLogWriter {
 }
 
 impl RotatingLogWriter {
-    fn open(path: io::Result<PathBuf>) -> io::Result<Self> {
-        let path = path?;
+    fn open(path: PathBuf) -> io::Result<Self> {
         let parent = path.parent().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "runtime log path has no parent")
         })?;
@@ -190,18 +191,7 @@ impl RotatingLogState {
 
         if self.path.exists() {
             if let Err(error) = fs::copy(&self.path, &self.backup) {
-                self.file = Some(
-                    OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&self.path)?,
-                );
-                self.bytes = self
-                    .file
-                    .as_ref()
-                    .and_then(|file| file.metadata().ok())
-                    .map(|metadata| metadata.len())
-                    .unwrap_or(self.bytes);
+                self.reopen_append()?;
                 return Err(error);
             }
         }
@@ -214,6 +204,16 @@ impl RotatingLogState {
                 .open(&self.path)?,
         );
         self.bytes = 0;
+        Ok(())
+    }
+
+    fn reopen_append(&mut self) -> io::Result<()> {
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        self.bytes = file.metadata().map(|metadata| metadata.len()).unwrap_or(self.bytes);
+        self.file = Some(file);
         Ok(())
     }
 }
