@@ -2,7 +2,7 @@
 
 Assisstant Desktop is a background Windows assistant. Normal AI interaction is intentionally limited to a compact **Quick Assistant** near the bottom of the active monitor plus a click-through **Edge Glow** around that monitor.
 
-The former full chat/settings React surface is no longer mounted by the normal application entry point. Management belongs to `assistant.exe`; the remaining `main` WebView is a hidden permission-only host for Sensitive confirmations.
+The former full chat/settings React surface has been removed from the frontend source tree. Management belongs to `assistant.exe`; the remaining `main` WebView is a hidden permission-only host for Sensitive confirmations.
 
 ## Invocation behavior
 
@@ -108,7 +108,7 @@ QuickOverlay:
 3. waits 180 ms so the wake-phrase tail is not captured;
 4. calls the same `assistant_voice_turn` used by the Mic button.
 
-The retired `MainSurface/App.tsx` is not mounted, so there is no second wake listener and no duplicate microphone pipeline.
+There is no hidden full-management React listener, so wake detection cannot start a second microphone pipeline through the retired UI path.
 
 ## Sensitive permission surface
 
@@ -120,7 +120,7 @@ Default properties:
 - `560 x 520`;
 - fixed size;
 - centered;
-- shown only when the native broker calls the existing `show_main_window` path or when explicitly surfaced by legacy tray/app-launch behavior.
+- shown when the native broker calls the existing `show_main_window` path.
 
 PermissionSurface:
 
@@ -131,7 +131,7 @@ PermissionSurface:
 - treats `Esc` as Deny;
 - supports queued permission requests;
 - hides itself after the final received request is resolved;
-- never exposes the old settings/chat panels.
+- never exposes settings/chat panels.
 
 The native security boundary is unchanged: Sensitive tools still require the permission broker and cannot be approved through the management IPC.
 
@@ -178,7 +178,7 @@ index.html
    +-- ?surface=edge&edge=... -----> EdgeOverlay
 ```
 
-The legacy `MainSurface/App.tsx` source can remain temporarily for rollback/reference, but it is not part of the normal mounted runtime surface.
+The frontend source tree now contains only the three mounted surfaces plus their shared API/types files.
 
 ## Tauri capability boundary
 
@@ -205,15 +205,15 @@ On Windows, verify:
 9. Deny with `Esc`; verify the tool is denied.
 10. Trigger again and Allow Once; verify the request proceeds and the permission window hides afterward.
 11. Queue more than one confirmation and verify the permission surface advances through the queue.
-12. Confirm no old chat/settings management UI is mounted through the normal URL.
+12. Confirm no old chat/settings management UI exists in the frontend source tree or mounted routes.
 13. Use `assistant` / `assistant status` / `assistant logs -f` for management and diagnostics.
 
-## Remaining UI cleanup
+## Remaining UI work
 
-After Windows verification:
+The remaining lifecycle issue is explicit: tray click and a normal second-instance launch still route through the historical `show_main_window` path. Because `main` is now permission-only, that path must be changed to surface Quick (or launch the terminal manager) before the terminal-first UX is considered complete.
 
-- change legacy tray/second-instance wording/action so management opens the terminal experience instead of surfacing the permission host with no request;
-- remove dead `MainSurface`, `App.tsx`, and graphical management panels after a rollback window;
+Other useful follow-ups:
+
 - make Quick height dynamically expand for longer responses;
 - add an explicit Stop/Cancel action for microphone/long turns;
 - use exact Windows work-area geometry rather than a fixed bottom margin;
