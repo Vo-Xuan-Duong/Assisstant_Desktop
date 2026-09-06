@@ -13,7 +13,6 @@ import {
   hideQuickAssistant,
   onAssistantEvent,
   onVoiceLevel,
-  openFullAssistant,
   runVoiceTurn,
   submitPrompt,
 } from "./api";
@@ -21,8 +20,10 @@ import type { AssistantState, VoiceCapabilities } from "./types";
 import "./quick.css";
 
 interface QuickShownPayload {
-  reason: "shortcut" | "wake" | string;
+  reason: "shortcut" | "wake" | "cli" | string;
 }
+
+const WAKE_TO_COMMAND_DELAY_MS = 180;
 
 function SparkIcon() {
   return (
@@ -50,14 +51,6 @@ function SendIcon() {
   );
 }
 
-function ExpandIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M8.5 4H4v4.5M15.5 4H20v4.5M8.5 20H4v-4.5M15.5 20H20v-4.5" />
-    </svg>
-  );
-}
-
 function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -77,6 +70,8 @@ export default function QuickOverlay() {
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const busyRef = useRef(false);
+  const wakeVoiceStarterRef = useRef<() => void>(() => {});
+  const wakeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     busyRef.current = busy;
@@ -84,9 +79,12 @@ export default function QuickOverlay() {
 
   const refreshVoice = useCallback(async () => {
     try {
-      setVoice(await getVoiceCapabilities());
+      const capabilities = await getVoiceCapabilities();
+      setVoice(capabilities);
+      return capabilities;
     } catch {
       setVoice(null);
+      return null;
     }
   }, []);
 
@@ -101,11 +99,26 @@ export default function QuickOverlay() {
     void listen<QuickShownPayload>("quick:shown", ({ payload }) => {
       setError(null);
       setStreamingText("");
-      // A shortcut invocation behaves like Gemini's fresh overlay. Wake keeps
-      // the surface clean as well; the response will arrive through core events.
       setResponse(null);
+
+      if (wakeTimerRef.current !== null) {
+        window.clearTimeout(wakeTimerRef.current);
+        wakeTimerRef.current = null;
+      }
+
       window.setTimeout(() => inputRef.current?.focus(), payload.reason === "wake" ? 90 : 20);
       void refreshVoice();
+
+      // The Quick WebView exists for the lifetime of the background runtime,
+      // even while hidden. It therefore owns wake-triggered voice turns instead
+      // of relying on the retired full MainSurface. The delay preserves the
+      // previous wake-to-command gap so the wake phrase tail is not captured.
+      if (payload.reason === "wake") {
+        wakeTimerRef.current = window.setTimeout(() => {
+          wakeTimerRef.current = null;
+          wakeVoiceStarterRef.current();
+        }, WAKE_TO_COMMAND_DELAY_MS);
+      }
     }).then((fn) => {
       if (disposed) fn();
       else unlisten.push(fn);
@@ -154,6 +167,10 @@ export default function QuickOverlay() {
     return () => {
       disposed = true;
       window.removeEventListener("keydown", onKeyDown);
+      if (wakeTimerRef.current !== null) {
+        window.clearTimeout(wakeTimerRef.current);
+        wakeTimerRef.current = null;
+      }
       for (const fn of unlisten) fn();
     };
   }, [refreshVoice]);
@@ -209,8 +226,11 @@ export default function QuickOverlay() {
 
   const startVoice = useCallback(async () => {
     if (busyRef.current) return;
-    if (!voiceReady) {
-      setError("Whisper voice chưa sẵn sàng. Mở ứng dụng đầy đủ để thiết lập Tài nguyên.");
+
+    const capabilities = await refreshVoice();
+    const ready = Boolean(capabilities?.whisper_compiled && capabilities.model_available);
+    if (!ready) {
+      setError("STT tiếng Việt chưa sẵn sàng. Dùng `assistant resources install stt_zipformer_vi` trong terminal.");
       return;
     }
 
@@ -235,7 +255,11 @@ export default function QuickOverlay() {
       setVoiceLevel(0);
       window.setTimeout(() => inputRef.current?.focus(), 20);
     }
-  }, [voiceReady]);
+  }, [refreshVoice]);
+
+  wakeVoiceStarterRef.current = () => {
+    void startVoice();
+  };
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -260,14 +284,6 @@ export default function QuickOverlay() {
             )}
           </div>
           <div className="quick-window-actions">
-            <button
-              type="button"
-              title="Mở ứng dụng đầy đủ"
-              aria-label="Mở ứng dụng đầy đủ"
-              onClick={() => void openFullAssistant()}
-            >
-              <ExpandIcon />
-            </button>
             <button
               type="button"
               title="Đóng (Esc)"
@@ -311,7 +327,7 @@ export default function QuickOverlay() {
             type="button"
             className={`quick-mic ${assistantState === "listening" ? "quick-mic-listening" : ""}`}
             disabled={busy && assistantState !== "listening"}
-            title={voiceReady ? "Nói với Assistant" : "Whisper chưa sẵn sàng"}
+            title={voiceReady ? "Nói với Assistant" : "STT chưa sẵn sàng"}
             aria-label="Nói với Assistant"
             onClick={() => void startVoice()}
           >
