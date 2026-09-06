@@ -632,12 +632,6 @@ fn assistant_quick_hide(app: AppHandle) {
     hide_quick_window(&app);
 }
 
-#[tauri::command]
-fn assistant_quick_expand(app: AppHandle) {
-    quick_panel::hide(&app);
-    show_main_window(&app);
-}
-
 fn current_external_window() -> Option<WindowHandle> {
     let handle = window::get_active_handle().ok()?;
     let info = window::get(handle).ok()?;
@@ -663,6 +657,7 @@ fn source_window(app: &AppHandle) -> Option<WindowHandle> {
         .unwrap_or(None)
 }
 
+// `main` is permission-only. Normal assistant invocation must use Quick.
 fn show_main_window(app: &AppHandle) {
     remember_source_window(app);
     quick_panel::hide(app);
@@ -681,8 +676,8 @@ fn show_quick_window(app: &AppHandle, reason: &'static str) {
     edge::activate(app, source);
 
     if let Err(error) = quick_panel::show(app, source, reason) {
-        warn!(%error, "failed to show quick assistant; falling back to full window");
-        show_main_window(app);
+        warn!(%error, "failed to show quick assistant");
+        edge::hide(app);
     }
 }
 
@@ -795,7 +790,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id.as_ref() {
-            "show" => show_main_window(app),
+            "show" => show_quick_window(app, "tray"),
             "hide" => hide_main_window(app),
             "startup" => {
                 let checked = startup_item.is_checked().unwrap_or(false);
@@ -814,7 +809,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 ..
             } = event
             {
-                show_main_window(tray.app_handle());
+                show_quick_window(tray.app_handle(), "tray");
             }
         })
         .build(app)?;
@@ -856,7 +851,7 @@ pub fn run() {
                 .iter()
                 .any(|argument| argument == AUTOSTART_BACKGROUND_ARG)
             {
-                show_main_window(app);
+                show_quick_window(app, "launch");
             }
         }))
         .plugin(tauri_plugin_autostart::init(
@@ -979,7 +974,6 @@ pub fn run() {
             assistant_restart,
             assistant_reset,
             assistant_quick_hide,
-            assistant_quick_expand,
             permission_desktop::assistant_permission_respond,
             permission_desktop::assistant_permission_audit
         ])

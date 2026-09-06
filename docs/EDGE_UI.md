@@ -9,7 +9,7 @@ The former full chat/settings React surface has been removed from the frontend s
 ```text
 External application is active
         |
-        | Alt + Space / wake word
+        | Alt + Space / wake / tray / normal second launch
         v
 capture external WindowHandle
         |
@@ -27,12 +27,16 @@ capture external WindowHandle
         +---------- assistant:event / voice:level
 ```
 
-- `Alt + Space` toggles the Quick Assistant.
-- Wake detection shows the Quick Assistant and the Quick WebView starts the existing `assistant_voice_turn` after the established 180 ms wake-to-command delay.
-- `Esc`, focus loss, or `Alt + Space` again dismisses the Quick Assistant.
-- There is no expand-to-full-management button; management is terminal-first.
-- Sensitive permission requests hide the Quick surface and show the dedicated permission host.
-- The main permission host starts hidden.
+Normal activation paths:
+
+- `Alt + Space` toggles Quick.
+- Wake detection shows Quick and starts the existing `assistant_voice_turn` after the established 180 ms wake-to-command delay.
+- Tray **Mở Assistant** and tray left-click show Quick.
+- A normal second application launch is redirected by the single-instance callback to Quick.
+- `assistant overlay show` shows Quick through authenticated management IPC.
+- `Esc`, focus loss, `Alt + Space` again, tray hide, or `assistant overlay hide` dismisses the compact surface.
+
+There is no expand-to-full-management action. Sensitive permission requests are the only normal reason to surface the hidden `main` permission host.
 
 ## Why the source window is captured first
 
@@ -62,6 +66,8 @@ The Assistant therefore does not accidentally treat its own overlay as the appli
 - hidden until invocation.
 
 Only the compact rectangle receives keyboard/pointer input. The rest of the desktop remains usable.
+
+If `quick_panel::show` fails, the runtime logs the failure and hides Edge. It does not fall back to `main`, because `main` is permission-only.
 
 ## Quick Assistant frontend
 
@@ -112,7 +118,7 @@ There is no hidden full-management React listener, so wake detection cannot star
 
 ## Sensitive permission surface
 
-The existing Tauri window label `main` is retained so the native permission broker does not need a new lifecycle contract, but its content is now `PermissionSurface`, not the old management application.
+The existing Tauri window label `main` is retained so the native permission broker does not need a new lifecycle contract, but its content is `PermissionSurface`, not a management application.
 
 Default properties:
 
@@ -120,7 +126,7 @@ Default properties:
 - `560 x 520`;
 - fixed size;
 - centered;
-- shown when the native broker calls the existing `show_main_window` path.
+- shown by the native permission broker through `show_main_window()` when a Sensitive request needs confirmation.
 
 PermissionSurface:
 
@@ -133,11 +139,11 @@ PermissionSurface:
 - hides itself after the final received request is resolved;
 - never exposes settings/chat panels.
 
-The native security boundary is unchanged: Sensitive tools still require the permission broker and cannot be approved through the management IPC.
+The native security boundary is unchanged: Sensitive tools still require the permission broker and cannot be approved through management IPC.
 
 ## Edge Glow architecture
 
-The perimeter still uses four transparent click-through windows:
+The perimeter uses four transparent click-through windows:
 
 ```text
 Edge manager
@@ -178,43 +184,46 @@ index.html
    +-- ?surface=edge&edge=... -----> EdgeOverlay
 ```
 
-The frontend source tree now contains only the three mounted surfaces plus their shared API/types files.
+The frontend source tree contains only the three mounted surfaces plus shared API/types files.
 
 ## Tauri capability boundary
 
-The shared core capability still targets only application-owned UI windows:
+The shared core capability targets only application-owned UI windows:
 
 ```json
 "windows": ["main", "quick", "edge-*"]
 ```
 
-This frontend change does not bypass MCP or permission policy. Management IPC does not expose Windows tools directly; Sensitive actions still traverse the normal Assistant -> MCP -> permission-gateway path.
+This UI architecture does not bypass MCP or permission policy. Management IPC does not expose Windows tools directly; Sensitive actions still traverse the normal Assistant -> MCP -> permission-gateway path.
+
+The obsolete `assistant_quick_expand` command has been removed, so the frontend cannot promote Quick into the permission-only `main` window.
 
 ## Local verification checklist
 
 On Windows, verify:
 
-1. Start Assisstant Desktop normally; no full management window should appear.
+1. Start Assisstant Desktop normally; no full management or empty permission window appears.
 2. Focus another app and press `Alt + Space`; Quick appears on the same monitor.
 3. Edge glow is visible and does not block clicks outside Quick.
 4. Send a text request and receive the short response without another window.
 5. Mic voice turn uses local Vietnamese STT and updates the glow/response.
 6. Trigger wake; Quick appears and exactly one voice turn starts after the wake delay.
 7. Ask which window is active; it should refer to the source app, not Quick.
-8. Trigger a Sensitive tool; Quick hides and the compact permission window appears.
-9. Deny with `Esc`; verify the tool is denied.
-10. Trigger again and Allow Once; verify the request proceeds and the permission window hides afterward.
-11. Queue more than one confirmation and verify the permission surface advances through the queue.
-12. Confirm no old chat/settings management UI exists in the frontend source tree or mounted routes.
-13. Use `assistant` / `assistant status` / `assistant logs -f` for management and diagnostics.
+8. Left-click tray and use tray **Mở Assistant**; both should show Quick.
+9. Launch the desktop executable again; the existing single instance should show Quick.
+10. Trigger a Sensitive tool; Quick hides and the compact permission window appears.
+11. Deny with `Esc`; verify the tool is denied.
+12. Trigger again and Allow Once; verify the request proceeds and the permission window hides afterward.
+13. Queue more than one confirmation and verify the permission surface advances through the queue.
+14. Confirm no old chat/settings management UI exists in the frontend source tree or mounted routes.
+15. Use `assistant` / `assistant status` / `assistant logs -f` for management and diagnostics.
 
 ## Remaining UI work
 
-The remaining lifecycle issue is explicit: tray click and a normal second-instance launch still route through the historical `show_main_window` path. Because `main` is now permission-only, that path must be changed to surface Quick (or launch the terminal manager) before the terminal-first UX is considered complete.
+The terminal-first surface routing is source-complete. Remaining UI work is refinement rather than migration:
 
-Other useful follow-ups:
-
-- make Quick height dynamically expand for longer responses;
+- dynamically size Quick for longer responses;
 - add an explicit Stop/Cancel action for microphone/long turns;
-- use exact Windows work-area geometry rather than a fixed bottom margin;
-- optionally add contextual chips and configurable auto-dismiss.
+- use exact Windows work-area geometry instead of a fixed bottom margin;
+- optionally add contextual chips and configurable auto-dismiss;
+- complete target-Windows lifecycle/permission/wake verification before release.

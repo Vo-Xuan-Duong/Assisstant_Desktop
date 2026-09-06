@@ -1,4 +1,4 @@
-# Phase 7C — Wake to Conversation
+# Wake to Conversation
 
 ## Goal
 
@@ -7,89 +7,106 @@ Turn a successful local wake-word detection into a complete assistant interactio
 ```text
 Wake phrase
     ↓
-Sherpa KWS
+sherpa-onnx KWS
     ↓
-wake:event detected
+WakeRuntimeEvent::Detected
     ↓
-Assistant window + Edge Glow
+Quick Assistant + Edge Glow
     ↓
-automatic full voice turn
+180 ms wake-to-command gap
     ↓
-Whisper STT
+automatic assistant_voice_turn
+    ↓
+Vietnamese Zipformer STT
     ↓
 Antigravity / Gemini
     ↓
 MCP / Windows tools
     ↓
-SAPI TTS
+Windows SAPI TTS
     ↓
 Wake runtime resumes
 ```
 
-## Reuse the existing voice path
+## One authoritative voice path
 
-Phase 7C deliberately does not create a separate backend command for wake-triggered speech.
+Wake does not use a second STT/AI pipeline.
 
-The hidden main WebView remains alive while the application is in the system tray. It already receives `wake:event` events. On `detected`, it invokes the same Tauri command as the manual Mic button:
+The background Rust wake event handler shows Quick with:
+
+```text
+show_quick_window(&app, "wake")
+```
+
+which emits:
+
+```text
+quick:shown { reason: "wake" }
+```
+
+The lifetime-owned `QuickOverlay` WebView receives that event, waits the wake-to-command gap, and invokes the same Tauri command used by its Mic button:
 
 ```text
 assistant_voice_turn
 ```
 
-This means manual and wake-triggered turns share:
+Manual and wake-triggered turns therefore share:
 
-- Whisper model loading;
-- VAD and microphone capture;
-- Antigravity request handling;
-- context collection;
-- TTS;
-- wake suspend/resume behavior;
+- microphone capture and VAD;
+- Vietnamese Zipformer recognizer loading;
 - AssistantCore state transitions;
-- edge UI state events.
+- source-window/context handling;
+- Antigravity conversation;
+- MCP / permission handling;
+- Windows SAPI TTS;
+- wake suspend/resume behavior;
+- assistant/edge events.
 
-There is only one full voice pipeline to maintain.
+There is no hidden full-management React listener and no duplicate microphone pipeline.
 
 ## Activation sequence
-
-Backend wake handling still owns system activation:
 
 ```text
 WakeRuntimeEvent::Detected
       ↓
-wake:event
+emit wake:event for observers
       ↓
-show_main_window()
+show_quick_window(..., "wake")
       ↓
-remember source application
+remember external source application
       ↓
-position edge windows on source monitor
+position Edge + Quick on source monitor
       ↓
-edge activated
+quick:shown { reason: "wake" }
+      ↓
+QuickOverlay refreshes voice capability
+      ↓
+180 ms delay
+      ↓
+assistant_voice_turn
 ```
 
-Frontend then starts the full voice turn.
-
-When `AssistantCore` enters `Listening`, the edge effect naturally changes from activation bloom to listening animation. No special edge-wake state is required.
+When AssistantCore enters `Listening`, Edge and Quick naturally move to the listening state using existing events. No wake-specific AssistantCore state is needed.
 
 ## Wake-to-command delay
 
-The frontend uses a short delay before opening the full command microphone:
+The Quick frontend keeps the established:
 
 ```text
 180 ms
 ```
 
-Purpose:
+delay before command capture. Its purpose is acoustic/UX separation:
 
-- let the wake detector finish releasing its input stream;
-- avoid treating the final acoustic tail of the wake phrase as the beginning of the command;
-- give the activation glow a perceptible transition into Listening.
+- let the wake detector release its microphone stream;
+- reduce capture of the wake phrase tail as command audio;
+- provide a visible activation-to-listening transition.
 
-The backend microphone suspend barrier remains authoritative. The delay is UX/acoustic separation, not the synchronization mechanism.
+The backend wake suspend/resume and voice `turn_gate` remain the authoritative synchronization boundaries.
 
-## Recommended speech pattern for this phase
+## Recommended speech pattern
 
-Use two beats:
+The current runtime still works best with a short separation:
 
 ```text
 "Hey Assistant"
@@ -97,40 +114,36 @@ Use two beats:
 "Mở Chrome"
 ```
 
-Phase 7C does not yet implement a shared continuous audio ring buffer between KWS and Whisper. Therefore a single uninterrupted phrase such as:
-
-```text
-"Hey Assistant mở Chrome"
-```
-
-may lose the first portion of the command while the wake stream is released and the full Whisper stream starts.
-
-A future continuous-audio phase can remove this limitation.
+There is not yet a shared continuous audio ring buffer spanning KWS into command STT. A fully uninterrupted phrase may therefore lose the earliest part of the command during the handoff.
 
 ## Single-flight behavior
 
-The frontend keeps a synchronous `busyRef` in addition to React state.
-
-This prevents two wake detections or a wake + manual Mic click from queueing overlapping voice turns before React has rendered its next state.
+Quick maintains a synchronous busy guard around manual/wake voice capture, while the backend retains its own voice `turn_gate` and AssistantCore state checks.
 
 Policy:
 
 ```text
-Assistant idle + Whisper ready
+Assistant idle + STT ready
     → accept wake-triggered turn
 
 Assistant busy
-    → ignore additional wake detection
+    → do not start an overlapping turn
 
-Whisper unavailable
-    → keep Assistant open and report that local voice is unavailable
+STT unavailable
+    → show Quick and report the terminal resource command
 ```
 
-The backend still retains its own voice `turn_gate`, so frontend single-flight is an additional UX guard rather than the only concurrency control.
+The missing-STT recovery path points to:
+
+```powershell
+assistant resources install stt_zipformer_vi
+```
+
+rather than a removed graphical Resource Setup panel.
 
 ## Conversation result
 
-The automatic turn returns the same `VoiceTurnResult` as manual voice:
+Automatic wake turns return the same `VoiceTurnResult` as manual voice:
 
 ```text
 transcript
@@ -138,70 +151,67 @@ response
 tts_error
 ```
 
-The frontend appends:
-
-1. transcript as a user message;
-2. Antigravity response as an assistant message;
-3. optional TTS error as a system message.
-
-Therefore wake interactions become normal conversation history and subsequent prompts can continue using the same Antigravity conversation.
+The response is displayed in Quick and remains part of the same backend Antigravity conversation. The graphical runtime no longer maintains a separate full chat-history application.
 
 ## Failure behavior
 
-### Whisper not compiled/model missing
+### STT not compiled/model missing
 
-Wake detection still opens the Assistant, but no automatic voice turn starts. The conversation shows a local runtime message.
+Quick remains the presentation surface and reports that local voice is unavailable. No permission/main window is used as fallback.
 
 ### Assistant already busy
 
-The extra detection is ignored. It is not queued.
+An overlapping voice turn is rejected/ignored by existing frontend/backend single-flight checks; it is not intentionally queued.
 
 ### No command speech after wake
 
-The existing voice capture timeout applies. The turn fails cleanly and wake runtime resumes after the normal delayed resume path.
+The existing 25-second utterance timeout applies. The turn fails cleanly and wake resumes through the normal delayed resume path.
 
 ### Antigravity failure
 
-AssistantCore enters its normal Error state and the frontend reports the failed voice turn. No wake-specific backend recovery path is introduced.
+AssistantCore follows its normal Error lifecycle. Wake does not add a second recovery protocol.
+
+### Quick cannot be shown
+
+The runtime logs the failure and hides Edge. It does not surface the permission-only `main` window.
 
 ## Privacy
 
-The wake phrase remains local to sherpa-onnx.
-
-After wake activation, command audio is processed by local Whisper. Only the resulting text and any explicitly requested desktop context are passed to Antigravity.
+Wake detection and command speech recognition remain local:
 
 ```text
-wake audio       → local KWS
-command audio    → local Whisper
+wake audio       → local sherpa-onnx KWS
+command audio    → local Vietnamese Zipformer STT
 transcript       → Antigravity
 ```
 
+Only the resulting text and any explicitly collected desktop context are passed into the AI request path.
+
 ## Local verification checklist
 
-Do not run GitHub Actions for this phase. Verify locally on Windows:
+Do not manually dispatch GitHub Actions for this verification. On Windows:
 
-1. Build desktop with both `wake-word` and `voice-whisper`.
-2. Provide sherpa wake resources and Whisper model.
-3. Enable Wake in the UI.
-4. Hide the Assistant to tray.
-5. Focus an application on monitor 1 or monitor 2.
-6. Say configured wake phrase.
-7. Confirm Assistant opens on detection and edge glow surrounds the source monitor.
-8. Confirm state moves into Listening automatically without clicking Mic.
-9. Say a command after the wake phrase pause.
-10. Confirm transcript appears in conversation.
-11. Confirm Antigravity response appears and SAPI speaks it.
-12. Confirm wake returns to listening after the TTS cooldown.
-13. Trigger wake while a manual request is already processing; verify a second voice turn is not queued.
-14. Test with Whisper model removed; wake should open UI but not crash the application.
-15. Test wake while main window is hidden; event handling must still work.
+1. Build the desktop with STT and wake features enabled.
+2. Provide required wake resources and Vietnamese Zipformer assets.
+3. Enable wake using `assistant wake enable`.
+4. Configure/validate the phrase using `assistant wake phrase "HEY ASSISTANT"` as needed.
+5. Keep the assistant in the background and focus another application.
+6. Say the configured wake phrase.
+7. Confirm Quick + Edge appear on the source monitor; the permission window must not appear.
+8. Confirm exactly one voice turn enters Listening automatically after the short delay.
+9. Say a command after the wake pause.
+10. Confirm Vietnamese Zipformer produces a transcript and Antigravity returns a response.
+11. Confirm SAPI speaks the response and wake returns to listening after cooldown.
+12. Trigger wake while another request is busy; verify a second overlapping voice capture does not start.
+13. Remove/rename the STT model temporarily and verify wake shows a useful missing-resource error rather than crashing.
+14. Confirm tray and normal second-launch activation also use Quick and do not create a second wake listener.
 
 ## Deferred
 
-- continuous shared microphone ring buffer from KWS into Whisper;
+- continuous shared microphone ring buffer from KWS into command STT;
 - command audio pre-roll covering the wake/command boundary;
 - barge-in while TTS is speaking;
 - multi-turn hands-free follow-up window;
-- explicit cancel phrase;
+- explicit cancel phrase / Stop control;
 - configurable automatic-listening duration;
-- persistent wake/auto-turn settings.
+- dynamic Quick response sizing.
