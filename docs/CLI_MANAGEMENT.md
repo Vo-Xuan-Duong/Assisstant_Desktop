@@ -312,7 +312,7 @@ Runtime logs stay in the current user's local application-data directory unless 
 
 The log sink does not intentionally log the management IPC secret, permission-broker secret, tokens, or credentials. Existing code should continue avoiding secret values in tracing fields.
 
-## Phase 2D: retire the full React management frontend
+## Phase 2D: terminal-first graphical runtime
 
 Completed:
 
@@ -321,9 +321,13 @@ Completed:
 3. Quick no longer exposes expand-to-full-management.
 4. `main.tsx` routes only `PermissionSurface`, `QuickOverlay`, and `EdgeOverlay`.
 5. The retired `App.tsx`, `MainSurface.tsx`, graphical management panels, and their private CSS were deleted.
-6. Frontend `api.ts`, `permissionApi.ts`, and `types.ts` were reduced to contracts used by the mounted surfaces.
+6. Frontend `api.ts`, `permissionApi.ts`, and `types.ts` were reduced to contracts used by mounted surfaces.
+7. Tray **Mở Assistant** and tray left-click now surface Quick.
+8. A normal second application launch is redirected by the single-instance callback to Quick.
+9. Quick-show failure no longer falls back to the permission-only `main` window.
+10. The obsolete `assistant_quick_expand` Tauri command was removed.
 
-The graphical surface is now intentionally limited to:
+The graphical surface is intentionally limited to:
 
 ```text
 Edge glow
@@ -333,11 +337,7 @@ Voice visualization
 Sensitive permission confirmation
 ```
 
-### Remaining lifecycle gap
-
-The historical Rust lifecycle still routes tray click and a normal second-instance launch through `show_main_window()`. `main` is now permission-only, so this behavior must be redirected to Quick (or explicitly launch the terminal manager) before the terminal-first UX is considered complete.
-
-This is intentionally tracked separately from the frontend deletion so the lifecycle fix can be reviewed without reintroducing a full management surface.
+`main` is not a general-purpose UI surface. `show_main_window()` remains only because the native permission broker uses it to focus the Sensitive confirmation host.
 
 ## Internal protocol v1
 
@@ -374,13 +374,13 @@ settings/antigravity.json
 settings/wake.json
 ```
 
-approximately every 500 ms. This remains useful for offline/durable edits and older CLI behavior, although the primary live CLI path is now direct IPC.
+approximately every 500 ms. This remains useful for offline/durable edits and older CLI behavior, although the primary live CLI path is direct IPC.
 
 Moderate permission overrides continue to be read by MCP during authorization, so policy changes apply to subsequent requests without a desktop restart.
 
 ## Local verification gates
 
-The changes remain source-first. Before treating the terminal-first migration as runtime-verified on Windows, validate locally:
+The migration is source-complete but not target-Windows verified. Validate locally before treating it as release-ready:
 
 ```powershell
 cargo build -p assisstant-desktop --bin assistant --locked
@@ -405,14 +405,15 @@ With the background runtime running and required assets present:
 .\target\debug\assistant.exe wake phrase "HEY ASSISTANT"
 ```
 
-Also verify the graphical lifecycle:
+Also verify graphical lifecycle:
 
 ```text
 Alt+Space -> Quick
 Wake -> Quick -> exactly one voice turn
+Tray show/click -> Quick
+Second normal launch -> existing process -> Quick
+Second --background launch -> no focus steal
 Sensitive tool -> PermissionSurface
-Tray click -> currently known lifecycle gap until Rust redirect is patched
-Second normal launch -> currently known lifecycle gap until Rust redirect is patched
 ```
 
-Do not interpret source presence as proof that target-Windows native DLL loading, model download, microphone behavior, wake hot reload, log rotation, Tauri packaging, or the remaining tray/second-instance lifecycle has been validated.
+Do not interpret source presence as proof that target-Windows native DLL loading, model download, microphone behavior, wake hot reload, log rotation, Tauri packaging, or lifecycle behavior has been validated.
