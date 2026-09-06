@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { onAssistantEvent } from "./api";
 import "./quick-response-actions.css";
@@ -38,6 +38,26 @@ function CopyIcon() {
 export default function QuickResponseActions() {
   const [response, setResponse] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<"copied" | "error" | null>(null);
+  const feedbackTimerRef = useRef<number | null>(null);
+
+  const clearFeedback = () => {
+    if (feedbackTimerRef.current !== null) {
+      window.clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = null;
+    }
+    setFeedback(null);
+  };
+
+  const showFeedback = (value: "copied" | "error") => {
+    if (feedbackTimerRef.current !== null) {
+      window.clearTimeout(feedbackTimerRef.current);
+    }
+    setFeedback(value);
+    feedbackTimerRef.current = window.setTimeout(() => {
+      feedbackTimerRef.current = null;
+      setFeedback(null);
+    }, 1_400);
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -46,10 +66,10 @@ export default function QuickResponseActions() {
     void onAssistantEvent((event) => {
       if (event.type === "response_completed") {
         setResponse(event.text);
-        setFeedback(null);
+        clearFeedback();
       } else if (event.type === "error") {
         setResponse(null);
-        setFeedback(null);
+        clearFeedback();
       }
     }).then((fn) => {
       if (disposed) fn();
@@ -58,7 +78,7 @@ export default function QuickResponseActions() {
 
     void listen("quick:shown", () => {
       setResponse(null);
-      setFeedback(null);
+      clearFeedback();
     }).then((fn) => {
       if (disposed) fn();
       else unlisten.push(fn);
@@ -66,6 +86,10 @@ export default function QuickResponseActions() {
 
     return () => {
       disposed = true;
+      if (feedbackTimerRef.current !== null) {
+        window.clearTimeout(feedbackTimerRef.current);
+        feedbackTimerRef.current = null;
+      }
       for (const fn of unlisten) fn();
     };
   }, []);
@@ -87,8 +111,8 @@ export default function QuickResponseActions() {
         aria-label={label}
         onClick={() => {
           void copyText(response)
-            .then(() => setFeedback("copied"))
-            .catch(() => setFeedback("error"));
+            .then(() => showFeedback("copied"))
+            .catch(() => showFeedback("error"));
         }}
       >
         <CopyIcon />
