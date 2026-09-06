@@ -20,6 +20,7 @@ const WAKE_DIR_NAME: &str = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-0
 const MANAGEMENT_PROTOCOL_VERSION: u32 = 1;
 const MANAGEMENT_ENDPOINT_FILE: &str = "management.json";
 const MANAGEMENT_TIMEOUT: Duration = Duration::from_secs(3);
+const RESOURCE_INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const MAX_MANAGEMENT_RESPONSE_BYTES: usize = 256 * 1024;
 
 type CliResult<T> = Result<T, String>;
@@ -93,9 +94,10 @@ COMMANDS
   wake show                               Show live/persisted wake state
   wake enable                             Enable wake detection
   wake disable                            Disable wake detection
-  wake phrase <text>                      Persist phrase preference only for now
+  wake phrase <text>                      Generate, validate and hot-reload keyword
 
   resources list                          Inspect STT/wake model files
+  resources install <id>                  Install via the verified runtime installer
 
   permissions list                        List native tool policy
   permissions set <tool> <allow|ask|deny> Set a Moderate-tool override
@@ -325,6 +327,15 @@ impl ManagementClient {
     }
 
     fn call(&self, command: &str, payload: Value) -> CliResult<Value> {
+        self.call_with_timeout(command, payload, MANAGEMENT_TIMEOUT)
+    }
+
+    fn call_with_timeout(
+        &self,
+        command: &str,
+        payload: Value,
+        response_timeout: Duration,
+    ) -> CliResult<Value> {
         let ip: IpAddr = self
             .endpoint
             .host
@@ -334,7 +345,7 @@ impl ManagementClient {
         let mut stream = TcpStream::connect_timeout(&address, MANAGEMENT_TIMEOUT)
             .map_err(|error| format!("cannot connect to background runtime at {address}: {error}"))?;
         stream
-            .set_read_timeout(Some(MANAGEMENT_TIMEOUT))
+            .set_read_timeout(Some(response_timeout))
             .map_err(|error| format!("cannot configure management read timeout: {error}"))?;
         stream
             .set_write_timeout(Some(MANAGEMENT_TIMEOUT))
@@ -575,8 +586,8 @@ fn apply_ai_settings(paths: &AppPaths, settings: &AiSettings) -> CliResult<()> {
         let result = client.call(
             "ai.set",
             json!({
-                "model": settings.model,
-                "effort": settings.effort,
+                "model": settings.model.clone(),
+                "effort": settings.effort.clone(),
             }),
         )?;
         println!("AI settings applied to the running background runtime.");
@@ -617,13 +628,23 @@ fn command_wake(paths: &AppPaths, args: &[String]) -> CliResult<()> {
             if phrase.is_empty() {
                 return Err("wake phrase cannot be empty".into());
             }
-            preferences.phrase = Some(phrase.to_owned());
-            save_json_atomic(&paths.wake_settings, &preferences)?;
-            println!("Wake phrase preference saved.");
-            println!(
-                "Note: detector keyword regeneration/validation is not in the CLI yet, so the active wake phrase is unchanged."
-            );
-            Ok(())
+
+            let client = ManagementClient::discover(paths).map_err(|error| {
+                format!(
+                    "changing the active wake phrase requires the running background runtime for tokenizer/native validation: {error}"
+                )
+            })?;
+            println!("Generating and validating wake keyword...");
+            let result = client.call_with_timeout(
+                "resources.install",
+                json!({
+                    "resource_id": "wake_keywords",
+                    "phrase": phrase,
+                }),
+                RESOURCE_INSTALL_TIMEOUT,
+            )?;
+            println!("Wake phrase generated, validated and hot-reloaded.");
+            print_json(&result)
         }
         other => Err(format!("unknown wake command `{other}`")),
     }
@@ -648,26 +669,48 @@ fn apply_wake_enabled(
 
 fn command_resources(paths: &AppPaths, args: &[String]) -> CliResult<()> {
     let subcommand = args.first().map(String::as_str).unwrap_or("list");
-    if subcommand != "list" {
-        return Err(format!(
-            "unknown resources command `{subcommand}`; install support is the next migration step"
-        ));
-    }
-
-    for resource in [stt_resource(paths), wake_resource(paths)] {
-        println!(
-            "{}  {}/{}  {}",
-            resource.id,
-            resource.present,
-            resource.required,
-            ready_name(resource.ready)
-        );
-        println!("  {}", resource.root);
-        for file in resource.files {
-            println!("  [{}] {}", if file.exists { "x" } else { " " }, file.name);
+    match subcommand {
+        "list" => {
+            for resource in [stt_resource(paths), wake_resource(paths)] {
+                println!(
+                    "{}  {}/{}  {}",
+                    resource.id,
+                    resource.present,
+                    resource.required,
+                    ready_name(resource.ready)
+                );
+                println!("  {}", resource.root);
+                for file in resource.files {
+                    println!("  [{}] {}", if file.exists { "x" } else { " " }, file.name);
+                }
+            }
+            Ok(())
         }
+        "install" => {
+            let resource_id = args
+                .get(1)
+                .map(String::as_str)
+                .ok_or_else(|| "usage: assistant resources install <resource-id>".to_owned())?;
+            if resource_id == "wake_keywords" {
+                return Err(
+                    "use `assistant wake phrase <text>` so keyword generation receives the phrase"
+                        .into(),
+                );
+            }
+            let client = ManagementClient::discover(paths).map_err(|error| {
+                format!("resource installation requires the running background runtime: {error}")
+            })?;
+            println!("Installing resource `{resource_id}` with verified runtime installer...");
+            let result = client.call_with_timeout(
+                "resources.install",
+                json!({ "resource_id": resource_id }),
+                RESOURCE_INSTALL_TIMEOUT,
+            )?;
+            println!("Resource installation completed.");
+            print_json(&result)
+        }
+        other => Err(format!("unknown resources command `{other}`")),
     }
-    Ok(())
 }
 
 fn command_permissions(paths: &AppPaths, args: &[String]) -> CliResult<()> {
@@ -1219,6 +1262,7 @@ fn render_tui_resources(status: &StatusSnapshot) {
         }
         println!();
     }
+    println!("Install: assistant resources install stt_zipformer_vi");
 }
 
 fn render_tui_ai(status: &StatusSnapshot) {
