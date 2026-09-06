@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { onAssistantEvent } from "./api";
 import { copyQuickText } from "./quickClipboard";
 import "./quick-recent-responses.css";
 
 const MAX_RECENT_RESPONSES = 5;
 const COPY_FEEDBACK_MS = 1_200;
+const QUICK_RESIZE_EVENT = "quick:resize_request";
+const QUICK_HISTORY_HEIGHT = 380;
+const DUPLICATE_EVENT_WINDOW_MS = 500;
 
 interface RecentResponse {
   id: number;
@@ -44,6 +47,31 @@ export default function QuickRecentResponses() {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const nextIdRef = useRef(1);
   const feedbackTimerRef = useRef<number | null>(null);
+  const previousHeightRef = useRef<number | null>(null);
+
+  const requestHeight = (height: number) => {
+    void emit(QUICK_RESIZE_EVENT, { height });
+  };
+
+  const closeDrawer = () => {
+    setOpen(false);
+    const previousHeight = previousHeightRef.current;
+    previousHeightRef.current = null;
+    if (previousHeight !== null) {
+      requestHeight(previousHeight);
+    }
+  };
+
+  const toggleDrawer = () => {
+    if (open) {
+      closeDrawer();
+      return;
+    }
+
+    previousHeightRef.current = Math.max(1, Math.round(window.innerHeight));
+    requestHeight(QUICK_HISTORY_HEIGHT);
+    setOpen(true);
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -55,12 +83,24 @@ export default function QuickRecentResponses() {
       const text = event.text.trim();
       if (!text) return;
 
-      const item: RecentResponse = {
-        id: nextIdRef.current++,
-        text,
-        createdAt: Date.now(),
-      };
-      setItems((current) => [item, ...current].slice(0, MAX_RECENT_RESPONSES));
+      const now = Date.now();
+      setItems((current) => {
+        const newest = current[0];
+        if (
+          newest &&
+          newest.text === text &&
+          now - newest.createdAt <= DUPLICATE_EVENT_WINDOW_MS
+        ) {
+          return current;
+        }
+
+        const item: RecentResponse = {
+          id: nextIdRef.current++,
+          text,
+          createdAt: now,
+        };
+        return [item, ...current].slice(0, MAX_RECENT_RESPONSES);
+      });
     }).then((fn) => {
       if (disposed) fn();
       else unlisten.push(fn);
@@ -69,6 +109,7 @@ export default function QuickRecentResponses() {
     void listen("quick:shown", () => {
       setOpen(false);
       setCopiedId(null);
+      previousHeightRef.current = null;
     }).then((fn) => {
       if (disposed) fn();
       else unlisten.push(fn);
@@ -104,7 +145,7 @@ export default function QuickRecentResponses() {
         title="Câu trả lời gần đây"
         aria-label="Câu trả lời gần đây"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggleDrawer}
       >
         <HistoryIcon />
         <span>{items.length}</span>
@@ -122,8 +163,8 @@ export default function QuickRecentResponses() {
               className="quick-history-clear"
               onClick={() => {
                 setItems([]);
-                setOpen(false);
                 setCopiedId(null);
+                closeDrawer();
               }}
             >
               Xóa
@@ -140,7 +181,9 @@ export default function QuickRecentResponses() {
                     title="Sao chép câu trả lời này"
                     aria-label="Sao chép câu trả lời này"
                     onClick={() => {
-                      void copyQuickText(item.text).then(() => showCopied(item.id));
+                      void copyQuickText(item.text)
+                        .then(() => showCopied(item.id))
+                        .catch(() => setCopiedId(null));
                     }}
                   >
                     <CopyIcon />
