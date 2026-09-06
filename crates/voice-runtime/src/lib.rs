@@ -12,9 +12,12 @@ pub mod whisper;
 #[cfg(feature = "zipformer")]
 pub mod zipformer;
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use cpal::{
@@ -115,40 +118,29 @@ impl Default for MicrophoneConfig {
     }
 }
 
-/// Per-consumer cancellation source for microphone capture. It is deliberately
-/// not global because both the wake runtime and command voice turns may own a
-/// MicrophoneStream at different lifecycle points. Each subsystem should keep
-/// its own source so cancelling command capture cannot stop wake detection.
-#[derive(Clone)]
-pub struct MicrophoneCancellation {
-    sender: watch::Sender<u64>,
+type CaptureCancelRegistry = BTreeMap<u64, watch::Sender<bool>>;
+
+fn capture_cancel_registry() -> &'static Mutex<CaptureCancelRegistry> {
+    static REGISTRY: OnceLock<Mutex<CaptureCancelRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-impl Default for MicrophoneCancellation {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+static NEXT_CAPTURE_ID: AtomicU64 = AtomicU64::new(1);
 
-impl MicrophoneCancellation {
-    pub fn new() -> Self {
-        let (sender, _) = watch::channel(0u64);
-        Self { sender }
-    }
+/// Cancel microphone streams that are currently alive. Desktop code only calls
+/// this while AssistantCore is in Listening. The wake runtime is synchronously
+/// suspended before command capture starts, so that lifecycle boundary prevents
+/// a Quick Stop action from cancelling wake detection.
+pub fn cancel_active_microphone_captures() -> usize {
+    let senders = capture_cancel_registry()
+        .lock()
+        .map(|registry| registry.values().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
 
-    /// Subscribe before publishing the corresponding Listening state. That
-    /// ordering guarantees a UI Stop action cannot arrive before the receiver
-    /// for the active command capture exists.
-    pub fn subscribe(&self) -> watch::Receiver<u64> {
-        self.sender.subscribe()
-    }
-
-    /// Wake the current subscriber without making cancellation sticky for a
-    /// future capture. Returns false when no capture subscriber currently exists.
-    pub fn cancel_active(&self) -> bool {
-        let next = (*self.sender.borrow()).wrapping_add(1);
-        self.sender.send(next).is_ok()
-    }
+    senders
+        .into_iter()
+        .filter(|sender| sender.send(true).is_ok())
+        .count()
 }
 
 pub struct MicrophoneStream {
@@ -157,6 +149,8 @@ pub struct MicrophoneStream {
     info: MicrophoneInfo,
     dropped_chunks: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
+    capture_id: u64,
+    cancel: watch::Receiver<bool>,
 }
 
 impl MicrophoneStream {
@@ -199,11 +193,18 @@ impl MicrophoneStream {
             source_sample_format: sample_format.to_string(),
         };
 
+        let capture_id = NEXT_CAPTURE_ID.fetch_add(1, Ordering::Relaxed);
+        let (cancel_sender, cancel) = watch::channel(false);
+        if let Ok(mut registry) = capture_cancel_registry().lock() {
+            registry.insert(capture_id, cancel_sender);
+        }
+
         debug!(
             device = %info.device,
             sample_rate = info.sample_rate,
             channels = info.source_channels,
             sample_format = %info.source_sample_format,
+            capture_id,
             "default microphone stream opened"
         );
 
@@ -213,6 +214,8 @@ impl MicrophoneStream {
             info,
             dropped_chunks,
             last_error,
+            capture_id,
+            cancel,
         })
     }
 
@@ -229,7 +232,16 @@ impl MicrophoneStream {
     }
 
     pub async fn next_chunk(&mut self) -> Option<AudioChunk> {
-        self.receiver.recv().await
+        tokio::select! {
+            biased;
+            changed = self.cancel.changed() => {
+                if changed.is_ok() && *self.cancel.borrow_and_update() {
+                    debug!(capture_id = self.capture_id, "microphone capture cancelled");
+                }
+                None
+            }
+            chunk = self.receiver.recv() => chunk,
+        }
     }
 
     pub fn pause(&self) -> Result<(), VoiceError> {
@@ -240,6 +252,14 @@ impl MicrophoneStream {
     pub fn resume(&self) -> Result<(), VoiceError> {
         self.stream.play()?;
         Ok(())
+    }
+}
+
+impl Drop for MicrophoneStream {
+    fn drop(&mut self) {
+        if let Ok(mut registry) = capture_cancel_registry().lock() {
+            registry.remove(&self.capture_id);
+        }
     }
 }
 
