@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import EdgeOverlay from "./EdgeOverlay";
-import MainSurface from "./MainSurface";
+import PermissionSurface from "./PermissionSurface";
 import QuickOverlay from "./QuickOverlay";
 
 const params = new URLSearchParams(window.location.search);
@@ -16,8 +16,8 @@ if (isEdgeSurface) {
   document.documentElement.classList.add("quick-surface-root");
   document.body.classList.add("quick-surface-root");
 } else {
-  document.documentElement.classList.add("main-surface-root");
-  document.body.classList.add("main-surface-root");
+  document.documentElement.classList.add("permission-surface-root");
+  document.body.classList.add("permission-surface-root");
 }
 
 const surfaceNode = isEdgeSurface ? (
@@ -25,7 +25,7 @@ const surfaceNode = isEdgeSurface ? (
 ) : isQuickSurface ? (
   <QuickOverlay />
 ) : (
-  <MainSurface />
+  <PermissionSurface />
 );
 
 createRoot(document.getElementById("root")!).render(
