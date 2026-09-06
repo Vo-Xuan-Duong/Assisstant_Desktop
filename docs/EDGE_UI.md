@@ -212,19 +212,63 @@ Edge manager
 
 Each edge window is transparent, non-focusable, always-on-top, skipped from the taskbar, and configured with `set_ignore_cursor_events(true)`.
 
-Edge geometry still follows the **full monitor bounds**, not `rcWork`. This is intentional: the glow represents the physical display perimeter while Quick must stay inside the usable desktop work area.
+Edge geometry follows the **full monitor bounds**, not `rcWork`. This is intentional: the glow represents the physical display perimeter while Quick must stay inside the usable desktop work area.
 
-Visual modes remain:
+Aurora Pulse render depth:
 
-- activated: short bright bloom;
-- ready: subtle persistent halo;
-- listening: RMS-reactive glow;
-- processing/executing: faster spectrum movement;
-- speaking: breathing response state;
-- confirming: distinct permission state;
-- error: red/coral state.
+```text
+edge-top      44 px
+edge-left     46 px
+edge-right    46 px
+edge-bottom   64 px
+```
 
-Both Quick and edge visuals respect `prefers-reduced-motion`.
+The larger transparent render strips exist only to give blur/bloom room. They remain click-through and do not reserve desktop space.
+
+### Aurora Pulse visual stack
+
+The upgraded perimeter intentionally avoids the previous dense rainbow-strip appearance. Default assistant states use a restrained cyan -> electric blue -> violet -> pink spectrum.
+
+```text
+soft ambient bloom
+       +
+legacy flow layer at reduced opacity
+       +
+2 offset 1 px orbit traces
+       +
+travelling bright pulse packet
+       +
+1.5-1.8 px physical-light core
+       +
+4 corner blooms (top/bottom windows)
+```
+
+`EdgeOverlay.tsx` keeps the existing state/event contract and only adds visual layers:
+
+```text
+edge-orbit-a
+edge-orbit-b
+edge-pulse
+edge-corner-start
+edge-corner-end
+```
+
+The two side windows intentionally do not render their own corner bloom, preventing doubled flares where edge windows overlap. Top and bottom surfaces own the four corner highlights.
+
+Visual modes:
+
+- **activated**: fast pulse + strong corner bloom for the invocation surge;
+- **ready**: very low-intensity persistent aura and slow travelling pulse;
+- **listening**: intensity follows the already precomputed `--voice-opacity` / `--voice-scale` values from microphone RMS;
+- **processing**: faster orbit/pulse motion;
+- **executing**: fastest normal motion and stronger pulse;
+- **speaking**: slow breathing brightness;
+- **confirming**: warm amber/orange spectrum including corner blooms;
+- **error**: coral/red pulse and corner blooms.
+
+The default assistant spectrum no longer uses green/yellow segments. Amber is reserved for permission confirmation; red/coral is reserved for errors.
+
+Both Quick and edge visuals respect `prefers-reduced-motion`. Reduced-motion mode disables orbit/pulse/corner animation while retaining a low-intensity static perimeter.
 
 ## Surface routing
 
@@ -256,7 +300,7 @@ It still contains only:
 "permissions": ["core:default"]
 ```
 
-Dynamic height uses the default event capability; it does not add frontend `set_size` or `set_position` permission.
+Dynamic height uses the default event capability; it does not add frontend `set_size` or `set_position` permission. The Aurora Pulse redesign adds no frontend capability and no new command or IPC surface.
 
 This UI architecture does not bypass MCP or permission policy. Management IPC does not expose Windows tools directly; Sensitive actions still traverse the normal Assistant -> MCP -> permission-gateway path.
 
@@ -268,26 +312,31 @@ On Windows, verify:
 
 1. Start Assisstant Desktop normally; no full management or empty permission window appears.
 2. Focus another app and press `Alt + Space`; Quick appears on the same monitor at approximately `206px` high.
-3. Edge glow is visible and does not block clicks outside Quick.
-4. Send a one-line/short request; verify the panel remains compact.
-5. Produce a multi-line response; verify Quick grows smoothly enough to expose more preview lines but never beyond `380px`.
-6. After a long response, send/return to shorter content and verify Quick shrinks again.
-7. Hide and reopen Quick after a long response; verify the new invocation starts at default compact height.
-8. While Quick expands/shrinks, verify its bottom edge stays anchored above the taskbar/work-area bottom rather than moving below it.
-9. Mic voice turn uses local Vietnamese STT and updates the glow/response.
-10. Trigger wake; Quick appears and exactly one voice turn starts after the wake delay.
-11. Ask which window is active; it should refer to the source app, not Quick.
-12. Left-click tray and use tray **Mở Assistant**; both should show Quick.
-13. Launch the desktop executable again; the existing single instance should show Quick.
-14. With the taskbar at the bottom, verify Quick stays above it with a small margin.
-15. Move the taskbar to top/left/right where supported and verify Quick remains inside the reported work area.
-16. Test a secondary monitor with a different work area/taskbar arrangement; Quick should follow the source application monitor and remain bottom-anchored while resizing.
-17. Trigger a Sensitive tool; Quick hides and the compact permission window appears.
-18. Deny with `Esc`; verify the tool is denied.
-19. Trigger again and Allow Once; verify the request proceeds and the permission window hides afterward.
-20. Queue more than one confirmation and verify the permission surface advances through the queue.
-21. Confirm no old chat/settings management UI exists in the frontend source tree or mounted routes.
-22. Use `assistant` / `assistant status` / `assistant logs -f` for management and diagnostics.
+3. Verify the activation edge has a thin cyan/blue/violet/pink core, moving pulse and visible corner bloom rather than a thick rainbow strip.
+4. Move the mouse/click through all four glow strips and corners; underlying desktop/application interaction must remain unaffected.
+5. After the activation surge, verify `ready` settles to a subtle persistent aura rather than remaining visually dominant.
+6. Speak into the microphone; listening intensity should react to RMS without changing window geometry.
+7. Trigger processing/executing; pulse/orbit speed should increase without strobing.
+8. Trigger speaking; perimeter brightness should breathe more slowly.
+9. Trigger Sensitive confirmation; edge color should switch to amber/orange including the corners.
+10. Trigger an error; edge color should switch to coral/red including the corners.
+11. Enable Windows reduced-motion preference; verify travelling/orbit/corner animations stop while a static low-intensity edge remains.
+12. Send a one-line/short request; verify the panel remains compact.
+13. Produce a multi-line response; verify Quick grows smoothly enough to expose more preview lines but never beyond `380px`.
+14. After a long response, send/return to shorter content and verify Quick shrinks again.
+15. Hide and reopen Quick after a long response; verify the new invocation starts at default compact height.
+16. While Quick expands/shrinks, verify its bottom edge stays anchored above the taskbar/work-area bottom rather than moving below it.
+17. Trigger wake; Quick appears and exactly one voice turn starts after the wake delay.
+18. Ask which window is active; it should refer to the source app, not Quick.
+19. Left-click tray and use tray **Mở Assistant**; both should show Quick.
+20. Launch the desktop executable again; the existing single instance should show Quick.
+21. With the taskbar at the bottom, verify Quick stays above it with a small margin.
+22. Test a secondary monitor; Aurora Pulse should follow the source application monitor while Quick follows its work area.
+23. Trigger a Sensitive tool; Quick hides and the compact permission window appears.
+24. Deny with `Esc`; verify the tool is denied.
+25. Trigger again and Allow Once; verify the request proceeds and the permission window hides afterward.
+26. Confirm no old chat/settings management UI exists in the frontend source tree or mounted routes.
+27. Use `assistant` / `assistant status` / `assistant logs -f` for management and diagnostics.
 
 ## Remaining UI work
 
