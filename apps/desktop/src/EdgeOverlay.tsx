@@ -99,7 +99,14 @@ export default function EdgeOverlay() {
       <div className="edge-stipple" />
       <div className="edge-flow" />
       <div className="edge-shimmer" />
+
+      <div className="edge-orbit edge-orbit-a" />
+      <div className="edge-orbit edge-orbit-b" />
+      <div className="edge-pulse" />
       <div className="edge-core" />
+
+      <div className="edge-corner edge-corner-start" />
+      <div className="edge-corner edge-corner-end" />
     </div>
   );
 }
