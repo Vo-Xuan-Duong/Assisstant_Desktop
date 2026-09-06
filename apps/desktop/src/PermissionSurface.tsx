@@ -18,6 +18,7 @@ export default function PermissionSurface() {
   const [queue, setQueue] = useState<PermissionRequest[]>([]);
   const [remaining, setRemaining] = useState(PERMISSION_UI_TIMEOUT_SECONDS);
   const respondingRef = useRef(false);
+  const hasReceivedRequestRef = useRef(false);
   const active = queue[0] ?? null;
 
   const resolve = useCallback(
@@ -46,6 +47,7 @@ export default function PermissionSurface() {
     let unlisten: (() => void) | undefined;
 
     void onPermissionRequest((request) => {
+      hasReceivedRequestRef.current = true;
       setQueue((current) => {
         if (current.some((item) => item.request_id === request.request_id)) {
           return current;
@@ -86,7 +88,7 @@ export default function PermissionSurface() {
   }, [active?.request_id, resolve]);
 
   useEffect(() => {
-    if (active || queue.length > 0) return;
+    if (active || queue.length > 0 || !hasReceivedRequestRef.current) return;
     const timer = window.setTimeout(() => {
       void getCurrentWindow().hide();
     }, 120);
