@@ -65,7 +65,7 @@ assistant doctor
 assistant logs --follow
 ```
 
-The old full React chat/settings application is no longer mounted by the normal frontend entry point. Its source remains temporarily in the repository for rollback/reference while Windows validation is completed.
+The old full React chat/settings application is no longer mounted and its retired management source has been removed. The remaining frontend source is intentionally limited to QuickOverlay, EdgeOverlay, PermissionSurface, and their shared contracts/styles.
 
 ## Architecture
 
@@ -84,10 +84,8 @@ Local Safe Path    Context Engine
        |             v
        |       Antigravity Bridge
        |             |
-       |             v
        |       Antigravity CLI
        |             |
-       |             v
        |            MCP
        |             |
        |      Permission Gateway
@@ -275,11 +273,18 @@ assistant runtime status [--json]
 assistant runtime ping
 assistant runtime restart
 
+assistant conversation reset
+
+assistant startup show
+assistant startup enable
+assistant startup disable
+
 assistant overlay show
 assistant overlay hide
 
 assistant ai show
 assistant ai models
+assistant ai login
 assistant ai set --model <id>
 assistant ai set --effort <value>
 assistant ai reset
@@ -301,7 +306,9 @@ assistant logs --lines 300
 assistant logs --follow
 ```
 
-AI/wake operations use live authenticated management IPC when the background process is running and durable settings fallback where safe when it is offline.
+AI/wake configuration uses live authenticated management IPC when the background process is running and durable settings fallback where safe when it is offline. Antigravity login launch, conversation reset, and Windows autostart mutations are live-runtime operations and intentionally require the background process.
+
+`assistant startup ...` is the canonical terminal-first autostart management path. The existing tray autostart checkbox remains temporarily for compatibility; its checkmark is initialized when the desktop process starts and does not yet live-refresh after an autostart change made through the CLI. This legacy duplicate control should be removed after local Windows verification.
 
 ## Persistent logs
 
@@ -356,7 +363,8 @@ The external foreground HWND is captured before Quick takes focus, so active-win
 - compact always-on-top quick overlay;
 - click-through perimeter edge glow;
 - permission-only main window hidden by default;
-- tray/autostart/background services;
+- tray show/hide/background services;
+- Windows autostart managed through the authenticated terminal management path;
 - authenticated local management channel;
 - persistent bounded runtime log.
 
@@ -411,8 +419,14 @@ cargo build -p assisstant-desktop --features voice-stt,wake-word --locked
 assistant status
 assistant doctor
 assistant runtime ping
+assistant runtime status
+assistant conversation reset
+assistant startup show
+assistant startup enable
+assistant startup disable
 assistant overlay show
 assistant overlay hide
+assistant ai login
 assistant logs --follow
 ```
 
@@ -426,7 +440,8 @@ Also exercise:
 - permission surface auto-hide and edge cleanup;
 - STT model install from CLI;
 - wake phrase validation/hot reload;
-- Antigravity account/session behavior;
+- Antigravity login/account/session reset behavior;
+- autostart enable/disable and background startup after sign-in;
 - real Windows automation tools;
 - NSIS packaging and installed `assistant.exe`.
 
