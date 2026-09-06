@@ -37,13 +37,37 @@ pub async fn assistant_resource_install(
     state: State<'_, DesktopState>,
     wake: State<'_, WakeService>,
 ) -> Result<ResourceInstallResult, String> {
+    install_resource(
+        &app,
+        resource_id.trim(),
+        phrase,
+        state.inner(),
+        wake.inner(),
+    )
+    .await
+}
+
+/// Shared resource action used by both the Tauri command surface and the
+/// authenticated terminal-management IPC. Keeping one implementation preserves
+/// the existing SHA/size validation, atomic promotion, and wake-detector
+/// rollback behavior instead of duplicating a downloader in `assistant.exe`.
+pub(super) async fn install_resource(
+    app: &AppHandle,
+    resource_id: &str,
+    phrase: Option<String>,
+    state: &DesktopState,
+    wake: &WakeService,
+) -> Result<ResourceInstallResult, String> {
     let resource_id = resource_id.trim();
+    if resource_id.is_empty() {
+        return Err("resource id must not be empty".into());
+    }
     if resource_id == WAKE_KEYWORDS_ACTION_ID {
-        return prepare_wake_keywords(phrase, state.inner(), wake.inner()).await;
+        return prepare_wake_keywords(phrase, state, wake).await;
     }
 
     installer()?
-        .install(&app, resource_id, &state.resources)
+        .install(app, resource_id, &state.resources)
         .await
 }
 
