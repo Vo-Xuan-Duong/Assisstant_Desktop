@@ -21,6 +21,7 @@ use crate::{
     DesktopState,
     antigravity_settings::AntigravitySettings,
     hide_quick_window, quick_panel,
+    resource_api,
     resource_registry::RuntimeResourceSnapshot,
     runtime_paths::RuntimePaths,
     show_quick_window,
@@ -160,7 +161,8 @@ async fn run_server(app: AppHandle, listener: TcpListener, secret: String) {
         }
 
         // Management traffic is low-volume and mutations are intentionally
-        // serialized. A local client cannot fan out concurrent state changes.
+        // serialized. Resource installation may be long-running, but keeping
+        // it serialized prevents overlapping installs/runtime mutations.
         if let Err(error) = handle_connection(&app, stream, &secret).await {
             warn!(%error, "management IPC request failed");
         }
@@ -274,6 +276,7 @@ async fn dispatch(app: &AppHandle, command: &str, payload: Value) -> Result<Valu
             let state = app.state::<DesktopState>();
             serialize_resources(state.resources.snapshot())
         }
+        "resources.install" => resource_install(app, payload).await,
         _ => Err(format!("unknown management command `{command}`")),
     }
 }
@@ -354,6 +357,30 @@ async fn wake_set_enabled(app: &AppHandle, payload: Value) -> Result<Value, Stri
     wake.set_enabled(payload.enabled).await?;
     serde_json::to_value(wake.status())
         .map_err(|error| format!("cannot serialize wake status: {error}"))
+}
+
+#[derive(Debug, Deserialize)]
+struct ResourceInstallPayload {
+    resource_id: String,
+    #[serde(default)]
+    phrase: Option<String>,
+}
+
+async fn resource_install(app: &AppHandle, payload: Value) -> Result<Value, String> {
+    let payload: ResourceInstallPayload = serde_json::from_value(payload)
+        .map_err(|error| format!("invalid resources.install payload: {error}"))?;
+    let state = app.state::<DesktopState>();
+    let wake = app.state::<WakeService>();
+    let result = resource_api::install_resource(
+        app,
+        payload.resource_id.trim(),
+        payload.phrase,
+        state.inner(),
+        wake.inner(),
+    )
+    .await?;
+    serde_json::to_value(result)
+        .map_err(|error| format!("cannot serialize resource install result: {error}"))
 }
 
 fn serialize_resources(snapshot: RuntimeResourceSnapshot) -> Result<Value, String> {

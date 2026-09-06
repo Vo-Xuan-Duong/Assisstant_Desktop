@@ -1,19 +1,27 @@
 use std::{
     env, fs,
-    io::{self, Write},
+    io::{self, BufRead, BufReader, Read, Write},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::Command,
+    time::Duration,
 };
 
 use assistant_common::ToolRisk;
 use permission_engine::{PermissionDecision, PermissionOverrideSnapshot};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use uuid::Uuid;
 use windows_tools::TOOL_CATALOG;
 
 const APP_IDENTIFIER: &str = "com.voduong.assisstantdesktop";
 const ZIPFORMER_DIR_NAME: &str = "sherpa-onnx-zipformer-vi-30M-int8-2026-02-09";
 const WAKE_DIR_NAME: &str = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01";
+const MANAGEMENT_PROTOCOL_VERSION: u32 = 1;
+const MANAGEMENT_ENDPOINT_FILE: &str = "management.json";
+const MANAGEMENT_TIMEOUT: Duration = Duration::from_secs(3);
+const RESOURCE_INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const MAX_MANAGEMENT_RESPONSE_BYTES: usize = 256 * 1024;
 
 type CliResult<T> = Result<T, String>;
 
@@ -44,11 +52,13 @@ fn run() -> CliResult<()> {
         }
         "status" => command_status(&paths, args.iter().skip(1).any(|arg| arg == "--json")),
         "paths" => command_paths(&paths),
+        "doctor" => command_doctor(&paths),
+        "runtime" => command_runtime(&paths, &args[1..]),
+        "overlay" => command_overlay(&paths, &args[1..]),
         "ai" => command_ai(&paths, &args[1..]),
         "wake" => command_wake(&paths, &args[1..]),
         "resources" => command_resources(&paths, &args[1..]),
         "permissions" => command_permissions(&paths, &args[1..]),
-        "doctor" => command_doctor(&paths),
         other => Err(format!(
             "unknown command `{other}`. Run `assistant help` for available commands."
         )),
@@ -64,22 +74,30 @@ USAGE
   assistant <command> [options]
 
 COMMANDS
-  status [--json]                         Runtime/config snapshot
+  status [--json]                         Local/runtime snapshot
   paths                                   Show shared local paths
-  doctor                                  Local readiness diagnostics
+  doctor                                  Local + live runtime diagnostics
 
-  ai show                                 Show Antigravity configuration
+  runtime status [--json]                 Query the running background runtime
+  runtime ping                            Verify authenticated management IPC
+  runtime restart                         Restart the Antigravity agent session
+
+  overlay show                            Show the Gemini-style quick overlay
+  overlay hide                            Hide the quick overlay and edge glow
+
+  ai show                                 Show live/persisted Antigravity config
   ai models                               Run `agy models`
-  ai set --model <id>                     Persist model selection
-  ai set --effort <value>                 Persist reasoning effort
-  ai reset                                Reset AI settings to defaults
+  ai set --model <id>                     Set model (live when runtime is running)
+  ai set --effort <value>                 Set reasoning effort
+  ai reset                                Reset AI settings to runtime defaults
 
-  wake show                               Show wake preferences
-  wake enable                             Enable wake on next runtime load
-  wake disable                            Disable wake on next runtime load
-  wake phrase <text>                      Persist wake phrase label
+  wake show                               Show live/persisted wake state
+  wake enable                             Enable wake detection
+  wake disable                            Disable wake detection
+  wake phrase <text>                      Generate, validate and hot-reload keyword
 
   resources list                          Inspect STT/wake model files
+  resources install <id>                  Install via the verified runtime installer
 
   permissions list                        List native tool policy
   permissions set <tool> <allow|ask|deny> Set a Moderate-tool override
@@ -123,6 +141,8 @@ fn extract_data_dir(args: &mut Vec<String>) -> CliResult<Option<PathBuf>> {
 #[derive(Debug, Clone)]
 struct AppPaths {
     root: PathBuf,
+    runtime_dir: PathBuf,
+    management_endpoint: PathBuf,
     antigravity_settings: PathBuf,
     wake_settings: PathBuf,
     permission_policy: PathBuf,
@@ -136,6 +156,7 @@ impl AppPaths {
             Some(path) => require_absolute("application data path", path)?,
             None => default_app_data_dir()?,
         };
+        let runtime_dir = root.join("runtime");
         let stt_model_dir = absolute_env_override(
             "ASSISTANT_ZIPFORMER_MODEL_DIR",
             root.join("models").join("stt").join(ZIPFORMER_DIR_NAME),
@@ -150,9 +171,11 @@ impl AppPaths {
         )?;
 
         Ok(Self {
+            management_endpoint: runtime_dir.join(MANAGEMENT_ENDPOINT_FILE),
             antigravity_settings: root.join("settings").join("antigravity.json"),
             wake_settings: root.join("settings").join("wake.json"),
             permission_policy,
+            runtime_dir,
             root,
             stt_model_dir,
             wake_model_dir,
@@ -196,7 +219,9 @@ struct ResourceFileSummary {
 #[derive(Debug, Clone, Serialize)]
 struct StatusSnapshot {
     app_data: String,
-    runtime_running: Option<bool>,
+    runtime_process: Option<bool>,
+    runtime_ipc: bool,
+    runtime_pid: Option<u32>,
     antigravity_binary: String,
     antigravity_available: bool,
     ai_model: Option<String>,
@@ -213,10 +238,18 @@ impl StatusSnapshot {
         let wake_preferences = load_json_or_default::<WakePreferences>(&paths.wake_settings)?;
         let antigravity_binary = resolve_antigravity_binary();
         let antigravity_available = command_available(&antigravity_binary);
+        let (runtime_ipc, runtime_pid) = match ManagementClient::discover(paths)
+            .and_then(|client| client.call("runtime.ping", Value::Null).map(|_| client.endpoint.pid))
+        {
+            Ok(pid) => (true, Some(pid)),
+            Err(_) => (false, None),
+        };
 
         Ok(Self {
             app_data: paths.root.display().to_string(),
-            runtime_running: runtime_running(),
+            runtime_process: runtime_running(),
+            runtime_ipc,
+            runtime_pid,
             antigravity_binary,
             antigravity_available,
             ai_model: ai.model,
@@ -229,9 +262,148 @@ impl StatusSnapshot {
     }
 }
 
-fn command_status(paths: &AppPaths, json: bool) -> CliResult<()> {
+#[derive(Debug, Clone, Deserialize)]
+struct ManagementEndpoint {
+    version: u32,
+    host: String,
+    port: u16,
+    secret: String,
+    pid: u32,
+}
+
+#[derive(Serialize)]
+struct ManagementRequest<'a> {
+    version: u32,
+    secret: &'a str,
+    command: &'a str,
+    payload: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManagementResponse {
+    version: u32,
+    ok: bool,
+    #[serde(default)]
+    result: Option<Value>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+struct ManagementClient {
+    endpoint: ManagementEndpoint,
+}
+
+impl ManagementClient {
+    fn discover(paths: &AppPaths) -> CliResult<Self> {
+        let bytes = fs::read(&paths.management_endpoint).map_err(|error| {
+            format!(
+                "background management endpoint is unavailable at {}: {error}",
+                paths.management_endpoint.display()
+            )
+        })?;
+        let endpoint: ManagementEndpoint = serde_json::from_slice(&bytes).map_err(|error| {
+            format!(
+                "cannot parse management endpoint {}: {error}",
+                paths.management_endpoint.display()
+            )
+        })?;
+        if endpoint.version != MANAGEMENT_PROTOCOL_VERSION {
+            return Err(format!(
+                "management protocol mismatch: endpoint={} cli={}",
+                endpoint.version, MANAGEMENT_PROTOCOL_VERSION
+            ));
+        }
+        let ip: IpAddr = endpoint
+            .host
+            .parse()
+            .map_err(|_| "management endpoint host is not a valid IP address".to_owned())?;
+        if ip != IpAddr::V4(Ipv4Addr::LOCALHOST) || endpoint.port == 0 {
+            return Err("management endpoint is not a valid 127.0.0.1 listener".into());
+        }
+        if endpoint.secret.len() < 32 {
+            return Err("management endpoint secret is invalid".into());
+        }
+        Ok(Self { endpoint })
+    }
+
+    fn call(&self, command: &str, payload: Value) -> CliResult<Value> {
+        self.call_with_timeout(command, payload, MANAGEMENT_TIMEOUT)
+    }
+
+    fn call_with_timeout(
+        &self,
+        command: &str,
+        payload: Value,
+        response_timeout: Duration,
+    ) -> CliResult<Value> {
+        let ip: IpAddr = self
+            .endpoint
+            .host
+            .parse()
+            .map_err(|_| "management endpoint host is invalid".to_owned())?;
+        let address = SocketAddr::new(ip, self.endpoint.port);
+        let mut stream = TcpStream::connect_timeout(&address, MANAGEMENT_TIMEOUT)
+            .map_err(|error| format!("cannot connect to background runtime at {address}: {error}"))?;
+        stream
+            .set_read_timeout(Some(response_timeout))
+            .map_err(|error| format!("cannot configure management read timeout: {error}"))?;
+        stream
+            .set_write_timeout(Some(MANAGEMENT_TIMEOUT))
+            .map_err(|error| format!("cannot configure management write timeout: {error}"))?;
+
+        let request = ManagementRequest {
+            version: MANAGEMENT_PROTOCOL_VERSION,
+            secret: &self.endpoint.secret,
+            command,
+            payload,
+        };
+        let mut bytes = serde_json::to_vec(&request)
+            .map_err(|error| format!("cannot serialize management request: {error}"))?;
+        bytes.push(b'\n');
+        stream
+            .write_all(&bytes)
+            .map_err(|error| format!("cannot write management request: {error}"))?;
+        stream
+            .flush()
+            .map_err(|error| format!("cannot flush management request: {error}"))?;
+
+        let mut reader = BufReader::new(stream);
+        let mut response_bytes = Vec::new();
+        reader
+            .by_ref()
+            .take((MAX_MANAGEMENT_RESPONSE_BYTES + 1) as u64)
+            .read_until(b'\n', &mut response_bytes)
+            .map_err(|error| format!("cannot read management response: {error}"))?;
+        if response_bytes.len() > MAX_MANAGEMENT_RESPONSE_BYTES {
+            return Err("management response exceeded the CLI safety limit".into());
+        }
+        if response_bytes.last() == Some(&b'\n') {
+            response_bytes.pop();
+        }
+        if response_bytes.is_empty() {
+            return Err("background runtime returned an empty management response".into());
+        }
+
+        let response: ManagementResponse = serde_json::from_slice(&response_bytes)
+            .map_err(|error| format!("cannot parse management response: {error}"))?;
+        if response.version != MANAGEMENT_PROTOCOL_VERSION {
+            return Err(format!(
+                "management response version mismatch: {}",
+                response.version
+            ));
+        }
+        if !response.ok {
+            return Err(response
+                .error
+                .unwrap_or_else(|| "background runtime rejected the command".into()));
+        }
+        Ok(response.result.unwrap_or(Value::Null))
+    }
+}
+
+fn command_status(paths: &AppPaths, output_json: bool) -> CliResult<()> {
     let snapshot = StatusSnapshot::load(paths)?;
-    if json {
+    if output_json {
         println!(
             "{}",
             serde_json::to_string_pretty(&snapshot)
@@ -241,64 +413,123 @@ fn command_status(paths: &AppPaths, json: bool) -> CliResult<()> {
     }
 
     println!("Assisstant Desktop");
-    println!("  Runtime        {}", runtime_name(snapshot.runtime_running));
+    println!("  Runtime process {}", runtime_name(snapshot.runtime_process));
     println!(
-        "  Antigravity    {} ({})",
+        "  Runtime IPC     {}{}",
+        if snapshot.runtime_ipc { "ready" } else { "unavailable" },
+        snapshot
+            .runtime_pid
+            .map(|pid| format!(" (pid {pid})"))
+            .unwrap_or_default()
+    );
+    println!(
+        "  Antigravity     {} ({})",
         ready_name(snapshot.antigravity_available),
         snapshot.antigravity_binary
     );
     println!(
-        "  AI model       {}",
+        "  AI model        {}",
         snapshot.ai_model.as_deref().unwrap_or("default")
     );
     println!(
-        "  AI effort      {}",
+        "  AI effort       {}",
         snapshot.ai_effort.as_deref().unwrap_or("default")
     );
     println!(
-        "  Wake           {}",
-        if snapshot.wake_enabled {
-            "enabled"
-        } else {
-            "disabled"
-        }
+        "  Wake            {}",
+        if snapshot.wake_enabled { "enabled" } else { "disabled" }
     );
     println!(
-        "  STT            {}/{} {}",
+        "  STT             {}/{} {}",
         snapshot.stt.present,
         snapshot.stt.required,
         ready_name(snapshot.stt.ready)
     );
     println!(
-        "  Wake model     {}/{} {}",
+        "  Wake model      {}/{} {}",
         snapshot.wake.present,
         snapshot.wake.required,
         ready_name(snapshot.wake.ready)
     );
-    println!("  Data           {}", snapshot.app_data);
+    println!("  Data            {}", snapshot.app_data);
     Ok(())
 }
 
 fn command_paths(paths: &AppPaths) -> CliResult<()> {
-    println!("app_data          {}", paths.root.display());
-    println!("ai_settings       {}", paths.antigravity_settings.display());
-    println!("wake_settings     {}", paths.wake_settings.display());
-    println!("permission_policy {}", paths.permission_policy.display());
-    println!("stt_model         {}", paths.stt_model_dir.display());
-    println!("wake_model        {}", paths.wake_model_dir.display());
+    println!("app_data           {}", paths.root.display());
+    println!("runtime            {}", paths.runtime_dir.display());
+    println!("management         {}", paths.management_endpoint.display());
+    println!("ai_settings        {}", paths.antigravity_settings.display());
+    println!("wake_settings      {}", paths.wake_settings.display());
+    println!("permission_policy  {}", paths.permission_policy.display());
+    println!("stt_model          {}", paths.stt_model_dir.display());
+    println!("wake_model         {}", paths.wake_model_dir.display());
     Ok(())
+}
+
+fn command_runtime(paths: &AppPaths, args: &[String]) -> CliResult<()> {
+    let subcommand = args.first().map(String::as_str).unwrap_or("status");
+    let client = ManagementClient::discover(paths)?;
+    match subcommand {
+        "status" => {
+            let result = client.call("runtime.status", Value::Null)?;
+            if args.iter().skip(1).any(|arg| arg == "--json") {
+                print_json(&result)
+            } else {
+                println!("Background runtime PID: {}", client.endpoint.pid);
+                print_json(&result)
+            }
+        }
+        "ping" => {
+            let result = client.call("runtime.ping", Value::Null)?;
+            println!("management IPC ready");
+            print_json(&result)
+        }
+        "restart" | "restart-agent" => {
+            client.call("runtime.restart_agent", Value::Null)?;
+            println!("Antigravity agent session restarted.");
+            Ok(())
+        }
+        other => Err(format!("unknown runtime command `{other}`")),
+    }
+}
+
+fn command_overlay(paths: &AppPaths, args: &[String]) -> CliResult<()> {
+    let subcommand = args.first().map(String::as_str).unwrap_or("show");
+    let client = ManagementClient::discover(paths)?;
+    match subcommand {
+        "show" => {
+            client.call("overlay.show", Value::Null)?;
+            println!("Quick assistant shown.");
+            Ok(())
+        }
+        "hide" => {
+            client.call("overlay.hide", Value::Null)?;
+            println!("Quick assistant hidden.");
+            Ok(())
+        }
+        other => Err(format!("unknown overlay command `{other}`")),
+    }
 }
 
 fn command_ai(paths: &AppPaths, args: &[String]) -> CliResult<()> {
     let subcommand = args.first().map(String::as_str).unwrap_or("show");
     match subcommand {
         "show" => {
+            if let Ok(client) = ManagementClient::discover(paths) {
+                if let Ok(result) = client.call("ai.get", Value::Null) {
+                    println!("source  live runtime");
+                    return print_json(&result);
+                }
+            }
             let settings = load_json_or_default::<AiSettings>(&paths.antigravity_settings)?;
             let binary = resolve_antigravity_binary();
+            println!("source  persisted config");
             println!("binary  {binary}");
             println!("status  {}", ready_name(command_available(&binary)));
             println!("model   {}", settings.model.as_deref().unwrap_or("default"));
             println!("effort  {}", settings.effort.as_deref().unwrap_or("default"));
+            Ok(())
         }
         "models" => {
             let binary = resolve_antigravity_binary();
@@ -313,6 +544,7 @@ fn command_ai(paths: &AppPaths, args: &[String]) -> CliResult<()> {
                 ));
             }
             print!("{}", String::from_utf8_lossy(&output.stdout));
+            Ok(())
         }
         "set" => {
             let mut model = None;
@@ -342,17 +574,28 @@ fn command_ai(paths: &AppPaths, args: &[String]) -> CliResult<()> {
             if let Some(value) = effort {
                 settings.effort = clean_optional(value);
             }
-            save_json_atomic(&paths.antigravity_settings, &settings)?;
-            println!("AI settings saved: {}", paths.antigravity_settings.display());
-            print_reload_note();
+            apply_ai_settings(paths, &settings)
         }
-        "reset" => {
-            save_json_atomic(&paths.antigravity_settings, &AiSettings::default())?;
-            println!("AI settings reset to runtime defaults.");
-            print_reload_note();
-        }
-        other => return Err(format!("unknown ai command `{other}`")),
+        "reset" => apply_ai_settings(paths, &AiSettings::default()),
+        other => Err(format!("unknown ai command `{other}`")),
     }
+}
+
+fn apply_ai_settings(paths: &AppPaths, settings: &AiSettings) -> CliResult<()> {
+    if let Ok(client) = ManagementClient::discover(paths) {
+        let result = client.call(
+            "ai.set",
+            json!({
+                "model": settings.model.clone(),
+                "effort": settings.effort.clone(),
+            }),
+        )?;
+        println!("AI settings applied to the running background runtime.");
+        return print_json(&result);
+    }
+
+    save_json_atomic(&paths.antigravity_settings, settings)?;
+    println!("AI settings saved for the next runtime start.");
     Ok(())
 }
 
@@ -362,13 +605,20 @@ fn command_wake(paths: &AppPaths, args: &[String]) -> CliResult<()> {
 
     match subcommand {
         "show" => {
+            if let Ok(client) = ManagementClient::discover(paths) {
+                if let Ok(result) = client.call("wake.get", Value::Null) {
+                    println!("source  live runtime");
+                    return print_json(&result);
+                }
+            }
+            println!("source   persisted config");
             println!("enabled  {}", preferences.enabled);
             println!("phrase   {}", preferences.phrase.as_deref().unwrap_or("default"));
             println!("file     {}", paths.wake_settings.display());
-            return Ok(());
+            Ok(())
         }
-        "enable" => preferences.enabled = true,
-        "disable" => preferences.enabled = false,
+        "enable" => apply_wake_enabled(paths, &mut preferences, true),
+        "disable" => apply_wake_enabled(paths, &mut preferences, false),
         "phrase" => {
             if args.len() < 2 {
                 return Err("wake phrase requires text".into());
@@ -378,37 +628,89 @@ fn command_wake(paths: &AppPaths, args: &[String]) -> CliResult<()> {
             if phrase.is_empty() {
                 return Err("wake phrase cannot be empty".into());
             }
-            preferences.phrase = Some(phrase.to_owned());
+
+            let client = ManagementClient::discover(paths).map_err(|error| {
+                format!(
+                    "changing the active wake phrase requires the running background runtime for tokenizer/native validation: {error}"
+                )
+            })?;
+            println!("Generating and validating wake keyword...");
+            let result = client.call_with_timeout(
+                "resources.install",
+                json!({
+                    "resource_id": "wake_keywords",
+                    "phrase": phrase,
+                }),
+                RESOURCE_INSTALL_TIMEOUT,
+            )?;
+            println!("Wake phrase generated, validated and hot-reloaded.");
+            print_json(&result)
         }
-        other => return Err(format!("unknown wake command `{other}`")),
+        other => Err(format!("unknown wake command `{other}`")),
+    }
+}
+
+fn apply_wake_enabled(
+    paths: &AppPaths,
+    preferences: &mut WakePreferences,
+    enabled: bool,
+) -> CliResult<()> {
+    if let Ok(client) = ManagementClient::discover(paths) {
+        let result = client.call("wake.set_enabled", json!({ "enabled": enabled }))?;
+        println!("Wake state applied to the running background runtime.");
+        return print_json(&result);
     }
 
-    save_json_atomic(&paths.wake_settings, &preferences)?;
-    println!("Wake settings saved: {}", paths.wake_settings.display());
-    print_reload_note();
+    preferences.enabled = enabled;
+    save_json_atomic(&paths.wake_settings, preferences)?;
+    println!("Wake state saved for the next runtime start.");
     Ok(())
 }
 
 fn command_resources(paths: &AppPaths, args: &[String]) -> CliResult<()> {
     let subcommand = args.first().map(String::as_str).unwrap_or("list");
-    if subcommand != "list" {
-        return Err(format!("unknown resources command `{subcommand}`"));
-    }
-
-    for resource in [stt_resource(paths), wake_resource(paths)] {
-        println!(
-            "{}  {}/{}  {}",
-            resource.id,
-            resource.present,
-            resource.required,
-            ready_name(resource.ready)
-        );
-        println!("  {}", resource.root);
-        for file in resource.files {
-            println!("  [{}] {}", if file.exists { "x" } else { " " }, file.name);
+    match subcommand {
+        "list" => {
+            for resource in [stt_resource(paths), wake_resource(paths)] {
+                println!(
+                    "{}  {}/{}  {}",
+                    resource.id,
+                    resource.present,
+                    resource.required,
+                    ready_name(resource.ready)
+                );
+                println!("  {}", resource.root);
+                for file in resource.files {
+                    println!("  [{}] {}", if file.exists { "x" } else { " " }, file.name);
+                }
+            }
+            Ok(())
         }
+        "install" => {
+            let resource_id = args
+                .get(1)
+                .map(String::as_str)
+                .ok_or_else(|| "usage: assistant resources install <resource-id>".to_owned())?;
+            if resource_id == "wake_keywords" {
+                return Err(
+                    "use `assistant wake phrase <text>` so keyword generation receives the phrase"
+                        .into(),
+                );
+            }
+            let client = ManagementClient::discover(paths).map_err(|error| {
+                format!("resource installation requires the running background runtime: {error}")
+            })?;
+            println!("Installing resource `{resource_id}` with verified runtime installer...");
+            let result = client.call_with_timeout(
+                "resources.install",
+                json!({ "resource_id": resource_id }),
+                RESOURCE_INSTALL_TIMEOUT,
+            )?;
+            println!("Resource installation completed.");
+            print_json(&result)
+        }
+        other => Err(format!("unknown resources command `{other}`")),
     }
-    Ok(())
 }
 
 fn command_permissions(paths: &AppPaths, args: &[String]) -> CliResult<()> {
@@ -445,7 +747,7 @@ fn command_permissions(paths: &AppPaths, args: &[String]) -> CliResult<()> {
                 decision_name(decision),
                 policy.revision
             );
-            print_reload_note();
+            println!("The override applies to subsequent Moderate-tool authorizations.");
         }
         "clear" => {
             if args.len() != 2 {
@@ -464,7 +766,7 @@ fn command_permissions(paths: &AppPaths, args: &[String]) -> CliResult<()> {
             policy.clear(definition.name);
             save_json_atomic(&paths.permission_policy, &policy)?;
             println!("{} override cleared (revision {})", definition.name, policy.revision);
-            print_reload_note();
+            println!("The baseline policy applies to subsequent tool authorizations.");
         }
         other => return Err(format!("unknown permissions command `{other}`")),
     }
@@ -520,6 +822,18 @@ fn command_doctor(paths: &AppPaths) -> CliResult<()> {
         &format!("{}/{} files at {}", wake.present, wake.required, wake.root),
         &mut failures,
     );
+
+    match ManagementClient::discover(paths)
+        .and_then(|client| client.call("runtime.ping", Value::Null))
+    {
+        Ok(result) => doctor_line(
+            "management IPC",
+            true,
+            &format!("authenticated: {}", compact_json(&result)),
+            &mut failures,
+        ),
+        Err(error) => println!("[--] {:<20} {}", "management IPC", error),
+    }
 
     println!("\nRuntime process: {}", runtime_name(runtime_running()));
     if failures == 0 {
@@ -690,6 +1004,19 @@ fn save_json_atomic<T: Serialize>(path: &Path, value: &T) -> CliResult<()> {
     Ok(())
 }
 
+fn print_json(value: &Value) -> CliResult<()> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value)
+            .map_err(|error| format!("cannot serialize command result: {error}"))?
+    );
+    Ok(())
+}
+
+fn compact_json(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".into())
+}
+
 fn default_app_data_dir() -> CliResult<PathBuf> {
     #[cfg(windows)]
     {
@@ -784,12 +1111,6 @@ fn clean_optional(value: String) -> Option<String> {
     } else {
         Some(value.to_owned())
     }
-}
-
-fn print_reload_note() {
-    println!(
-        "Note: the durable shared config is updated. A currently running desktop process must be restarted before the change is guaranteed to be active; live management IPC is the next migration phase."
-    );
 }
 
 fn doctor_line(label: &str, ok: bool, detail: &str, failures: &mut usize) {
@@ -892,33 +1213,38 @@ fn render_tui_header(page: TuiPage) {
 
 fn render_tui_dashboard(status: &StatusSnapshot) {
     println!("SYSTEM STATUS\n");
-    println!("  Runtime       {}", runtime_name(status.runtime_running));
-    println!("  Antigravity   {}", ready_name(status.antigravity_available));
+    println!("  Runtime process  {}", runtime_name(status.runtime_process));
     println!(
-        "  STT           {}/{} {}",
+        "  Management IPC  {}",
+        if status.runtime_ipc { "ready" } else { "unavailable" }
+    );
+    println!("  Antigravity      {}", ready_name(status.antigravity_available));
+    println!(
+        "  STT              {}/{} {}",
         status.stt.present,
         status.stt.required,
         ready_name(status.stt.ready)
     );
     println!(
-        "  Wake          {}",
+        "  Wake             {}",
         if status.wake_enabled { "enabled" } else { "disabled" }
     );
     println!(
-        "  Wake model    {}/{} {}",
+        "  Wake model       {}/{} {}",
         status.wake.present,
         status.wake.required,
         ready_name(status.wake.ready)
     );
     println!(
-        "  AI model      {}",
+        "  AI model         {}",
         status.ai_model.as_deref().unwrap_or("default")
     );
     println!(
-        "  AI effort     {}",
+        "  AI effort        {}",
         status.ai_effort.as_deref().unwrap_or("default")
     );
     println!("\nDATA\n  {}", status.app_data);
+    println!("\nLive commands: assistant runtime status | assistant overlay show");
 }
 
 fn render_tui_resources(status: &StatusSnapshot) {
@@ -936,6 +1262,7 @@ fn render_tui_resources(status: &StatusSnapshot) {
         }
         println!();
     }
+    println!("Install: assistant resources install stt_zipformer_vi");
 }
 
 fn render_tui_ai(status: &StatusSnapshot) {
@@ -954,4 +1281,5 @@ fn render_tui_ai(status: &StatusSnapshot) {
     println!("  assistant ai models");
     println!("  assistant ai set --model <id> --effort <value>");
     println!("  assistant ai reset");
+    println!("  assistant runtime restart");
 }
