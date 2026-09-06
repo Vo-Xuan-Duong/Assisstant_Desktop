@@ -44,7 +44,7 @@ The Quick Assistant is focusable because its text field needs keyboard input. Be
 
 That captured handle is used for:
 
-- monitor selection;
+- monitor/work-area selection;
 - contextual screen/window collection;
 - UI Automation targeting;
 - deterministic `window_get_active` Safe requests.
@@ -58,12 +58,27 @@ The Assistant therefore does not accidentally treat its own overlay as the appli
 - max width `760` physical px;
 - min target width `420` physical px when space allows;
 - height `206` physical px;
-- bottom-centered on the source monitor;
+- bottom-centered inside the source monitor **work area**;
+- `18` physical px bottom margin inside that work area;
 - undecorated and transparent;
 - fixed size and always-on-top;
 - skipped from taskbar;
 - focusable;
 - hidden until invocation.
+
+The work area comes from Win32 `MONITORINFO.rcWork`, so Windows-reserved desktop space such as a taskbar docked to the bottom, top, left, or right is excluded before Quick is positioned.
+
+Resolution order:
+
+```text
+source HWND monitor rcWork
+        |
+        +-- unavailable -> primary monitor rcWork
+        |
+        +-- unavailable -> Tauri primary full monitor bounds
+```
+
+The last fallback intentionally favors showing the Assistant over failing activation; it may include taskbar space if Win32 work-area lookup is unavailable.
 
 Only the compact rectangle receives keyboard/pointer input. The rest of the desktop remains usable.
 
@@ -158,6 +173,8 @@ Edge manager
 
 Each edge window is transparent, non-focusable, always-on-top, skipped from the taskbar, and configured with `set_ignore_cursor_events(true)`.
 
+Edge geometry still follows the **full monitor bounds**, not `rcWork`. This is intentional: the glow represents the physical display perimeter while Quick must stay inside the usable desktop work area.
+
 Visual modes remain:
 
 - activated: short bright bloom;
@@ -211,12 +228,15 @@ On Windows, verify:
 7. Ask which window is active; it should refer to the source app, not Quick.
 8. Left-click tray and use tray **Mở Assistant**; both should show Quick.
 9. Launch the desktop executable again; the existing single instance should show Quick.
-10. Trigger a Sensitive tool; Quick hides and the compact permission window appears.
-11. Deny with `Esc`; verify the tool is denied.
-12. Trigger again and Allow Once; verify the request proceeds and the permission window hides afterward.
-13. Queue more than one confirmation and verify the permission surface advances through the queue.
-14. Confirm no old chat/settings management UI exists in the frontend source tree or mounted routes.
-15. Use `assistant` / `assistant status` / `assistant logs -f` for management and diagnostics.
+10. With the taskbar at the bottom, verify Quick stays above it with a small margin.
+11. Move the taskbar to top/left/right where supported and verify Quick remains inside the reported work area.
+12. Test a secondary monitor with a different work area/taskbar arrangement; Quick should follow the source application monitor.
+13. Trigger a Sensitive tool; Quick hides and the compact permission window appears.
+14. Deny with `Esc`; verify the tool is denied.
+15. Trigger again and Allow Once; verify the request proceeds and the permission window hides afterward.
+16. Queue more than one confirmation and verify the permission surface advances through the queue.
+17. Confirm no old chat/settings management UI exists in the frontend source tree or mounted routes.
+18. Use `assistant` / `assistant status` / `assistant logs -f` for management and diagnostics.
 
 ## Remaining UI work
 
@@ -224,6 +244,6 @@ The terminal-first surface routing is source-complete. Remaining UI work is refi
 
 - dynamically size Quick for longer responses;
 - add an explicit Stop/Cancel action for microphone/long turns;
-- use exact Windows work-area geometry instead of a fixed bottom margin;
 - optionally add contextual chips and configurable auto-dismiss;
+- remove the legacy tray autostart duplicate after local verification;
 - complete target-Windows lifecycle/permission/wake verification before release.
