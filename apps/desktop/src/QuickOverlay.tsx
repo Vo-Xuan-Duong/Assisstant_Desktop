@@ -27,6 +27,11 @@ const WAKE_TO_COMMAND_DELAY_MS = 180;
 const QUICK_MIN_HEIGHT = 206;
 const QUICK_MAX_HEIGHT = 380;
 const QUICK_RESIZE_EVENT = "quick:resize_request";
+const QUICK_CANCEL_EVENT = "quick:cancel_request";
+
+function isCancellationError(cause: unknown) {
+  return String(cause).toLowerCase().includes("cancel");
+}
 
 function SparkIcon() {
   return (
@@ -54,6 +59,14 @@ function SendIcon() {
   );
 }
 
+function StopIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="7" y="7" width="10" height="10" rx="2" />
+    </svg>
+  );
+}
+
 function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -71,10 +84,12 @@ export default function QuickOverlay() {
   const [streamingText, setStreamingText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cancelPending, setCancelPending] = useState(false);
   const shellRef = useRef<HTMLElement | null>(null);
   const cardRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const busyRef = useRef(false);
+  const cancelRequestedRef = useRef(false);
   const wakeVoiceStarterRef = useRef<() => void>(() => {});
   const wakeTimerRef = useRef<number | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
@@ -153,6 +168,8 @@ export default function QuickOverlay() {
       setError(null);
       setStreamingText("");
       setResponse(null);
+      setCancelPending(false);
+      cancelRequestedRef.current = false;
       lastRequestedHeightRef.current = null;
 
       if (wakeTimerRef.current !== null) {
@@ -185,18 +202,26 @@ export default function QuickOverlay() {
         if (event.to === "idle") {
           setBusy(false);
           setStreamingText("");
+          setCancelPending(false);
+          cancelRequestedRef.current = false;
         }
       } else if (event.type === "text_delta") {
-        setStreamingText((current) => current + event.text);
+        if (!cancelRequestedRef.current) {
+          setStreamingText((current) => current + event.text);
+        }
       } else if (event.type === "response_completed") {
         setResponse(event.text);
         setStreamingText("");
         setBusy(false);
+        setCancelPending(false);
+        cancelRequestedRef.current = false;
       } else if (event.type === "error") {
         setAssistantState("error");
         setError(event.message);
         setVoiceLevel(0);
         setBusy(false);
+        setCancelPending(false);
+        cancelRequestedRef.current = false;
       }
     }).then((fn) => {
       if (disposed) fn();
@@ -230,6 +255,8 @@ export default function QuickOverlay() {
   }, [refreshVoice]);
 
   const statusLabel = useMemo(() => {
+    if (cancelPending) return "Đang dừng lượt AI…";
+
     switch (assistantState) {
       case "listening":
         return "Đang nghe…";
@@ -246,11 +273,12 @@ export default function QuickOverlay() {
       default:
         return response ? "Sẵn sàng cho câu tiếp theo" : "Hỏi Assistant";
     }
-  }, [assistantState, response]);
+  }, [assistantState, cancelPending, response]);
 
   const voiceReady = Boolean(voice?.whisper_compiled && voice.model_available);
   const displayedResponse = streamingText || response;
   const active = busy || !["idle", "error"].includes(assistantState);
+  const cancellable = assistantState === "processing";
   const style = {
     "--voice-level": voiceLevel.toFixed(3),
   } as CSSProperties;
@@ -258,6 +286,23 @@ export default function QuickOverlay() {
   useEffect(() => {
     scheduleResize();
   }, [assistantState, displayedResponse, error, scheduleResize]);
+
+  const requestCancel = useCallback(async () => {
+    if (assistantState !== "processing" || cancelPending) return;
+
+    cancelRequestedRef.current = true;
+    setCancelPending(true);
+    setStreamingText("");
+    setError(null);
+
+    try {
+      await emit(QUICK_CANCEL_EVENT);
+    } catch (cause) {
+      cancelRequestedRef.current = false;
+      setCancelPending(false);
+      setError(`Không thể gửi yêu cầu dừng: ${String(cause)}`);
+    }
+  }, [assistantState, cancelPending]);
 
   const send = useCallback(async () => {
     const prompt = input.trim();
@@ -269,12 +314,16 @@ export default function QuickOverlay() {
     setResponse(null);
     setStreamingText("");
     setError(null);
+    setCancelPending(false);
+    cancelRequestedRef.current = false;
 
     try {
       const result = await submitPrompt(prompt);
       setResponse(result);
     } catch (cause) {
-      setError(`Không thể hoàn thành yêu cầu: ${String(cause)}`);
+      if (!cancelRequestedRef.current && !isCancellationError(cause)) {
+        setError(`Không thể hoàn thành yêu cầu: ${String(cause)}`);
+      }
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -297,6 +346,8 @@ export default function QuickOverlay() {
     setResponse(null);
     setStreamingText("");
     setError(null);
+    setCancelPending(false);
+    cancelRequestedRef.current = false;
     setVoiceLevel(0);
 
     try {
@@ -306,7 +357,9 @@ export default function QuickOverlay() {
         setError(`TTS: ${result.tts_error}`);
       }
     } catch (cause) {
-      setError(`Voice turn thất bại: ${String(cause)}`);
+      if (!cancelRequestedRef.current && !isCancellationError(cause)) {
+        setError(`Voice turn thất bại: ${String(cause)}`);
+      }
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -343,6 +396,17 @@ export default function QuickOverlay() {
             )}
           </div>
           <div className="quick-window-actions">
+            {cancellable && (
+              <button
+                type="button"
+                title="Dừng lượt AI hiện tại"
+                aria-label="Dừng lượt AI hiện tại"
+                disabled={cancelPending}
+                onClick={() => void requestCancel()}
+              >
+                <StopIcon />
+              </button>
+            )}
             <button
               type="button"
               title="Đóng (Esc)"
