@@ -150,6 +150,7 @@ pub struct MicrophoneStream {
     dropped_chunks: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
     capture_id: u64,
+    _cancel_sender: watch::Sender<bool>,
     cancel: watch::Receiver<bool>,
 }
 
@@ -196,7 +197,7 @@ impl MicrophoneStream {
         let capture_id = NEXT_CAPTURE_ID.fetch_add(1, Ordering::Relaxed);
         let (cancel_sender, cancel) = watch::channel(false);
         if let Ok(mut registry) = capture_cancel_registry().lock() {
-            registry.insert(capture_id, cancel_sender);
+            registry.insert(capture_id, cancel_sender.clone());
         }
 
         debug!(
@@ -215,6 +216,7 @@ impl MicrophoneStream {
             dropped_chunks,
             last_error,
             capture_id,
+            _cancel_sender: cancel_sender,
             cancel,
         })
     }
