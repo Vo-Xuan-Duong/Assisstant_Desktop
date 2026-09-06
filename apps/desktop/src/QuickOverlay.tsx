@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import {
   getVoiceCapabilities,
   hideQuickAssistant,
@@ -24,6 +24,9 @@ interface QuickShownPayload {
 }
 
 const WAKE_TO_COMMAND_DELAY_MS = 180;
+const QUICK_MIN_HEIGHT = 206;
+const QUICK_MAX_HEIGHT = 380;
+const QUICK_RESIZE_EVENT = "quick:resize_request";
 
 function SparkIcon() {
   return (
@@ -68,14 +71,64 @@ export default function QuickOverlay() {
   const [streamingText, setStreamingText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const shellRef = useRef<HTMLElement | null>(null);
+  const cardRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const busyRef = useRef(false);
   const wakeVoiceStarterRef = useRef<() => void>(() => {});
   const wakeTimerRef = useRef<number | null>(null);
+  const resizeFrameRef = useRef<number | null>(null);
+  const lastRequestedHeightRef = useRef<number | null>(null);
 
   useEffect(() => {
     busyRef.current = busy;
   }, [busy]);
+
+  const scheduleResize = useCallback(() => {
+    if (resizeFrameRef.current !== null) {
+      window.cancelAnimationFrame(resizeFrameRef.current);
+    }
+
+    resizeFrameRef.current = window.requestAnimationFrame(() => {
+      resizeFrameRef.current = null;
+      const shell = shellRef.current;
+      const card = cardRef.current;
+      if (!shell || !card) return;
+
+      const shellStyle = window.getComputedStyle(shell);
+      const topPadding = Number.parseFloat(shellStyle.paddingTop) || 0;
+      const bottomPadding = Number.parseFloat(shellStyle.paddingBottom) || 0;
+      const measured = Math.ceil(card.scrollHeight + topPadding + bottomPadding + 2);
+      const height = Math.max(QUICK_MIN_HEIGHT, Math.min(QUICK_MAX_HEIGHT, measured));
+
+      if (lastRequestedHeightRef.current === height) return;
+      lastRequestedHeightRef.current = height;
+      void emit(QUICK_RESIZE_EVENT, { height }).catch(() => {
+        lastRequestedHeightRef.current = null;
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(() => scheduleResize());
+    observer?.observe(card);
+    window.addEventListener("resize", scheduleResize);
+    scheduleResize();
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", scheduleResize);
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = null;
+      }
+    };
+  }, [scheduleResize]);
 
   const refreshVoice = useCallback(async () => {
     try {
@@ -100,6 +153,7 @@ export default function QuickOverlay() {
       setError(null);
       setStreamingText("");
       setResponse(null);
+      lastRequestedHeightRef.current = null;
 
       if (wakeTimerRef.current !== null) {
         window.clearTimeout(wakeTimerRef.current);
@@ -201,6 +255,10 @@ export default function QuickOverlay() {
     "--voice-level": voiceLevel.toFixed(3),
   } as CSSProperties;
 
+  useEffect(() => {
+    scheduleResize();
+  }, [assistantState, displayedResponse, error, scheduleResize]);
+
   const send = useCallback(async () => {
     const prompt = input.trim();
     if (!prompt || busyRef.current) return;
@@ -268,11 +326,12 @@ export default function QuickOverlay() {
 
   return (
     <main
+      ref={shellRef}
       className={`quick-shell quick-state-${assistantState} ${active ? "quick-active" : ""}`}
       style={style}
     >
       <div className="quick-outer-glow" aria-hidden="true" />
-      <section className="quick-card" aria-label="Quick Assistant">
+      <section ref={cardRef} className="quick-card" aria-label="Quick Assistant">
         <header className="quick-header">
           <div className="quick-status">
             <span className="quick-spark"><SparkIcon /></span>

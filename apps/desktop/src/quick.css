@@ -204,7 +204,8 @@ body.quick-surface-root {
 .quick-answer {
   min-width: 0;
   min-height: 39px;
-  max-height: 54px;
+  max-height: 190px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   padding: 0 8px;
@@ -214,11 +215,16 @@ body.quick-surface-root {
   line-height: 1.42;
 }
 
+.quick-answer-visible {
+  align-items: flex-start;
+  padding-block: 5px;
+}
+
 .quick-answer p {
   margin: 0;
   width: 100%;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 8;
   -webkit-box-orient: vertical;
   overflow: hidden;
   white-space: pre-wrap;
