@@ -10,7 +10,7 @@ use std::{
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::{Mutex, broadcast},
+    sync::{Mutex, broadcast, watch},
     task::JoinHandle,
 };
 use tracing::{debug, warn};
@@ -215,13 +215,30 @@ impl AntigravitySession {
         self.diagnostics.lock().await.iter().cloned().collect()
     }
 
-    pub async fn ask(&mut self, prompt: &str) -> Result<TurnResult, BridgeError> {
+    pub async fn ask(
+        &mut self,
+        prompt: &str,
+        cancel: &mut watch::Receiver<u64>,
+    ) -> Result<TurnResult, BridgeError> {
         let deadline = turn_timeout();
-        match tokio::time::timeout(deadline, self.ask_inner(prompt)).await {
-            Ok(result) => result,
-            Err(_) => Err(BridgeError::TurnTimeout {
-                seconds: deadline.as_secs(),
-            }),
+        tokio::select! {
+            result = tokio::time::timeout(deadline, self.ask_inner(prompt)) => {
+                match result {
+                    Ok(result) => result,
+                    Err(_) => Err(BridgeError::TurnTimeout {
+                        seconds: deadline.as_secs(),
+                    }),
+                }
+            }
+            changed = cancel.changed() => {
+                if changed.is_err() {
+                    warn!("Antigravity turn cancellation channel closed unexpectedly");
+                } else {
+                    debug!("cancelling active Antigravity turn");
+                }
+                let _ = self.child.start_kill();
+                Err(BridgeError::Cancelled)
+            }
         }
     }
 
