@@ -98,7 +98,7 @@ export default function QuickOverlay() {
       const shellStyle = window.getComputedStyle(shell);
       const topPadding = Number.parseFloat(shellStyle.paddingTop) || 0;
       const bottomPadding = Number.parseFloat(shellStyle.paddingBottom) || 0;
-      const measured = Math.ceil(card.scrollHeight + topPadding + bottomPadding);
+      const measured = Math.ceil(card.scrollHeight + topPadding + bottomPadding + 2);
       const height = Math.max(QUICK_MIN_HEIGHT, Math.min(QUICK_MAX_HEIGHT, measured));
 
       if (lastRequestedHeightRef.current === height) return;
