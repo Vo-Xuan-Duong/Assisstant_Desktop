@@ -221,25 +221,25 @@ impl AntigravitySession {
         cancel: &mut watch::Receiver<u64>,
     ) -> Result<TurnResult, BridgeError> {
         let deadline = turn_timeout();
-        tokio::select! {
+        let cancellation = tokio::select! {
             result = tokio::time::timeout(deadline, self.ask_inner(prompt)) => {
-                match result {
+                return match result {
                     Ok(result) => result,
                     Err(_) => Err(BridgeError::TurnTimeout {
                         seconds: deadline.as_secs(),
                     }),
-                }
+                };
             }
-            changed = cancel.changed() => {
-                if changed.is_err() {
-                    warn!("Antigravity turn cancellation channel closed unexpectedly");
-                } else {
-                    debug!("cancelling active Antigravity turn");
-                }
-                let _ = self.child.start_kill();
-                Err(BridgeError::Cancelled)
-            }
+            changed = cancel.changed() => changed,
+        };
+
+        if cancellation.is_err() {
+            warn!("Antigravity turn cancellation channel closed unexpectedly");
+        } else {
+            debug!("cancelling active Antigravity turn");
         }
+        let _ = self.child.start_kill();
+        Err(BridgeError::Cancelled)
     }
 
     async fn ask_inner(&mut self, prompt: &str) -> Result<TurnResult, BridgeError> {
