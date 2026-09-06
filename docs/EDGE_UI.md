@@ -57,11 +57,12 @@ The Assistant therefore does not accidentally treat its own overlay as the appli
 
 - max width `760` physical px;
 - min target width `420` physical px when space allows;
-- height `206` physical px;
+- default height `206` physical px;
+- content-driven maximum height `380` physical px;
 - bottom-centered inside the source monitor **work area**;
 - `18` physical px bottom margin inside that work area;
 - undecorated and transparent;
-- fixed size and always-on-top;
+- user resizing disabled and always-on-top;
 - skipped from taskbar;
 - focusable;
 - hidden until invocation.
@@ -84,16 +85,54 @@ Only the compact rectangle receives keyboard/pointer input. The rest of the desk
 
 If `quick_panel::show` fails, the runtime logs the failure and hides Edge. It does not fall back to `main`, because `main` is permission-only.
 
+## Dynamic Quick height
+
+Quick starts at `206px` on every normal invocation. React measures the rendered card after response/error/state changes and requests only the vertical space that the current content needs.
+
+```text
+QuickOverlay DOM
+     |
+ResizeObserver + rendered content change
+     |
+requestAnimationFrame throttle
+     |
+quick:resize_request { height }
+     |
+     v
+quick_panel.rs
+     |
+clamp 206..380 px
+clamp again to current monitor work area
+     |
+recalculate Y so bottom edge remains anchored
+     |
+set_position + set_size
+```
+
+The frontend does **not** receive direct window mutation capability. `core:default` provides event emission; native Rust remains authoritative for geometry, bounds and source-monitor selection.
+
+The request is deduplicated by the frontend so a native resize does not produce an unbounded `ResizeObserver -> set_size -> ResizeObserver` loop. Native code also treats the frontend height as untrusted input and clamps it before use.
+
+On a new `quick:shown` event, Rust first restores the default `206px` geometry and the frontend clears the old compact response. This prevents a previous long answer from leaving the next invocation unnecessarily expanded.
+
 ## Quick Assistant frontend
 
 `QuickOverlay.tsx` + `quick.css` contains only immediate interaction controls:
 
 - assistant state/activity;
-- short response preview;
+- bounded response preview;
 - text composer;
 - microphone action;
 - send action;
 - dismiss action.
+
+Response behavior:
+
+- short response -> panel normally stays near the default height;
+- longer response/error -> panel expands to the measured content height;
+- preview is bounded to roughly eight rendered lines;
+- native window never exceeds `380px` or the current work-area height;
+- a subsequent shorter state may shrink the panel again.
 
 It reuses the existing runtime:
 
@@ -211,6 +250,14 @@ The shared core capability targets only application-owned UI windows:
 "windows": ["main", "quick", "edge-*"]
 ```
 
+It still contains only:
+
+```json
+"permissions": ["core:default"]
+```
+
+Dynamic height uses the default event capability; it does not add frontend `set_size` or `set_position` permission.
+
 This UI architecture does not bypass MCP or permission policy. Management IPC does not expose Windows tools directly; Sensitive actions still traverse the normal Assistant -> MCP -> permission-gateway path.
 
 The obsolete `assistant_quick_expand` command has been removed, so the frontend cannot promote Quick into the permission-only `main` window.
@@ -220,29 +267,32 @@ The obsolete `assistant_quick_expand` command has been removed, so the frontend 
 On Windows, verify:
 
 1. Start Assisstant Desktop normally; no full management or empty permission window appears.
-2. Focus another app and press `Alt + Space`; Quick appears on the same monitor.
+2. Focus another app and press `Alt + Space`; Quick appears on the same monitor at approximately `206px` high.
 3. Edge glow is visible and does not block clicks outside Quick.
-4. Send a text request and receive the short response without another window.
-5. Mic voice turn uses local Vietnamese STT and updates the glow/response.
-6. Trigger wake; Quick appears and exactly one voice turn starts after the wake delay.
-7. Ask which window is active; it should refer to the source app, not Quick.
-8. Left-click tray and use tray **Mở Assistant**; both should show Quick.
-9. Launch the desktop executable again; the existing single instance should show Quick.
-10. With the taskbar at the bottom, verify Quick stays above it with a small margin.
-11. Move the taskbar to top/left/right where supported and verify Quick remains inside the reported work area.
-12. Test a secondary monitor with a different work area/taskbar arrangement; Quick should follow the source application monitor.
-13. Trigger a Sensitive tool; Quick hides and the compact permission window appears.
-14. Deny with `Esc`; verify the tool is denied.
-15. Trigger again and Allow Once; verify the request proceeds and the permission window hides afterward.
-16. Queue more than one confirmation and verify the permission surface advances through the queue.
-17. Confirm no old chat/settings management UI exists in the frontend source tree or mounted routes.
-18. Use `assistant` / `assistant status` / `assistant logs -f` for management and diagnostics.
+4. Send a one-line/short request; verify the panel remains compact.
+5. Produce a multi-line response; verify Quick grows smoothly enough to expose more preview lines but never beyond `380px`.
+6. After a long response, send/return to shorter content and verify Quick shrinks again.
+7. Hide and reopen Quick after a long response; verify the new invocation starts at default compact height.
+8. While Quick expands/shrinks, verify its bottom edge stays anchored above the taskbar/work-area bottom rather than moving below it.
+9. Mic voice turn uses local Vietnamese STT and updates the glow/response.
+10. Trigger wake; Quick appears and exactly one voice turn starts after the wake delay.
+11. Ask which window is active; it should refer to the source app, not Quick.
+12. Left-click tray and use tray **Mở Assistant**; both should show Quick.
+13. Launch the desktop executable again; the existing single instance should show Quick.
+14. With the taskbar at the bottom, verify Quick stays above it with a small margin.
+15. Move the taskbar to top/left/right where supported and verify Quick remains inside the reported work area.
+16. Test a secondary monitor with a different work area/taskbar arrangement; Quick should follow the source application monitor and remain bottom-anchored while resizing.
+17. Trigger a Sensitive tool; Quick hides and the compact permission window appears.
+18. Deny with `Esc`; verify the tool is denied.
+19. Trigger again and Allow Once; verify the request proceeds and the permission window hides afterward.
+20. Queue more than one confirmation and verify the permission surface advances through the queue.
+21. Confirm no old chat/settings management UI exists in the frontend source tree or mounted routes.
+22. Use `assistant` / `assistant status` / `assistant logs -f` for management and diagnostics.
 
 ## Remaining UI work
 
 The terminal-first surface routing is source-complete. Remaining UI work is refinement rather than migration:
 
-- dynamically size Quick for longer responses;
 - add an explicit Stop/Cancel action for microphone/long turns;
 - optionally add contextual chips and configurable auto-dismiss;
 - remove the legacy tray autostart duplicate after local verification;
