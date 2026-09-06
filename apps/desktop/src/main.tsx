@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import EdgeOverlay from "./EdgeOverlay";
 import PermissionSurface from "./PermissionSurface";
-import QuickOverlay from "./QuickOverlay";
+import QuickSurface from "./QuickSurface";
 
 const params = new URLSearchParams(window.location.search);
 const surface = params.get("surface");
@@ -23,7 +23,7 @@ if (isEdgeSurface) {
 const surfaceNode = isEdgeSurface ? (
   <EdgeOverlay />
 ) : isQuickSurface ? (
-  <QuickOverlay />
+  <QuickSurface />
 ) : (
   <PermissionSurface />
 );
