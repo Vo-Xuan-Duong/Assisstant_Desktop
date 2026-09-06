@@ -1,30 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { onAssistantEvent } from "./api";
+import { copyQuickText } from "./quickClipboard";
 import "./quick-response-actions.css";
-
-async function copyText(text: string) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Fall back to DOM copy when the WebView exposes the API without permission.
-    }
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  textarea.style.pointerEvents = "none";
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  if (!copied) throw new Error("clipboard copy is unavailable in this WebView");
-}
 
 function CopyIcon() {
   return (
@@ -110,7 +88,7 @@ export default function QuickResponseActions() {
         title={label}
         aria-label={label}
         onClick={() => {
-          void copyText(response)
+          void copyQuickText(response)
             .then(() => showFeedback("copied"))
             .catch(() => showFeedback("error"));
         }}
