@@ -5,9 +5,9 @@
 Assisstant Desktop is moving from a conventional full desktop application toward a background assistant with two user-facing surfaces:
 
 1. Gemini-style graphical interaction surface: perimeter glow, compact input/voice response overlay, and Sensitive permission confirmation.
-2. `assistant.exe`: terminal management surface for configuration, diagnostics, resources, policy administration, and live runtime control.
+2. `assistant.exe`: terminal management surface for configuration, diagnostics, resources, policy administration, live runtime control, and logs.
 
-The full React management window remains temporarily available as a fallback while the last management-only capabilities are migrated. It is no longer the target primary interface.
+The full React management window remains temporarily available as a fallback while the remaining graphical responsibilities are extracted. It is no longer the target primary interface.
 
 ## Current architecture
 
@@ -23,6 +23,7 @@ Assisstant Desktop background runtime
      +-- Antigravity / Gemini
      +-- MCP / Windows tools
      +-- Voice / wake runtime
+     +-- bounded persistent runtime log
      |
      +-- authenticated loopback management protocol
               |
@@ -87,7 +88,7 @@ $env:ASSISTANT_APP_DATA="D:\assistant-data"
 assistant status
 ```
 
-Existing runtime path overrides are honored for STT, wake model, permission policy and Antigravity binary resolution.
+Existing runtime path overrides are honored for STT, wake model, permission policy, Antigravity binary and runtime logs.
 
 ## Phase 1: durable CLI configuration
 
@@ -150,7 +151,7 @@ The architecture intentionally follows the project's existing loopback + secret 
 
 ## Phase 2B: direct CLI runtime control
 
-The terminal manager now consumes the management protocol directly rather than relying only on settings-file polling.
+The terminal manager consumes the management protocol directly rather than relying only on settings-file polling.
 
 ### Runtime
 
@@ -203,7 +204,7 @@ uses the live `WakeService` when the background process is available. If it is n
 assistant wake phrase "HEY ASSISTANT"
 ```
 
-is now a real runtime operation rather than a preference-only write. It requires a running background runtime and reuses the same backend path as the graphical Resource Setup:
+is a validated runtime operation. It requires a running background runtime and reuses the same backend path as graphical Resource Setup:
 
 ```text
 phrase
@@ -229,7 +230,7 @@ hot reload WakeService
 persist validated phrase preference
 ```
 
-This deliberately fails instead of writing a misleading phrase preference when tokenizer/model validation cannot be completed.
+The CLI deliberately fails rather than persisting a misleading phrase when tokenizer/model validation cannot be completed.
 
 ### Resource installation
 
@@ -240,7 +241,7 @@ assistant resources install stt_zipformer_vi
 
 `resources install` requires the background runtime and calls the existing `ResourceInstaller`; there is no second CLI downloader.
 
-The Vietnamese Zipformer path therefore preserves the existing guarantees:
+The Vietnamese Zipformer path preserves:
 
 - immutable model revision;
 - pinned expected sizes;
@@ -249,23 +250,67 @@ The Vietnamese Zipformer path therefore preserves the existing guarantees:
 - staging-directory cleanup on failure;
 - atomic directory promotion after verification.
 
-Resource installation uses a longer CLI response timeout because model downloads are expected to exceed normal management-command latency.
+The current wake model itself remains intentionally non-installable automatically until its archive SHA-256 and redistribution/license terms are resolved. CLI does not bypass that safety gate.
 
-The current wake model itself remains intentionally non-installable automatically:
-
-```text
-wake_word
-```
-
-until its archive SHA-256 and redistribution/license terms are resolved. CLI does not bypass that product safety gate.
-
-`wake_keywords` is not installed through a bare resource command; use:
+`wake_keywords` is generated through:
 
 ```powershell
 assistant wake phrase <text>
 ```
 
-so the required phrase is explicit.
+so the phrase is explicit and validated.
+
+## Phase 2C: persistent runtime logs
+
+The desktop background process now initializes a process-wide tracing sink before Tauri starts. Formatted runtime records are mirrored to stderr for development and to a bounded local file for normal background diagnostics.
+
+Default Windows paths:
+
+```text
+%LOCALAPPDATA%\com.voduong.assisstantdesktop\logs\assistant.log
+%LOCALAPPDATA%\com.voduong.assisstantdesktop\logs\assistant.log.1
+```
+
+Optional override:
+
+```powershell
+$env:ASSISTANT_LOG_DIR="D:\assistant-logs"
+```
+
+The override must be an absolute directory path so runtime behavior does not depend on the current working directory.
+
+Rotation policy:
+
+```text
+active file      assistant.log    ~5 MiB maximum
+one backup       assistant.log.1
+```
+
+When the active file reaches the bound, the previous active content is copied to `assistant.log.1` and the active file is truncated for continued logging. Only one backup is retained, keeping disk growth bounded without introducing a new logging dependency.
+
+Terminal access:
+
+```powershell
+assistant logs
+assistant logs --lines 300
+assistant logs -n 300
+assistant logs --follow
+assistant logs -f
+```
+
+Behavior:
+
+- default output shows the most recent 120 lines;
+- `--lines` is bounded to 1..10000;
+- `--follow` prints the current tail and then watches the active file every 500 ms;
+- follower detects active-file truncation caused by rotation and resets its offset;
+- `assistant status`, `assistant paths` and `assistant doctor` expose log readiness/path.
+
+### Log privacy
+
+Runtime logs stay in the current user's local application-data directory unless explicitly overridden. They should still be treated as sensitive diagnostics: depending on the operation and existing tracing callsites they may contain error text, local file paths, application/tool names, model/runtime state, or transcript-related operational details. Do not publish `assistant.log` without reviewing/redacting it first.
+
+The log sink does not intentionally log the management IPC secret, permission-broker secret, tokens, or credentials. Existing code should continue avoiding secret values in tracing fields.
 
 ## Internal protocol v1
 
@@ -306,18 +351,32 @@ approximately every 500 ms. This remains useful for offline/durable edits and ol
 
 Moderate permission overrides continue to be read by MCP during authorization, so policy changes apply to subsequent requests without a desktop restart.
 
-## Remaining management migration
+## Remaining migration: retire the full management UI
 
-The largest remaining CLI-management feature is persistent runtime logging:
+Terminal management now covers the major management-only responsibilities:
 
 ```text
-assistant logs
-assistant logs --follow
+status / diagnostics
+runtime control
+overlay control
+AI model / effort
+wake state / phrase
+STT resource installation
+permission policy
+persistent logs / follow
 ```
 
-This should be implemented by adding an explicit bounded/log-rotation sink to the background runtime rather than scraping console output.
+The next architectural phase is therefore not another settings migration. It is extraction of the graphical responsibilities that still depend on the full React surface.
 
-After logging parity and local Windows validation, the normal full React management surface can be retired. The graphical surface that remains should be limited to:
+Before deleting/unrouting `MainSurface`, move these responsibilities first:
+
+1. Sensitive permission confirmation -> dedicated compact graphical confirmation surface.
+2. Wake-triggered voice turn ownership -> Rust backend or QuickOverlay; the hidden MainSurface must no longer be required to start the voice turn.
+3. Tray/explicit management action -> terminal manager instead of full React settings window.
+4. Keep QuickOverlay + edge glow as the normal assistant interaction surface.
+5. Once those dependencies are removed, make the normal full React management surface unreachable and then delete its management panels in a later cleanup.
+
+The final graphical surface should be limited to:
 
 ```text
 Edge glow
@@ -329,7 +388,7 @@ Sensitive permission confirmation
 
 ## Local verification gates
 
-The changes are source-first. Before treating Phase 2B as runtime-verified on Windows, validate locally:
+The changes remain source-first. Before treating Phase 2C as runtime-verified on Windows, validate locally:
 
 ```powershell
 cargo build -p assisstant-desktop --bin assistant --locked
@@ -343,6 +402,8 @@ cargo build -p assisstant-desktop --features voice-stt,wake-word --locked
 .\target\debug\assistant.exe overlay hide
 .\target\debug\assistant.exe ai show
 .\target\debug\assistant.exe resources list
+.\target\debug\assistant.exe logs
+.\target\debug\assistant.exe logs --follow
 ```
 
 With the background runtime running and required assets present:
@@ -352,4 +413,4 @@ With the background runtime running and required assets present:
 .\target\debug\assistant.exe wake phrase "HEY ASSISTANT"
 ```
 
-Do not interpret source presence as proof that target-Windows native DLL loading, model download, microphone behavior, or wake hot reload has been validated.
+Do not interpret source presence as proof that target-Windows native DLL loading, model download, microphone behavior, wake hot reload, log rotation, or Tauri packaging has been validated.
