@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { onAssistantEvent } from "./api";
+import { onAssistantEvent, speakResponse } from "./api";
 import { copyQuickText } from "./quickClipboard";
+import type { AssistantState } from "./types";
 import "./quick-response-actions.css";
 
 function CopyIcon() {
@@ -13,28 +14,60 @@ function CopyIcon() {
   );
 }
 
+function SpeakerIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 10v4h3l4 3V7L8 10H5Z" />
+      <path d="M15 9.2a4 4 0 0 1 0 5.6M17.6 6.8a7.4 7.4 0 0 1 0 10.4" />
+    </svg>
+  );
+}
+
 export default function QuickResponseActions() {
   const [response, setResponse] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<"copied" | "error" | null>(null);
-  const feedbackTimerRef = useRef<number | null>(null);
+  const [assistantState, setAssistantState] = useState<AssistantState>("idle");
+  const [copyFeedback, setCopyFeedback] = useState<"copied" | "error" | null>(null);
+  const [speakError, setSpeakError] = useState(false);
+  const [speakPending, setSpeakPending] = useState(false);
+  const copyTimerRef = useRef<number | null>(null);
+  const speakTimerRef = useRef<number | null>(null);
 
-  const clearFeedback = () => {
-    if (feedbackTimerRef.current !== null) {
-      window.clearTimeout(feedbackTimerRef.current);
-      feedbackTimerRef.current = null;
+  const clearCopyFeedback = () => {
+    if (copyTimerRef.current !== null) {
+      window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
     }
-    setFeedback(null);
+    setCopyFeedback(null);
   };
 
-  const showFeedback = (value: "copied" | "error") => {
-    if (feedbackTimerRef.current !== null) {
-      window.clearTimeout(feedbackTimerRef.current);
+  const clearSpeakFeedback = () => {
+    if (speakTimerRef.current !== null) {
+      window.clearTimeout(speakTimerRef.current);
+      speakTimerRef.current = null;
     }
-    setFeedback(value);
-    feedbackTimerRef.current = window.setTimeout(() => {
-      feedbackTimerRef.current = null;
-      setFeedback(null);
+    setSpeakError(false);
+  };
+
+  const showCopyFeedback = (value: "copied" | "error") => {
+    if (copyTimerRef.current !== null) {
+      window.clearTimeout(copyTimerRef.current);
+    }
+    setCopyFeedback(value);
+    copyTimerRef.current = window.setTimeout(() => {
+      copyTimerRef.current = null;
+      setCopyFeedback(null);
     }, 1_400);
+  };
+
+  const showSpeakError = () => {
+    if (speakTimerRef.current !== null) {
+      window.clearTimeout(speakTimerRef.current);
+    }
+    setSpeakError(true);
+    speakTimerRef.current = window.setTimeout(() => {
+      speakTimerRef.current = null;
+      setSpeakError(false);
+    }, 1_600);
   };
 
   useEffect(() => {
@@ -42,12 +75,17 @@ export default function QuickResponseActions() {
     const unlisten: Array<() => void> = [];
 
     void onAssistantEvent((event) => {
-      if (event.type === "response_completed") {
+      if (event.type === "state_changed") {
+        setAssistantState(event.to);
+      } else if (event.type === "response_completed") {
         setResponse(event.text);
-        clearFeedback();
+        clearCopyFeedback();
+        clearSpeakFeedback();
       } else if (event.type === "error") {
         setResponse(null);
-        clearFeedback();
+        setSpeakPending(false);
+        clearCopyFeedback();
+        clearSpeakFeedback();
       }
     }).then((fn) => {
       if (disposed) fn();
@@ -56,7 +94,9 @@ export default function QuickResponseActions() {
 
     void listen("quick:shown", () => {
       setResponse(null);
-      clearFeedback();
+      setSpeakPending(false);
+      clearCopyFeedback();
+      clearSpeakFeedback();
     }).then((fn) => {
       if (disposed) fn();
       else unlisten.push(fn);
@@ -64,9 +104,11 @@ export default function QuickResponseActions() {
 
     return () => {
       disposed = true;
-      if (feedbackTimerRef.current !== null) {
-        window.clearTimeout(feedbackTimerRef.current);
-        feedbackTimerRef.current = null;
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      if (speakTimerRef.current !== null) {
+        window.clearTimeout(speakTimerRef.current);
       }
       for (const fn of unlisten) fn();
     };
@@ -74,27 +116,53 @@ export default function QuickResponseActions() {
 
   if (!response) return null;
 
-  const label = feedback === "copied"
+  const copyLabel = copyFeedback === "copied"
     ? "Đã sao chép"
-    : feedback === "error"
+    : copyFeedback === "error"
       ? "Không thể sao chép"
       : "Sao chép câu trả lời";
+  const speaking = speakPending || assistantState === "speaking";
+  const canSpeak = assistantState === "idle" && !speakPending;
+  const speakLabel = speakError
+    ? "Không thể đọc câu trả lời"
+    : speaking
+      ? "Đang đọc câu trả lời"
+      : "Đọc câu trả lời";
 
   return (
     <div className="quick-response-actions" aria-live="polite">
       <button
         type="button"
-        className={`quick-response-copy ${feedback ? `quick-response-copy-${feedback}` : ""}`}
-        title={label}
-        aria-label={label}
+        className={`quick-response-action quick-response-copy ${copyFeedback ? `quick-response-copy-${copyFeedback}` : ""}`}
+        title={copyLabel}
+        aria-label={copyLabel}
         onClick={() => {
           void copyQuickText(response)
-            .then(() => showFeedback("copied"))
-            .catch(() => showFeedback("error"));
+            .then(() => showCopyFeedback("copied"))
+            .catch(() => showCopyFeedback("error"));
         }}
       >
         <CopyIcon />
-        <span>{feedback === "copied" ? "Đã sao chép" : feedback === "error" ? "Lỗi" : "Copy"}</span>
+        <span>{copyFeedback === "copied" ? "Đã sao chép" : copyFeedback === "error" ? "Lỗi" : "Copy"}</span>
+      </button>
+
+      <button
+        type="button"
+        className={`quick-response-action quick-response-speak ${speakError ? "quick-response-speak-error" : ""}`}
+        title={speakLabel}
+        aria-label={speakLabel}
+        disabled={!canSpeak}
+        onClick={() => {
+          if (!canSpeak) return;
+          clearSpeakFeedback();
+          setSpeakPending(true);
+          void speakResponse(response)
+            .catch(() => showSpeakError())
+            .finally(() => setSpeakPending(false));
+        }}
+      >
+        <SpeakerIcon />
+        <span>{speakError ? "Lỗi" : speaking ? "Đang đọc" : "Đọc"}</span>
       </button>
     </div>
   );

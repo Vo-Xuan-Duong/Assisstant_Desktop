@@ -19,6 +19,10 @@ export function runVoiceTurn(): Promise<VoiceTurnResult> {
   return invoke<VoiceTurnResult>("assistant_voice_turn");
 }
 
+export function speakResponse(text: string): Promise<void> {
+  return invoke<void>("assistant_speak", { text });
+}
+
 export function hideQuickAssistant(): Promise<void> {
   return invoke<void>("assistant_quick_hide");
 }

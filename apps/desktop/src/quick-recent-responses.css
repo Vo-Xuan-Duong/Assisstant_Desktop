@@ -8,7 +8,7 @@
 .quick-history-toggle {
   position: absolute;
   top: 22px;
-  right: 196px;
+  right: 274px;
   height: 30px;
   display: inline-flex;
   align-items: center;
@@ -183,7 +183,7 @@
 
 @media (max-width: 520px) {
   .quick-history-toggle {
-    right: 174px;
+    right: 176px;
     padding-inline: 8px;
   }
 
