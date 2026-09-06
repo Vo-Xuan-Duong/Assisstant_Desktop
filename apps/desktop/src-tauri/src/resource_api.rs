@@ -51,7 +51,7 @@ pub async fn assistant_resource_install(
 /// authenticated terminal-management IPC. Keeping one implementation preserves
 /// the existing SHA/size validation, atomic promotion, and wake-detector
 /// rollback behavior instead of duplicating a downloader in `assistant.exe`.
-pub(super) async fn install_resource(
+pub(crate) async fn install_resource(
     app: &AppHandle,
     resource_id: &str,
     phrase: Option<String>,
