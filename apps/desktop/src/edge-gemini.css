@@ -30,7 +30,6 @@
   pointer-events: none;
 }
 
-/* Remove the dotted-matrix feeling from the previous treatment. */
 .edge-stipple {
   opacity: .018;
   background-size: 14px 14px;
@@ -87,7 +86,7 @@
   filter: blur(.8px);
 }
 
-/* A thin physical-light core. */
+/* Thin physical-light core. */
 .edge-core {
   opacity: .84;
   animation-duration: var(--aurora-flow-duration);
@@ -125,7 +124,7 @@
     -7px 0 18px rgba(139, 99, 255, .34);
 }
 
-/* Two very thin traces create the flowing 'energy cable' appearance. */
+/* Two thin traces create the flowing energy-cable appearance. */
 .edge-orbit {
   position: absolute;
   opacity: var(--aurora-orbit-opacity);
@@ -151,10 +150,9 @@
 }
 
 .edge-orbit-b {
-  opacity: calc(var(--aurora-orbit-opacity) * .58);
   filter: blur(1.15px);
   animation-direction: reverse;
-  animation-duration: calc(var(--aurora-flow-duration) * 1.35);
+  animation-delay: -1.9s;
 }
 
 .edge-top .edge-orbit,
@@ -195,7 +193,7 @@
 .edge-right .edge-orbit-a { right: 4px; }
 .edge-right .edge-orbit-b { right: 10px; }
 
-/* A short bright packet travels around each edge. */
+/* Short bright packet travelling along each edge. */
 .edge-pulse {
   position: absolute;
   opacity: .52;
@@ -241,7 +239,7 @@
 .edge-left .edge-pulse { left: 0; }
 .edge-right .edge-pulse { right: 0; }
 
-/* Four restrained corner flares are rendered by top/bottom windows only. */
+/* Four corner flares are rendered by top/bottom windows only. */
 .edge-corner {
   position: absolute;
   width: 82px;
@@ -249,8 +247,14 @@
   opacity: var(--aurora-bloom-opacity);
   border-radius: 999px;
   mix-blend-mode: screen;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(238, 252, 255, .95) 0 2%, rgba(55, 200, 255, .82) 7%, rgba(139, 99, 255, .46) 24%, rgba(255, 114, 199, .2) 43%, transparent 70%);
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(238, 252, 255, .95) 0 2%,
+    rgba(55, 200, 255, .82) 7%,
+    rgba(139, 99, 255, .46) 24%,
+    rgba(255, 114, 199, .2) 43%,
+    transparent 70%
+  );
   filter: blur(2.5px);
   animation: aurora-corner-breathe 2.8s ease-in-out infinite alternate;
 }
@@ -307,24 +311,20 @@
 .edge-mode-activated .edge-core { opacity: 1; }
 
 .edge-mode-listening {
-  --edge-opacity: calc(.56 + var(--voice-level) * .42);
-  --edge-scale: calc(.52 + var(--voice-level) * .36);
-  --aurora-flow-duration: calc(4.2s - var(--voice-level) * 1.6s);
-  --aurora-pulse-duration: calc(3.1s - var(--voice-level) * 1.35s);
-  --aurora-orbit-opacity: calc(.28 + var(--voice-level) * .48);
-  --aurora-bloom-opacity: calc(.28 + var(--voice-level) * .54);
+  --edge-opacity: var(--voice-opacity);
+  --edge-scale: var(--voice-scale);
+  --aurora-flow-duration: 2.8s;
+  --aurora-pulse-duration: 1.9s;
+  --aurora-orbit-opacity: var(--voice-opacity);
+  --aurora-bloom-opacity: var(--voice-scale);
 }
 
 .edge-mode-listening .edge-ambient {
-  opacity: calc(.58 + var(--voice-level) * .32);
-  filter: blur(calc(18px + var(--voice-level) * 10px)) saturate(1.2);
+  opacity: var(--voice-opacity);
+  filter: blur(24px) saturate(1.2);
 }
-.edge-mode-listening .edge-pulse {
-  opacity: calc(.5 + var(--voice-level) * .48);
-}
-.edge-mode-listening .edge-core {
-  opacity: calc(.72 + var(--voice-level) * .28);
-}
+.edge-mode-listening .edge-pulse { opacity: var(--voice-opacity); }
+.edge-mode-listening .edge-core { opacity: var(--voice-opacity); }
 
 .edge-mode-processing,
 .edge-mode-executing {
@@ -387,6 +387,9 @@
 .edge-right.edge-mode-confirming .edge-pulse {
   background-image: linear-gradient(180deg, transparent, #ffbd4a, #fff2b2 50%, #ff8a3d, transparent);
 }
+.edge-mode-confirming .edge-corner {
+  background: radial-gradient(circle, rgba(255, 248, 210, .96) 0 3%, rgba(255, 189, 74, .82) 10%, rgba(255, 138, 61, .35) 34%, transparent 70%);
+}
 
 .edge-mode-error {
   --edge-opacity: .96;
@@ -420,6 +423,9 @@
 .edge-right.edge-mode-error .edge-pulse {
   background-image: linear-gradient(180deg, transparent, #ff4f74, #fff0f4 50%, #ff4f74, transparent);
 }
+.edge-mode-error .edge-corner {
+  background: radial-gradient(circle, rgba(255, 240, 244, .98) 0 3%, rgba(255, 79, 116, .88) 10%, rgba(255, 65, 108, .38) 34%, transparent 70%);
+}
 
 @keyframes aurora-orbit-horizontal {
   from { background-position: 0% 50%; }
@@ -442,8 +448,8 @@
 }
 
 @keyframes aurora-corner-breathe {
-  from { transform: scale(.84); opacity: calc(var(--aurora-bloom-opacity) * .58); }
-  to { transform: scale(1.08); opacity: var(--aurora-bloom-opacity); }
+  from { transform: scale(.84); filter: brightness(.84); }
+  to { transform: scale(1.08); filter: brightness(1.16); }
 }
 
 @keyframes aurora-activation {
