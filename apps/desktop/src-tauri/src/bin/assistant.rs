@@ -1,3 +1,6 @@
+#[path = "assistant_logs.rs"]
+mod assistant_logs;
+
 use std::{
     env, fs,
     io::{self, BufRead, BufReader, Read, Write},
@@ -19,6 +22,8 @@ const ZIPFORMER_DIR_NAME: &str = "sherpa-onnx-zipformer-vi-30M-int8-2026-02-09";
 const WAKE_DIR_NAME: &str = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01";
 const MANAGEMENT_PROTOCOL_VERSION: u32 = 1;
 const MANAGEMENT_ENDPOINT_FILE: &str = "management.json";
+const LOG_DIR_ENV: &str = "ASSISTANT_LOG_DIR";
+const LOG_FILE_NAME: &str = "assistant.log";
 const MANAGEMENT_TIMEOUT: Duration = Duration::from_secs(3);
 const RESOURCE_INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const MAX_MANAGEMENT_RESPONSE_BYTES: usize = 256 * 1024;
@@ -53,6 +58,7 @@ fn run() -> CliResult<()> {
         "status" => command_status(&paths, args.iter().skip(1).any(|arg| arg == "--json")),
         "paths" => command_paths(&paths),
         "doctor" => command_doctor(&paths),
+        "logs" => assistant_logs::command(&paths.log_file, &args[1..]),
         "runtime" => command_runtime(&paths, &args[1..]),
         "overlay" => command_overlay(&paths, &args[1..]),
         "ai" => command_ai(&paths, &args[1..]),
@@ -77,6 +83,8 @@ COMMANDS
   status [--json]                         Local/runtime snapshot
   paths                                   Show shared local paths
   doctor                                  Local + live runtime diagnostics
+  logs [-n N|--lines N]                   Show recent bounded runtime logs
+  logs --follow                           Tail and follow the active runtime log
 
   runtime status [--json]                 Query the running background runtime
   runtime ping                            Verify authenticated management IPC
@@ -107,6 +115,7 @@ Running `assistant` without a command opens the interactive terminal dashboard.
 
 ENVIRONMENT
   ASSISTANT_APP_DATA
+  ASSISTANT_LOG_DIR
   ASSISTANT_ZIPFORMER_MODEL_DIR
   ASSISTANT_WAKE_MODEL_DIR
   ASSISTANT_PERMISSION_POLICY_PATH
@@ -143,6 +152,8 @@ struct AppPaths {
     root: PathBuf,
     runtime_dir: PathBuf,
     management_endpoint: PathBuf,
+    log_dir: PathBuf,
+    log_file: PathBuf,
     antigravity_settings: PathBuf,
     wake_settings: PathBuf,
     permission_policy: PathBuf,
@@ -157,6 +168,8 @@ impl AppPaths {
             None => default_app_data_dir()?,
         };
         let runtime_dir = root.join("runtime");
+        let log_dir = absolute_env_override(LOG_DIR_ENV, root.join("logs"))?;
+        let log_file = log_dir.join(LOG_FILE_NAME);
         let stt_model_dir = absolute_env_override(
             "ASSISTANT_ZIPFORMER_MODEL_DIR",
             root.join("models").join("stt").join(ZIPFORMER_DIR_NAME),
@@ -176,6 +189,8 @@ impl AppPaths {
             wake_settings: root.join("settings").join("wake.json"),
             permission_policy,
             runtime_dir,
+            log_dir,
+            log_file,
             root,
             stt_model_dir,
             wake_model_dir,
@@ -222,6 +237,8 @@ struct StatusSnapshot {
     runtime_process: Option<bool>,
     runtime_ipc: bool,
     runtime_pid: Option<u32>,
+    log_file: String,
+    log_available: bool,
     antigravity_binary: String,
     antigravity_available: bool,
     ai_model: Option<String>,
@@ -250,6 +267,8 @@ impl StatusSnapshot {
             runtime_process: runtime_running(),
             runtime_ipc,
             runtime_pid,
+            log_file: paths.log_file.display().to_string(),
+            log_available: paths.log_file.is_file(),
             antigravity_binary,
             antigravity_available,
             ai_model: ai.model,
@@ -423,6 +442,11 @@ fn command_status(paths: &AppPaths, output_json: bool) -> CliResult<()> {
             .unwrap_or_default()
     );
     println!(
+        "  Runtime log     {} ({})",
+        if snapshot.log_available { "ready" } else { "not-created" },
+        snapshot.log_file
+    );
+    println!(
         "  Antigravity     {} ({})",
         ready_name(snapshot.antigravity_available),
         snapshot.antigravity_binary
@@ -459,6 +483,8 @@ fn command_paths(paths: &AppPaths) -> CliResult<()> {
     println!("app_data           {}", paths.root.display());
     println!("runtime            {}", paths.runtime_dir.display());
     println!("management         {}", paths.management_endpoint.display());
+    println!("log_dir            {}", paths.log_dir.display());
+    println!("log_file           {}", paths.log_file.display());
     println!("ai_settings        {}", paths.antigravity_settings.display());
     println!("wake_settings      {}", paths.wake_settings.display());
     println!("permission_policy  {}", paths.permission_policy.display());
@@ -821,6 +847,13 @@ fn command_doctor(paths: &AppPaths) -> CliResult<()> {
         !wake_preferences.enabled || wake.ready,
         &format!("{}/{} files at {}", wake.present, wake.required, wake.root),
         &mut failures,
+    );
+
+    println!(
+        "[{}] {:<20} {}",
+        if paths.log_file.is_file() { "OK" } else { "--" },
+        "runtime log",
+        paths.log_file.display()
     );
 
     match ManagementClient::discover(paths)
@@ -1218,6 +1251,10 @@ fn render_tui_dashboard(status: &StatusSnapshot) {
         "  Management IPC  {}",
         if status.runtime_ipc { "ready" } else { "unavailable" }
     );
+    println!(
+        "  Runtime log     {}",
+        if status.log_available { "ready" } else { "not-created" }
+    );
     println!("  Antigravity      {}", ready_name(status.antigravity_available));
     println!(
         "  STT              {}/{} {}",
@@ -1244,7 +1281,7 @@ fn render_tui_dashboard(status: &StatusSnapshot) {
         status.ai_effort.as_deref().unwrap_or("default")
     );
     println!("\nDATA\n  {}", status.app_data);
-    println!("\nLive commands: assistant runtime status | assistant overlay show");
+    println!("\nLive: assistant runtime status | assistant overlay show | assistant logs -f");
 }
 
 fn render_tui_resources(status: &StatusSnapshot) {
