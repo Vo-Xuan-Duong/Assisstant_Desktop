@@ -13,6 +13,8 @@ pub enum CoreError {
         from: AssistantState,
         to: AssistantState,
     },
+    #[error("assistant request cancelled")]
+    Cancelled,
     #[error("agent backend failed: {0}")]
     Backend(String),
     #[error("local tool failed: {0}")]
@@ -376,6 +378,13 @@ where
                 }
                 self.change_state(AssistantState::Idle).await?;
                 Ok(response)
+            }
+            Err(CoreError::Cancelled) => {
+                debug!("agent backend request was cancelled");
+                if self.state().await != AssistantState::Idle {
+                    self.change_state(AssistantState::Idle).await?;
+                }
+                Err(CoreError::Cancelled)
             }
             Err(error) => {
                 warn!(%error, "agent backend request failed");
