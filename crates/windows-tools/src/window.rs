@@ -5,7 +5,8 @@ use windows::{
     Win32::{
         Foundation::HWND,
         Graphics::Gdi::{
-            GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+            GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
+            MonitorFromWindow,
         },
         UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId},
     },
@@ -105,19 +106,85 @@ pub fn monitor_bounds(handle: WindowHandle) -> ToolResult<MonitorBounds> {
             return Err(ToolError::Windows(WindowsError::from_thread()));
         }
 
-        let width = info.rcMonitor.right - info.rcMonitor.left;
-        let height = info.rcMonitor.bottom - info.rcMonitor.top;
-        if width <= 0 || height <= 0 {
-            return Err(ToolError::Unsupported(
-                "resolved monitor has invalid dimensions".into(),
+        bounds_from_rect(
+            info.rcMonitor.left,
+            info.rcMonitor.top,
+            info.rcMonitor.right,
+            info.rcMonitor.bottom,
+        )
+    }
+}
+
+pub fn monitor_work_area(handle: WindowHandle) -> ToolResult<MonitorBounds> {
+    unsafe {
+        let hwnd = handle.hwnd();
+        if hwnd.0.is_null() {
+            return Err(ToolError::NotFound("window handle is empty".into()));
+        }
+
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if monitor.0.is_null() {
+            return Err(ToolError::NotFound(
+                "Windows could not resolve a monitor for the window".into(),
             ));
         }
 
-        Ok(MonitorBounds {
-            x: info.rcMonitor.left,
-            y: info.rcMonitor.top,
-            width: width as u32,
-            height: height as u32,
-        })
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return Err(ToolError::Windows(WindowsError::from_thread()));
+        }
+
+        bounds_from_rect(
+            info.rcWork.left,
+            info.rcWork.top,
+            info.rcWork.right,
+            info.rcWork.bottom,
+        )
     }
+}
+
+pub fn primary_monitor_work_area() -> ToolResult<MonitorBounds> {
+    unsafe {
+        let monitor = MonitorFromWindow(HWND::default(), MONITOR_DEFAULTTOPRIMARY);
+        if monitor.0.is_null() {
+            return Err(ToolError::NotFound(
+                "Windows could not resolve the primary monitor".into(),
+            ));
+        }
+
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return Err(ToolError::Windows(WindowsError::from_thread()));
+        }
+
+        bounds_from_rect(
+            info.rcWork.left,
+            info.rcWork.top,
+            info.rcWork.right,
+            info.rcWork.bottom,
+        )
+    }
+}
+
+fn bounds_from_rect(left: i32, top: i32, right: i32, bottom: i32) -> ToolResult<MonitorBounds> {
+    let width = right - left;
+    let height = bottom - top;
+    if width <= 0 || height <= 0 {
+        return Err(ToolError::Unsupported(
+            "resolved monitor area has invalid dimensions".into(),
+        ));
+    }
+
+    Ok(MonitorBounds {
+        x: left,
+        y: top,
+        width: width as u32,
+        height: height as u32,
+    })
 }

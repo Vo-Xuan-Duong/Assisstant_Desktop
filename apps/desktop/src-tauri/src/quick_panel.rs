@@ -14,7 +14,7 @@ const QUICK_MAX_WIDTH: u32 = 760;
 const QUICK_MIN_WIDTH: u32 = 420;
 const QUICK_HEIGHT: u32 = 206;
 const QUICK_SIDE_MARGIN: u32 = 28;
-const QUICK_BOTTOM_MARGIN: u32 = 58;
+const QUICK_BOTTOM_MARGIN: u32 = 18;
 
 #[derive(Debug, Clone, Serialize)]
 struct QuickShownEvent {
@@ -67,7 +67,7 @@ pub fn show(
     source_window: Option<WindowHandle>,
     reason: &'static str,
 ) -> Result<(), String> {
-    let bounds = resolve_monitor_bounds(app, source_window)?;
+    let bounds = resolve_work_area(app, source_window)?;
     position_window(app, bounds)?;
 
     let window = app
@@ -98,16 +98,22 @@ pub fn is_visible(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-fn resolve_monitor_bounds(
+fn resolve_work_area(
     app: &AppHandle,
     source_window: Option<WindowHandle>,
 ) -> Result<MonitorBounds, String> {
     if let Some(handle) = source_window {
-        if let Ok(bounds) = window::monitor_bounds(handle) {
+        if let Ok(bounds) = window::monitor_work_area(handle) {
             return Ok(bounds);
         }
     }
 
+    if let Ok(bounds) = window::primary_monitor_work_area() {
+        return Ok(bounds);
+    }
+
+    // Keep a Tauri fallback so Quick can still surface if Win32 monitor work-area
+    // lookup is temporarily unavailable. This fallback may include the taskbar.
     let monitor = app
         .primary_monitor()
         .map_err(|error| error.to_string())?
