@@ -1,0 +1,62 @@
+.quick-response-actions {
+  position: fixed;
+  top: 22px;
+  right: 116px;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.quick-response-copy {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(20, 22, 30, 0.72);
+  color: rgba(245, 247, 255, 0.82);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  pointer-events: auto;
+  backdrop-filter: blur(16px);
+  transition: opacity 140ms ease, transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.quick-response-copy:hover {
+  transform: translateY(-1px);
+  border-color: rgba(126, 199, 255, 0.34);
+  background: rgba(26, 29, 41, 0.88);
+}
+
+.quick-response-copy:focus-visible {
+  outline: 2px solid rgba(113, 180, 255, 0.7);
+  outline-offset: 2px;
+}
+
+.quick-response-copy svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+}
+
+.quick-response-copy-copied {
+  border-color: rgba(108, 222, 183, 0.36);
+  background: rgba(20, 55, 46, 0.76);
+}
+
+.quick-response-copy-error {
+  border-color: rgba(255, 120, 120, 0.34);
+  background: rgba(61, 28, 34, 0.78);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-response-copy {
+    transition: none;
+  }
+}
