@@ -5,9 +5,9 @@ use tauri::{
 use tracing::warn;
 use windows_tools::window::{self, MonitorBounds, WindowHandle};
 
-const EDGE_TOP_THICKNESS: u32 = 28;
-const EDGE_SIDE_THICKNESS: u32 = 32;
-const EDGE_BOTTOM_THICKNESS: u32 = 54;
+const EDGE_TOP_THICKNESS: u32 = 44;
+const EDGE_SIDE_THICKNESS: u32 = 46;
+const EDGE_BOTTOM_THICKNESS: u32 = 64;
 const EDGE_LABELS: [&str; 4] = ["edge-top", "edge-right", "edge-bottom", "edge-left"];
 
 #[derive(Debug, Clone, Serialize)]
