@@ -13,6 +13,8 @@ NSIS current-user installer
 assistant-mcp external sidecar
 ```
 
+`voice-whisper` is the historical compatibility feature name retained by the current Windows build configuration; the active primary STT implementation is Vietnamese Zipformer/sherpa-onnx.
+
 `tauri.windows.conf.json` is loaded automatically on Windows. Public signed builds add `tauri.windows.signed.conf.json` through Tauri's `--config` merge option.
 
 ## Required local environment
@@ -124,8 +126,8 @@ The Tauri build hooks then:
 
 1. build `windows-mcp` / `assistant-mcp.exe` in release mode;
 2. stage the target-triple sidecar under `src-tauri/binaries/`;
-3. build the React frontend;
-4. compile the desktop with Whisper + wake-word features;
+3. build the React Quick/Edge/Permission frontend;
+4. compile the desktop with the compatibility `voice-whisper` feature (Zipformer primary STT) plus `wake-word`;
 5. produce the NSIS installer.
 
 Unsigned builds are development/release-candidate artifacts only.
@@ -192,16 +194,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-local.ps1
 Then verify at minimum:
 
 - normal startup and second-launch single-instance behavior;
-- tray show/hide and opt-in Windows startup;
-- `--background` startup;
+- tray show/hide behavior;
+- `assistant startup show|enable|disable` and `--background` startup;
 - global shortcut;
 - text → Antigravity/Gemini response;
+- `assistant ai login` launches the sign-in flow without falsely reporting authentication success;
+- `assistant conversation reset` makes the next request start a fresh conversation;
 - permission Ask / Allow once / Deny paths;
 - permission-gated MCP mutations;
-- microphone → VAD → Whisper → Gemini → SAPI;
+- microphone → VAD → Vietnamese Zipformer → Gemini → SAPI;
 - wake detection, phrase generation and hot reload;
-- readiness/resource panels;
-- runtime paths under app-local-data.
+- CLI resource/readiness/status diagnostics;
+- runtime paths under app-local-data;
+- bounded runtime log and `assistant logs --follow`.
+
+The legacy tray autostart checkbox currently remains as a duplicate compatibility control. When testing CLI autostart mutations, verify actual Windows registration with `assistant startup show`; the tray checkmark is only initialized at desktop process startup until that duplicate control is removed.
 
 ## Installed-package verification
 
@@ -212,10 +219,13 @@ Verify that:
 - current-user installation does not require Administrator privileges;
 - installed app starts without repository-relative paths;
 - bundled `assistant-mcp.exe` is present;
+- installed `assistant.exe` is present and can reach the background management IPC;
 - generated runtime MCP config points to the installed sidecar;
 - app-local-data directories are created correctly;
-- optional Whisper/wake resources can be installed after installation;
-- startup enable/disable survives reinstall/update flows correctly;
+- optional Zipformer/wake resources can be installed after installation;
+- `assistant ai login` can launch the installed Antigravity flow;
+- `assistant conversation reset` operates against the installed runtime;
+- `assistant startup enable/disable` survives reinstall/update flows correctly;
 - uninstall does not unexpectedly delete user-owned runtime data.
 
 For a public artifact also verify Authenticode on the final installer/executables with SignTool before publication.
@@ -248,11 +258,12 @@ Never reuse a version/tag for different binaries.
 
 ## Remaining machine-dependent gates
 
-After Phase 15, repository-side release automation is complete. The remaining gates are intentionally machine/identity dependent:
+Repository-side release automation is source-complete. The remaining gates are intentionally machine/identity dependent:
 
-1. generate and review `Cargo.lock` using the real resolver;
-2. generate and review `pnpm-lock.yaml` using the real resolver;
+1. generate and review `Cargo.lock` using the real resolver when dependency resolution changes;
+2. generate and review `pnpm-lock.yaml` using the real resolver when frontend dependency resolution changes;
 3. perform native Windows compile/install/runtime verification;
-4. for public distribution, provide a real trusted Windows code-signing certificate/private key.
+4. verify local model/runtime behavior and autostart/login/session management;
+5. for public distribution, provide a real trusted Windows code-signing certificate/private key.
 
 Compiler/runtime/install findings override this checklist and must be fixed before publication.

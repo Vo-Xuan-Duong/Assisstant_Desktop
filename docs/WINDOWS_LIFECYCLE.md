@@ -7,7 +7,7 @@ Assisstant Desktop runs as a background Windows assistant. Normal explicit activ
 - keep only one Assisstant Desktop process active per signed-in Windows session;
 - surface the existing Quick Assistant when the user explicitly launches the app again;
 - surface Quick from the tray rather than exposing the permission-only `main` window;
-- allow the user to opt in or out of Windows logon startup from the tray menu;
+- manage Windows logon startup through the authenticated terminal management path;
 - start quietly when Windows launches the app automatically;
 - keep the permission host hidden unless the native permission broker needs it.
 
@@ -33,7 +33,7 @@ does not steal focus. This prevents a duplicate Windows startup invocation from 
 
 ## Tray behavior
 
-The tray menu keeps:
+The current tray menu keeps:
 
 ```text
 Mở Assistant
@@ -42,7 +42,7 @@ Khởi động cùng Windows
 Thoát
 ```
 
-`Mở Assistant` and a left click on the tray icon now call:
+`Mở Assistant` and a left click on the tray icon call:
 
 ```text
 show_quick_window(..., "tray")
@@ -51,6 +51,16 @@ show_quick_window(..., "tray")
 They do not show `main`. `Ẩn cửa sổ` hides Quick, Edge, and the permission host if it happens to be visible.
 
 The permission-only `main` window is surfaced by the native permission broker through `show_main_window()` when a Sensitive tool requires explicit confirmation. It is not a general activation surface.
+
+The tray autostart checkbox is now a legacy duplicate control. Terminal-first management uses:
+
+```powershell
+assistant startup show
+assistant startup enable
+assistant startup disable
+```
+
+The tray checkmark is initialized when the desktop process starts and currently does not live-refresh if autostart is changed through the CLI. Remove the duplicate tray control after local Windows verification of the new terminal path.
 
 ## Quick failure behavior
 
@@ -66,13 +76,19 @@ The Tauri autostart plugin registers the packaged executable with one fixed argu
 
 The argument is controlled by the application and is not model-supplied.
 
-The tray menu contains a checked item:
+The terminal manager reaches the running runtime over authenticated management IPC:
 
 ```text
-Khởi động cùng Windows
+assistant.exe
+    |
+    +-- startup.get
+    +-- startup.set
+            |
+            v
+Tauri autostart manager
 ```
 
-Toggling it calls the native autostart manager. If registration fails, the menu check state is reverted and the failure is logged without terminating the assistant.
+There is no separate registry/task-scheduler implementation in the CLI.
 
 Autostart is opt-in. The application does not silently enable itself during installation or first launch.
 
@@ -93,7 +109,9 @@ All of those normal activation paths lead to Quick. Sensitive confirmation remai
 
 ## Security and privacy
 
-This lifecycle change does not add any model-callable tool and does not change permission policy. Startup state is changed only by local lifecycle interactions.
+Lifecycle management does not add any model-callable tool and does not change permission policy. Startup state is changed only through local user management surfaces.
+
+`startup.get` and `startup.set` are authenticated management commands. They do not expose MCP execution or Sensitive approval capability.
 
 The `--background` argument only changes initial visibility. It does not bypass permission checks, readiness checks, wake settings, or the MCP permission gateway.
 
@@ -109,10 +127,12 @@ Do not manually dispatch GitHub Actions for native lifecycle verification. After
 4. Use tray **Mở Assistant**; confirm the same Quick behavior.
 5. Start the executable a second time; confirm no second process remains and the existing process shows Quick.
 6. Start a second instance with `--background`; confirm it does not steal focus or surface Quick.
-7. Enable **Khởi động cùng Windows** and confirm the registration persists.
-8. Sign out/in or invoke the registered `--background` command; confirm the runtime starts quietly with the tray available.
-9. Trigger a Sensitive tool; confirm only then does the permission-only `main` window appear.
-10. Resolve/deny the request and confirm the permission window hides again.
-11. Disable **Khởi động cùng Windows** and confirm the registration is removed.
+7. Run `assistant startup show` and record the current state.
+8. Run `assistant startup enable`; confirm Windows registration is present and points to the packaged app with `--background`.
+9. Sign out/in or invoke the registered `--background` command; confirm the runtime starts quietly with the tray available.
+10. Run `assistant startup disable`; confirm the registration is removed.
+11. Trigger a Sensitive tool; confirm only then does the permission-only `main` window appear.
+12. Resolve/deny the request and confirm the permission window hides again.
+13. Until the legacy tray toggle is removed, restart the desktop process after a CLI startup change and confirm its tray checkmark matches the actual registration state.
 
 Any compiler/runtime failure found by the local verifier takes precedence over further release-hardening work.
