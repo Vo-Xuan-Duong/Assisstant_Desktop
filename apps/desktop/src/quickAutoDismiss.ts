@@ -20,7 +20,6 @@ export function useQuickAutoDismiss() {
     let responseReady = false;
     let responseLength = 0;
     let pointerInside = false;
-    let inputHasText = false;
     let timer: number | null = null;
     const unlisten: Array<() => void> = [];
 
@@ -31,12 +30,17 @@ export function useQuickAutoDismiss() {
       }
     };
 
+    const composerHasText = () => {
+      const input = document.querySelector<HTMLTextAreaElement>(".quick-composer textarea");
+      return Boolean(input?.value.trim());
+    };
+
     const canDismiss = () =>
       !disposed &&
       assistantState === "idle" &&
       responseReady &&
       !pointerInside &&
-      !inputHasText;
+      !composerHasText();
 
     const schedule = () => {
       clearTimer();
@@ -56,7 +60,6 @@ export function useQuickAutoDismiss() {
     void listen("quick:shown", () => {
       responseReady = false;
       responseLength = 0;
-      inputHasText = false;
       clearTimer();
     }).then((fn) => {
       if (disposed) fn();
@@ -104,8 +107,7 @@ export function useQuickAutoDismiss() {
       const target = event.target;
       if (!(target instanceof HTMLTextAreaElement)) return;
 
-      inputHasText = target.value.trim().length > 0;
-      if (inputHasText) clearTimer();
+      if (target.value.trim()) clearTimer();
       else schedule();
     };
 
