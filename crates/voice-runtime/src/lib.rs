@@ -358,3 +358,21 @@ where
     }
     mono
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stereo_is_downmixed_to_mono() {
+        let mono = downmix_to_mono(&[1.0f32, -1.0, 0.5, 0.5], 2);
+        assert_eq!(mono, vec![0.0, 0.5]);
+    }
+
+    #[test]
+    fn level_is_zero_for_silence() {
+        let level = AudioLevel::from_samples(&[0.0, 0.0, 0.0]);
+        assert_eq!(level.rms, 0.0);
+        assert_eq!(level.peak, 0.0);
+    }
+}
