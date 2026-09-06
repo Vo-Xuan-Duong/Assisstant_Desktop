@@ -180,10 +180,6 @@ export default function QuickOverlay() {
       window.setTimeout(() => inputRef.current?.focus(), payload.reason === "wake" ? 90 : 20);
       void refreshVoice();
 
-      // The Quick WebView exists for the lifetime of the background runtime,
-      // even while hidden. It therefore owns wake-triggered voice turns instead
-      // of relying on the retired full MainSurface. The delay preserves the
-      // previous wake-to-command gap so the wake phrase tail is not captured.
       if (payload.reason === "wake") {
         wakeTimerRef.current = window.setTimeout(() => {
           wakeTimerRef.current = null;
@@ -255,7 +251,9 @@ export default function QuickOverlay() {
   }, [refreshVoice]);
 
   const statusLabel = useMemo(() => {
-    if (cancelPending) return "Đang dừng lượt AI…";
+    if (cancelPending) {
+      return assistantState === "listening" ? "Đang dừng nghe…" : "Đang dừng lượt AI…";
+    }
 
     switch (assistantState) {
       case "listening":
@@ -278,7 +276,8 @@ export default function QuickOverlay() {
   const voiceReady = Boolean(voice?.whisper_compiled && voice.model_available);
   const displayedResponse = streamingText || response;
   const active = busy || !["idle", "error"].includes(assistantState);
-  const cancellable = assistantState === "processing";
+  const cancellable = assistantState === "listening" || assistantState === "processing";
+  const cancelLabel = assistantState === "listening" ? "Dừng nghe" : "Dừng lượt AI hiện tại";
   const style = {
     "--voice-level": voiceLevel.toFixed(3),
   } as CSSProperties;
@@ -288,7 +287,9 @@ export default function QuickOverlay() {
   }, [assistantState, displayedResponse, error, scheduleResize]);
 
   const requestCancel = useCallback(async () => {
-    if (assistantState !== "processing" || cancelPending) return;
+    if (!(["listening", "processing"] as AssistantState[]).includes(assistantState) || cancelPending) {
+      return;
+    }
 
     cancelRequestedRef.current = true;
     setCancelPending(true);
@@ -399,8 +400,8 @@ export default function QuickOverlay() {
             {cancellable && (
               <button
                 type="button"
-                title="Dừng lượt AI hiện tại"
-                aria-label="Dừng lượt AI hiện tại"
+                title={cancelLabel}
+                aria-label={cancelLabel}
                 disabled={cancelPending}
                 onClick={() => void requestCancel()}
               >
