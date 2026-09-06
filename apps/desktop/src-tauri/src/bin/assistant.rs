@@ -60,6 +60,8 @@ fn run() -> CliResult<()> {
         "doctor" => command_doctor(&paths),
         "logs" => assistant_logs::command(&paths.log_file, &args[1..]),
         "runtime" => command_runtime(&paths, &args[1..]),
+        "conversation" => command_conversation(&paths, &args[1..]),
+        "startup" => command_startup(&paths, &args[1..]),
         "overlay" => command_overlay(&paths, &args[1..]),
         "ai" => command_ai(&paths, &args[1..]),
         "wake" => command_wake(&paths, &args[1..]),
@@ -89,12 +91,18 @@ COMMANDS
   runtime status [--json]                 Query the running background runtime
   runtime ping                            Verify authenticated management IPC
   runtime restart                         Restart the Antigravity agent session
+  conversation reset                      Start a fresh Assistant/Antigravity conversation
+
+  startup show                            Show Windows autostart state
+  startup enable                          Enable opt-in Windows logon startup
+  startup disable                         Disable Windows logon startup
 
   overlay show                            Show the Gemini-style quick overlay
   overlay hide                            Hide the quick overlay and edge glow
 
   ai show                                 Show live/persisted Antigravity config
   ai models                               Run `agy models`
+  ai login                                Launch the Antigravity Google sign-in flow
   ai set --model <id>                     Set model (live when runtime is running)
   ai set --effort <value>                 Set reasoning effort
   ai reset                                Reset AI settings to runtime defaults
@@ -112,6 +120,7 @@ COMMANDS
   permissions clear <tool>                Clear a Moderate-tool override
 
 Running `assistant` without a command opens the interactive terminal dashboard.
+Live session, login, and autostart mutations require the background runtime.
 
 ENVIRONMENT
   ASSISTANT_APP_DATA
@@ -520,6 +529,45 @@ fn command_runtime(paths: &AppPaths, args: &[String]) -> CliResult<()> {
     }
 }
 
+fn command_conversation(paths: &AppPaths, args: &[String]) -> CliResult<()> {
+    let subcommand = args.first().map(String::as_str).unwrap_or("reset");
+    match subcommand {
+        "reset" | "new" => {
+            let client = ManagementClient::discover(paths).map_err(|error| {
+                format!("conversation reset requires the running background runtime: {error}")
+            })?;
+            let result = client.call("conversation.reset", Value::Null)?;
+            println!("Conversation reset. The next request starts a fresh Assistant session.");
+            print_json(&result)
+        }
+        other => Err(format!("unknown conversation command `{other}`")),
+    }
+}
+
+fn command_startup(paths: &AppPaths, args: &[String]) -> CliResult<()> {
+    let subcommand = args.first().map(String::as_str).unwrap_or("show");
+    let client = ManagementClient::discover(paths).map_err(|error| {
+        format!("Windows startup management requires the running background runtime: {error}")
+    })?;
+    match subcommand {
+        "show" | "status" => {
+            let result = client.call("startup.get", Value::Null)?;
+            print_json(&result)
+        }
+        "enable" => {
+            let result = client.call("startup.set", json!({ "enabled": true }))?;
+            println!("Windows logon startup enabled.");
+            print_json(&result)
+        }
+        "disable" => {
+            let result = client.call("startup.set", json!({ "enabled": false }))?;
+            println!("Windows logon startup disabled.");
+            print_json(&result)
+        }
+        other => Err(format!("unknown startup command `{other}`")),
+    }
+}
+
 fn command_overlay(paths: &AppPaths, args: &[String]) -> CliResult<()> {
     let subcommand = args.first().map(String::as_str).unwrap_or("show");
     let client = ManagementClient::discover(paths)?;
@@ -571,6 +619,15 @@ fn command_ai(paths: &AppPaths, args: &[String]) -> CliResult<()> {
             }
             print!("{}", String::from_utf8_lossy(&output.stdout));
             Ok(())
+        }
+        "login" | "auth" => {
+            let client = ManagementClient::discover(paths).map_err(|error| {
+                format!("Antigravity login launch requires the running background runtime: {error}")
+            })?;
+            let result = client.call("ai.login", Value::Null)?;
+            println!("Antigravity sign-in flow launched.");
+            println!("Authentication will be verified by a real Antigravity session/turn.");
+            print_json(&result)
         }
         "set" => {
             let mut model = None;
@@ -1281,7 +1338,7 @@ fn render_tui_dashboard(status: &StatusSnapshot) {
         status.ai_effort.as_deref().unwrap_or("default")
     );
     println!("\nDATA\n  {}", status.app_data);
-    println!("\nLive: assistant runtime status | assistant overlay show | assistant logs -f");
+    println!("\nLive: assistant runtime status | assistant startup show | assistant overlay show | assistant logs -f");
 }
 
 fn render_tui_resources(status: &StatusSnapshot) {
@@ -1315,8 +1372,10 @@ fn render_tui_ai(status: &StatusSnapshot) {
         status.ai_effort.as_deref().unwrap_or("default")
     );
     println!("\nCommands:");
+    println!("  assistant ai login");
     println!("  assistant ai models");
     println!("  assistant ai set --model <id> --effort <value>");
     println!("  assistant ai reset");
+    println!("  assistant conversation reset");
     println!("  assistant runtime restart");
 }
