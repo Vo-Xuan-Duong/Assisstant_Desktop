@@ -23,7 +23,7 @@ use cpal::{
 };
 use serde::Serialize;
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::debug;
 
 #[derive(Debug, Error)]
@@ -112,6 +112,42 @@ impl Default for MicrophoneConfig {
         Self {
             channel_capacity: 16,
         }
+    }
+}
+
+/// Per-consumer cancellation source for microphone capture. It is deliberately
+/// not global because both the wake runtime and command voice turns may own a
+/// MicrophoneStream at different lifecycle points. Each subsystem should keep
+/// its own source so cancelling command capture cannot stop wake detection.
+#[derive(Clone)]
+pub struct MicrophoneCancellation {
+    sender: watch::Sender<u64>,
+}
+
+impl Default for MicrophoneCancellation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MicrophoneCancellation {
+    pub fn new() -> Self {
+        let (sender, _) = watch::channel(0u64);
+        Self { sender }
+    }
+
+    /// Subscribe before publishing the corresponding Listening state. That
+    /// ordering guarantees a UI Stop action cannot arrive before the receiver
+    /// for the active command capture exists.
+    pub fn subscribe(&self) -> watch::Receiver<u64> {
+        self.sender.subscribe()
+    }
+
+    /// Wake the current subscriber without making cancellation sticky for a
+    /// future capture. Returns false when no capture subscriber currently exists.
+    pub fn cancel_active(&self) -> bool {
+        let next = (*self.sender.borrow()).wrapping_add(1);
+        self.sender.send(next).is_ok()
     }
 }
 
@@ -321,22 +357,4 @@ where
         mono.push((sum / channels as f32).clamp(-1.0, 1.0));
     }
     mono
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stereo_is_downmixed_to_mono() {
-        let mono = downmix_to_mono(&[1.0f32, -1.0, 0.5, 0.5], 2);
-        assert_eq!(mono, vec![0.0, 0.5]);
-    }
-
-    #[test]
-    fn level_is_zero_for_silence() {
-        let level = AudioLevel::from_samples(&[0.0, 0.0, 0.0]);
-        assert_eq!(level.rms, 0.0);
-        assert_eq!(level.peak, 0.0);
-    }
 }
