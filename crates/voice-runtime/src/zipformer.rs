@@ -1,12 +1,20 @@
-use std::{path::{Path, PathBuf}, sync::Arc};
+#[path = "stt_hotwords.rs"]
+mod stt_hotwords;
+
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 use async_trait::async_trait;
 use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig};
+use tracing::{debug, warn};
 
 use crate::{
     stt::{SpeechRecognizer, SttError, Transcript},
     vad::Utterance,
 };
+use stt_hotwords::{STT_HOTWORDS_FILE, PreparedHotwords, load_prepared_hotwords};
 
 pub const ZIPFORMER_ENCODER_FILE: &str = "encoder.int8.onnx";
 pub const ZIPFORMER_DECODER_FILE: &str = "decoder.onnx";
@@ -22,21 +30,33 @@ pub struct ZipformerConfig {
     pub language: Option<String>,
     pub threads: usize,
     pub provider: String,
+    /// User-managed plain-text phrases. Missing/empty means contextual biasing is off.
+    pub hotwords_path: PathBuf,
+    /// Global token bonus used only by modified beam search.
+    pub hotwords_score: f32,
+    /// Beam width used only by the contextual recognizer.
+    pub max_active_paths: i32,
 }
 
 impl ZipformerConfig {
     pub fn new(model_path_or_dir: impl Into<PathBuf>) -> Self {
         let path = model_path_or_dir.into();
-        let model_dir = if path.file_name().and_then(|name| name.to_str()) == Some(ZIPFORMER_ENCODER_FILE) {
+        let model_dir = if path.file_name().and_then(|name| name.to_str())
+            == Some(ZIPFORMER_ENCODER_FILE)
+        {
             path.parent().map(Path::to_path_buf).unwrap_or(path)
         } else {
             path
         };
+        let hotwords_path = model_dir.join(STT_HOTWORDS_FILE);
         Self {
             model_dir,
             language: Some("vi".into()),
             threads: 4,
             provider: "cpu".into(),
+            hotwords_path,
+            hotwords_score: 1.5,
+            max_active_paths: 4,
         }
     }
 
@@ -81,7 +101,11 @@ impl ZipformerModelPaths {
 
 #[derive(Clone)]
 pub struct ZipformerRecognizer {
+    /// Baseline recognizer: preserves the existing low-overhead greedy path.
     recognizer: Arc<OfflineRecognizer>,
+    /// Created only after at least one valid hotword is present.
+    contextual: Arc<Mutex<Option<Arc<OfflineRecognizer>>>>,
+    config: Arc<ZipformerConfig>,
     language: Option<String>,
 }
 
@@ -95,7 +119,9 @@ impl ZipformerRecognizer {
             ("tokens", paths.tokens.as_path()),
         ]
         .into_iter()
-        .filter_map(|(name, path)| (!path.is_file()).then(|| format!("{name}: {}", path.display())))
+        .filter_map(|(name, path)| {
+            (!path.is_file()).then(|| format!("{name}: {}", path.display()))
+        })
         .collect::<Vec<_>>();
 
         if !missing.is_empty() {
@@ -105,25 +131,13 @@ impl ZipformerRecognizer {
             )));
         }
 
-        let mut native = OfflineRecognizerConfig::default();
-        native.model_config.transducer = OfflineTransducerModelConfig {
-            encoder: Some(path_string(&paths.encoder)),
-            decoder: Some(path_string(&paths.decoder)),
-            joiner: Some(path_string(&paths.joiner)),
-        };
-        native.model_config.tokens = Some(path_string(&paths.tokens));
-        native.model_config.provider = Some(config.provider);
-        native.model_config.num_threads = config.threads.max(1).min(i32::MAX as usize) as i32;
-        native.model_config.debug = false;
-        native.decoding_method = Some("greedy_search".into());
-
-        let recognizer = OfflineRecognizer::create(&native).ok_or_else(|| {
-            SttError::Backend("sherpa-onnx could not create the Vietnamese Zipformer recognizer".into())
-        })?;
-
+        let recognizer = create_native_recognizer(&config, "greedy_search")?;
+        let language = config.language.clone();
         Ok(Self {
             recognizer: Arc::new(recognizer),
-            language: config.language,
+            contextual: Arc::new(Mutex::new(None)),
+            config: Arc::new(config),
+            language,
         })
     }
 
@@ -138,24 +152,87 @@ impl ZipformerRecognizer {
             SttError::InvalidAudio("sample rate cannot be represented by sherpa-onnx".into())
         })?;
         let source_duration_seconds = utterance.duration_seconds();
-        let stream = self.recognizer.create_stream();
-        stream.accept_waveform(sample_rate, &utterance.samples);
-        self.recognizer.decode(&stream);
+        let paths = self.config.paths();
 
-        let text = stream
-            .get_result()
-            .ok_or_else(|| SttError::Backend("sherpa-onnx returned no recognition result".into()))?
-            .text
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let prepared = match load_prepared_hotwords(
+            &self.config.hotwords_path,
+            &paths.bpe,
+            &paths.tokens,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                warn!(
+                    %error,
+                    path = %self.config.hotwords_path.display(),
+                    "STT contextual hotwords are unavailable; falling back to greedy decoding"
+                );
+                None
+            }
+        };
+
+        let (text, engine) = match prepared.filter(|hotwords| !hotwords.is_empty()) {
+            Some(hotwords) => self.decode_with_hotwords(sample_rate, &utterance.samples, hotwords)?,
+            None => {
+                let stream = self.recognizer.create_stream();
+                stream.accept_waveform(sample_rate, &utterance.samples);
+                self.recognizer.decode(&stream);
+                let text = result_text(&stream)?;
+                (text, "sherpa-onnx/zipformer-vi-30m-int8")
+            }
+        };
 
         Ok(Transcript {
             text,
             language: self.language.clone().or_else(|| Some("vi".into())),
-            engine: "sherpa-onnx/zipformer-vi-30m-int8".into(),
+            engine: engine.into(),
             source_duration_seconds,
         })
+    }
+
+    fn decode_with_hotwords(
+        &self,
+        sample_rate: i32,
+        samples: &[f32],
+        hotwords: PreparedHotwords,
+    ) -> Result<(String, &'static str), SttError> {
+        for rejected in &hotwords.rejected {
+            warn!(
+                phrase = %rejected.phrase,
+                reason = %rejected.reason,
+                "ignoring unsupported STT hotword"
+            );
+        }
+
+        let recognizer = self.contextual_recognizer()?;
+        debug!(
+            phrases = hotwords.phrases.len(),
+            score = self.config.hotwords_score,
+            max_active_paths = self.config.max_active_paths,
+            "decoding Vietnamese speech with contextual hotwords"
+        );
+
+        let stream = recognizer.create_stream_with_hotwords(&hotwords.encoded);
+        stream.accept_waveform(sample_rate, samples);
+        recognizer.decode(&stream);
+        let text = result_text(&stream)?;
+        Ok((text, "sherpa-onnx/zipformer-vi-30m-int8+hotwords"))
+    }
+
+    fn contextual_recognizer(&self) -> Result<Arc<OfflineRecognizer>, SttError> {
+        let mut slot = self
+            .contextual
+            .lock()
+            .map_err(|_| SttError::Worker("contextual recognizer mutex is poisoned".into()))?;
+        if let Some(recognizer) = slot.as_ref() {
+            return Ok(Arc::clone(recognizer));
+        }
+
+        let recognizer = Arc::new(create_native_recognizer(
+            &self.config,
+            "modified_beam_search",
+        )?);
+        *slot = Some(Arc::clone(&recognizer));
+        Ok(recognizer)
     }
 }
 
@@ -167,6 +244,49 @@ impl SpeechRecognizer for ZipformerRecognizer {
             .await
             .map_err(|error| SttError::Worker(error.to_string()))?
     }
+}
+
+fn create_native_recognizer(
+    config: &ZipformerConfig,
+    decoding_method: &str,
+) -> Result<OfflineRecognizer, SttError> {
+    let paths = config.paths();
+    let mut native = OfflineRecognizerConfig::default();
+    native.model_config.transducer = OfflineTransducerModelConfig {
+        encoder: Some(path_string(&paths.encoder)),
+        decoder: Some(path_string(&paths.decoder)),
+        joiner: Some(path_string(&paths.joiner)),
+    };
+    native.model_config.tokens = Some(path_string(&paths.tokens));
+    native.model_config.provider = Some(config.provider.clone());
+    native.model_config.num_threads = config.threads.max(1).min(i32::MAX as usize) as i32;
+    native.model_config.debug = false;
+    native.decoding_method = Some(decoding_method.into());
+
+    if decoding_method == "modified_beam_search" {
+        native.max_active_paths = config.max_active_paths.max(1);
+        native.hotwords_score = if config.hotwords_score.is_finite() {
+            config.hotwords_score.max(0.0)
+        } else {
+            1.5
+        };
+    }
+
+    OfflineRecognizer::create(&native).ok_or_else(|| {
+        SttError::Backend(format!(
+            "sherpa-onnx could not create the Vietnamese Zipformer recognizer ({decoding_method})"
+        ))
+    })
+}
+
+fn result_text(stream: &sherpa_onnx::OfflineStream) -> Result<String, SttError> {
+    Ok(stream
+        .get_result()
+        .ok_or_else(|| SttError::Backend("sherpa-onnx returned no recognition result".into()))?
+        .text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" "))
 }
 
 fn path_string(path: &Path) -> String {
