@@ -1,9 +1,10 @@
 #[path = "management_ipc.rs"]
 mod management_ipc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
+    AppHandle, Emitter, Listener, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+    WebviewWindowBuilder,
 };
 use tracing::warn;
 use windows_tools::window::{self, MonitorBounds, WindowHandle};
@@ -12,13 +13,20 @@ pub const QUICK_WINDOW_LABEL: &str = "quick";
 
 const QUICK_MAX_WIDTH: u32 = 760;
 const QUICK_MIN_WIDTH: u32 = 420;
-const QUICK_HEIGHT: u32 = 206;
+const QUICK_DEFAULT_HEIGHT: u32 = 206;
+const QUICK_MAX_HEIGHT: u32 = 380;
 const QUICK_SIDE_MARGIN: u32 = 28;
 const QUICK_BOTTOM_MARGIN: u32 = 18;
+const QUICK_RESIZE_EVENT: &str = "quick:resize_request";
 
 #[derive(Debug, Clone, Serialize)]
 struct QuickShownEvent {
     reason: &'static str,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuickResizeRequest {
+    height: u32,
 }
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
@@ -44,12 +52,30 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     .focused(false)
     .shadow(false)
     .visible(false)
-    .inner_size(QUICK_MAX_WIDTH as f64, QUICK_HEIGHT as f64)
+    .inner_size(QUICK_MAX_WIDTH as f64, QUICK_DEFAULT_HEIGHT as f64)
     .build()?;
 
     // The window is interactive only inside its compact rectangle. The rest of
     // the desktop remains fully usable because this is not a fullscreen WebView.
     quick.set_ignore_cursor_events(false)?;
+
+    // Frontend content may request more vertical room, but native code remains
+    // authoritative for clamping and work-area-aware positioning. This avoids
+    // granting the WebView direct window mutation permissions.
+    let resize_app = app.clone();
+    app.listen(QUICK_RESIZE_EVENT, move |event| {
+        let request = serde_json::from_str::<QuickResizeRequest>(event.payload());
+        match request {
+            Ok(request) => {
+                if let Err(error) = resize_window(&resize_app, request.height) {
+                    warn!(%error, "failed to resize quick assistant window");
+                }
+            }
+            Err(error) => {
+                warn!(%error, "ignored malformed quick assistant resize request");
+            }
+        }
+    });
 
     // The compact overlay is the long-term graphical host, so it also owns the
     // lifecycle of the local management endpoint used by assistant.exe. Desktop
@@ -68,7 +94,7 @@ pub fn show(
     reason: &'static str,
 ) -> Result<(), String> {
     let bounds = resolve_work_area(app, source_window)?;
-    position_window(app, bounds)?;
+    position_window(app, bounds, QUICK_DEFAULT_HEIGHT)?;
 
     let window = app
         .get_webview_window(QUICK_WINDOW_LABEL)
@@ -96,6 +122,11 @@ pub fn is_visible(app: &AppHandle) -> bool {
     app.get_webview_window(QUICK_WINDOW_LABEL)
         .and_then(|window| window.is_visible().ok())
         .unwrap_or(false)
+}
+
+fn resize_window(app: &AppHandle, requested_height: u32) -> Result<(), String> {
+    let bounds = resolve_work_area(app, crate::source_window(app))?;
+    position_window(app, bounds, requested_height)
 }
 
 fn resolve_work_area(
@@ -127,7 +158,11 @@ fn resolve_work_area(
     })
 }
 
-fn position_window(app: &AppHandle, bounds: MonitorBounds) -> Result<(), String> {
+fn position_window(
+    app: &AppHandle,
+    bounds: MonitorBounds,
+    requested_height: u32,
+) -> Result<(), String> {
     let available_width = bounds
         .width
         .saturating_sub(QUICK_SIDE_MARGIN.saturating_mul(2))
@@ -135,7 +170,14 @@ fn position_window(app: &AppHandle, bounds: MonitorBounds) -> Result<(), String>
     let width = QUICK_MAX_WIDTH
         .min(available_width)
         .max(QUICK_MIN_WIDTH.min(available_width));
-    let height = QUICK_HEIGHT.min(bounds.height).max(1);
+
+    let max_available_height = bounds
+        .height
+        .saturating_sub(QUICK_BOTTOM_MARGIN)
+        .max(1);
+    let max_height = QUICK_MAX_HEIGHT.min(max_available_height);
+    let min_height = QUICK_DEFAULT_HEIGHT.min(max_height);
+    let height = requested_height.max(min_height).min(max_height);
 
     let x_offset = bounds.width.saturating_sub(width) / 2;
     let y_offset = bounds
