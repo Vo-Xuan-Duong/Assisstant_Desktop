@@ -339,6 +339,72 @@ Sensitive permission confirmation
 
 `main` is not a general-purpose UI surface. `show_main_window()` remains only because the native permission broker uses it to focus the Sensitive confirmation host.
 
+## Phase 2E: management parity after UI retirement
+
+The removed management UI previously exposed a few live actions that durable settings alone could not replace. They are now routed through authenticated management IPC.
+
+### Antigravity login launcher
+
+```powershell
+assistant ai login
+```
+
+IPC:
+
+```text
+ai.login
+```
+
+The runtime reuses the existing `launch_cli_login()` implementation and current Antigravity binary path. Success means the sign-in process was launched; it does **not** mean authentication has already been verified. Authentication is still established by a real Antigravity session/turn.
+
+### Fresh conversation
+
+```powershell
+assistant conversation reset
+```
+
+Alias:
+
+```powershell
+assistant conversation new
+```
+
+IPC:
+
+```text
+conversation.reset
+```
+
+The runtime:
+
+1. shuts down/resets the current Antigravity session;
+2. creates a fresh Assistant `SessionId`;
+3. recovers `AssistantCore` if it was in Error;
+4. leaves the next request to create a fresh Antigravity conversation.
+
+This is the terminal replacement for the retired graphical **new session** action.
+
+### Windows autostart
+
+```powershell
+assistant startup show
+assistant startup enable
+assistant startup disable
+```
+
+IPC:
+
+```text
+startup.get
+startup.set
+```
+
+The runtime reuses the same Tauri autostart manager as the desktop host. There is no second registry/task-scheduler implementation in the CLI.
+
+These commands intentionally require the running background process because autostart is runtime-owned Windows integration rather than a portable settings file.
+
+The existing tray autostart checkbox remains temporarily for compatibility. `assistant startup ...` is the canonical terminal-first path. The tray checkmark is initialized when the desktop process starts and currently does not live-refresh after an autostart mutation made through the CLI; remove that duplicate tray control after local Windows verification.
+
 ## Internal protocol v1
 
 Currently implemented commands:
@@ -348,11 +414,17 @@ runtime.ping
 runtime.status
 runtime.restart_agent
 
+conversation.reset
+
+startup.get
+startup.set
+
 overlay.show
 overlay.hide
 
 ai.get
 ai.set
+ai.login
 
 wake.get
 wake.set_enabled
@@ -363,7 +435,7 @@ resources.install
 
 Protocol additions are backward-compatible within v1. Existing authentication and permission boundaries remain unchanged.
 
-The management endpoint does not expose Windows MCP tools directly. Tool execution still goes through Assistant Core / Antigravity / MCP and the existing permission gateway.
+The management endpoint does not expose Windows MCP tools directly. Tool execution still goes through Assistant Core / Antigravity / MCP and the existing permission gateway. Management IPC cannot approve Sensitive tool requests.
 
 ## Existing file watcher
 
@@ -390,6 +462,8 @@ cargo build -p assisstant-desktop --features voice-stt,wake-word --locked
 .\target\debug\assistant.exe doctor
 .\target\debug\assistant.exe runtime ping
 .\target\debug\assistant.exe runtime status
+.\target\debug\assistant.exe conversation reset
+.\target\debug\assistant.exe startup show
 .\target\debug\assistant.exe overlay show
 .\target\debug\assistant.exe overlay hide
 .\target\debug\assistant.exe ai show
@@ -401,6 +475,10 @@ cargo build -p assisstant-desktop --features voice-stt,wake-word --locked
 With the background runtime running and required assets present:
 
 ```powershell
+.\target\debug\assistant.exe ai login
+.\target\debug\assistant.exe startup enable
+.\target\debug\assistant.exe startup show
+.\target\debug\assistant.exe startup disable
 .\target\debug\assistant.exe resources install stt_zipformer_vi
 .\target\debug\assistant.exe wake phrase "HEY ASSISTANT"
 ```
@@ -416,4 +494,14 @@ Second --background launch -> no focus steal
 Sensitive tool -> PermissionSurface
 ```
 
-Do not interpret source presence as proof that target-Windows native DLL loading, model download, microphone behavior, wake hot reload, log rotation, Tauri packaging, or lifecycle behavior has been validated.
+Specific parity checks:
+
+```text
+ai login -> sign-in console/process opens; no false authenticated status is shown
+conversation reset -> next prompt starts a fresh Antigravity conversation
+startup enable -> Windows registration present
+startup disable -> Windows registration removed
+startup show -> matches actual registration state
+```
+
+Do not interpret source presence as proof that target-Windows native DLL loading, model download, microphone behavior, wake hot reload, log rotation, Tauri packaging, autostart mutation, login launch, or lifecycle behavior has been validated.
