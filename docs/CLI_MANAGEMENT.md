@@ -2,12 +2,12 @@
 
 ## Goal
 
-Assisstant Desktop is moving from a conventional full desktop application toward a background assistant with two user-facing surfaces:
+Assisstant Desktop is a background assistant with two user-facing management/interaction surfaces:
 
-1. Gemini-style graphical interaction surface: perimeter glow, compact input/voice response overlay, and Sensitive permission confirmation.
-2. `assistant.exe`: terminal management surface for configuration, diagnostics, resources, policy administration, live runtime control, and logs.
+1. Gemini-style graphical interaction: perimeter glow, compact input/voice response overlay, and Sensitive permission confirmation.
+2. `assistant.exe`: terminal management for configuration, diagnostics, resources, policy administration, live runtime control, and logs.
 
-The full React management window remains temporarily available as a fallback while the remaining graphical responsibilities are extracted. It is no longer the target primary interface.
+The former full React chat/settings application has been removed from the frontend source tree. The graphical runtime now contains only Quick, Edge, and the permission confirmation surface.
 
 ## Current architecture
 
@@ -171,7 +171,7 @@ assistant overlay show
 assistant overlay hide
 ```
 
-This directly controls the compact Gemini-style quick surface and associated edge glow. The full management window is not involved.
+This directly controls the compact Gemini-style quick surface and associated edge glow.
 
 ### AI configuration
 
@@ -204,7 +204,7 @@ uses the live `WakeService` when the background process is available. If it is n
 assistant wake phrase "HEY ASSISTANT"
 ```
 
-is a validated runtime operation. It requires a running background runtime and reuses the same backend path as graphical Resource Setup:
+is a validated runtime operation. It requires a running background runtime and reuses the existing backend resource path:
 
 ```text
 phrase
@@ -262,7 +262,7 @@ so the phrase is explicit and validated.
 
 ## Phase 2C: persistent runtime logs
 
-The desktop background process now initializes a process-wide tracing sink before Tauri starts. Formatted runtime records are mirrored to stderr for development and to a bounded local file for normal background diagnostics.
+The desktop background process initializes a process-wide tracing sink before Tauri starts. Formatted runtime records are mirrored to stderr for development and to a bounded local file for normal background diagnostics.
 
 Default Windows paths:
 
@@ -312,6 +312,33 @@ Runtime logs stay in the current user's local application-data directory unless 
 
 The log sink does not intentionally log the management IPC secret, permission-broker secret, tokens, or credentials. Existing code should continue avoiding secret values in tracing fields.
 
+## Phase 2D: retire the full React management frontend
+
+Completed:
+
+1. Sensitive confirmation moved to `PermissionSurface` in the hidden `main` WebView.
+2. Wake-triggered voice ownership moved to the lifetime-owned `QuickOverlay` WebView.
+3. Quick no longer exposes expand-to-full-management.
+4. `main.tsx` routes only `PermissionSurface`, `QuickOverlay`, and `EdgeOverlay`.
+5. The retired `App.tsx`, `MainSurface.tsx`, graphical management panels, and their private CSS were deleted.
+6. Frontend `api.ts`, `permissionApi.ts`, and `types.ts` were reduced to contracts used by the mounted surfaces.
+
+The graphical surface is now intentionally limited to:
+
+```text
+Edge glow
+Quick text/voice composer
+Short assistant response
+Voice visualization
+Sensitive permission confirmation
+```
+
+### Remaining lifecycle gap
+
+The historical Rust lifecycle still routes tray click and a normal second-instance launch through `show_main_window()`. `main` is now permission-only, so this behavior must be redirected to Quick (or explicitly launch the terminal manager) before the terminal-first UX is considered complete.
+
+This is intentionally tracked separately from the frontend deletion so the lifecycle fix can be reviewed without reintroducing a full management surface.
+
 ## Internal protocol v1
 
 Currently implemented commands:
@@ -351,44 +378,9 @@ approximately every 500 ms. This remains useful for offline/durable edits and ol
 
 Moderate permission overrides continue to be read by MCP during authorization, so policy changes apply to subsequent requests without a desktop restart.
 
-## Remaining migration: retire the full management UI
-
-Terminal management now covers the major management-only responsibilities:
-
-```text
-status / diagnostics
-runtime control
-overlay control
-AI model / effort
-wake state / phrase
-STT resource installation
-permission policy
-persistent logs / follow
-```
-
-The next architectural phase is therefore not another settings migration. It is extraction of the graphical responsibilities that still depend on the full React surface.
-
-Before deleting/unrouting `MainSurface`, move these responsibilities first:
-
-1. Sensitive permission confirmation -> dedicated compact graphical confirmation surface.
-2. Wake-triggered voice turn ownership -> Rust backend or QuickOverlay; the hidden MainSurface must no longer be required to start the voice turn.
-3. Tray/explicit management action -> terminal manager instead of full React settings window.
-4. Keep QuickOverlay + edge glow as the normal assistant interaction surface.
-5. Once those dependencies are removed, make the normal full React management surface unreachable and then delete its management panels in a later cleanup.
-
-The final graphical surface should be limited to:
-
-```text
-Edge glow
-Quick text/voice composer
-Short assistant response
-Voice visualization
-Sensitive permission confirmation
-```
-
 ## Local verification gates
 
-The changes remain source-first. Before treating Phase 2C as runtime-verified on Windows, validate locally:
+The changes remain source-first. Before treating the terminal-first migration as runtime-verified on Windows, validate locally:
 
 ```powershell
 cargo build -p assisstant-desktop --bin assistant --locked
@@ -413,4 +405,14 @@ With the background runtime running and required assets present:
 .\target\debug\assistant.exe wake phrase "HEY ASSISTANT"
 ```
 
-Do not interpret source presence as proof that target-Windows native DLL loading, model download, microphone behavior, wake hot reload, log rotation, or Tauri packaging has been validated.
+Also verify the graphical lifecycle:
+
+```text
+Alt+Space -> Quick
+Wake -> Quick -> exactly one voice turn
+Sensitive tool -> PermissionSurface
+Tray click -> currently known lifecycle gap until Rust redirect is patched
+Second normal launch -> currently known lifecycle gap until Rust redirect is patched
+```
+
+Do not interpret source presence as proof that target-Windows native DLL loading, model download, microphone behavior, wake hot reload, log rotation, Tauri packaging, or the remaining tray/second-instance lifecycle has been validated.
