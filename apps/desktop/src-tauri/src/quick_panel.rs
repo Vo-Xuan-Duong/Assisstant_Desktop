@@ -1,6 +1,9 @@
 #[path = "management_ipc.rs"]
 mod management_ipc;
 
+use std::time::Duration;
+
+use assistant_common::AssistantState;
 use serde::{Deserialize, Serialize};
 use tauri::{
     AppHandle, Emitter, Listener, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
@@ -81,14 +84,30 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     // Agent-turn cancellation is deliberately out-of-band from the session
     // mutex. The active Antigravity session observes the signal and terminates
     // its own child process, allowing the request future to unwind to Idle.
+    //
+    // Processing is published immediately before AgentBackend::complete enters
+    // AntigravityClient::ask(). A human can theoretically click Stop inside that
+    // tiny registration gap. Retry exactly once after 20 ms while the same core
+    // phase is still Processing; this closes the gap without making cancellation
+    // sticky enough to affect a later request.
     let cancel_app = app.clone();
     app.listen(QUICK_CANCEL_EVENT, move |_| {
         let state = cancel_app.state::<crate::DesktopState>();
         if state.client.cancel_active_turn() {
             debug!("requested cancellation of active Antigravity turn");
-        } else {
-            debug!("ignored Quick cancel request because no Antigravity turn was active");
+            return;
         }
+
+        let client = state.client.clone();
+        let core = state.core.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            if core.state().await == AssistantState::Processing && client.cancel_active_turn() {
+                debug!("requested cancellation after Antigravity turn registration");
+            } else {
+                debug!("ignored Quick cancel request because no cancellable Antigravity turn was active");
+            }
+        });
     });
 
     // The compact overlay is the long-term graphical host, so it also owns the
