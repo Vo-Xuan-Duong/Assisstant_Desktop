@@ -5,6 +5,7 @@ use std::{
 };
 
 use antigravity_bridge::CliHealth;
+use assistant_common::SessionId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tauri::{AppHandle, Manager};
@@ -19,12 +20,12 @@ use uuid::Uuid;
 
 use crate::{
     DesktopState,
-    antigravity_settings::AntigravitySettings,
-    hide_quick_window, quick_panel,
+    antigravity_settings::{AntigravitySettings, launch_cli_login},
+    autostart_enabled, hide_quick_window, quick_panel,
     resource_api,
     resource_registry::RuntimeResourceSnapshot,
     runtime_paths::RuntimePaths,
-    show_quick_window,
+    set_autostart_enabled, show_quick_window,
     wake_desktop::WakeService,
 };
 
@@ -256,6 +257,9 @@ async fn dispatch(app: &AppHandle, command: &str, payload: Value) -> Result<Valu
                 .map_err(|error| format!("cannot restart Antigravity runtime: {error}"))?;
             Ok(json!({ "restarted": true }))
         }
+        "conversation.reset" => conversation_reset(app).await,
+        "startup.get" => startup_get(app),
+        "startup.set" => startup_set(app, payload),
         "overlay.show" => {
             show_quick_window(app, "cli");
             Ok(json!({ "visible": true }))
@@ -266,6 +270,7 @@ async fn dispatch(app: &AppHandle, command: &str, payload: Value) -> Result<Valu
         }
         "ai.get" => ai_get(app).await,
         "ai.set" => ai_set(app, payload).await,
+        "ai.login" => ai_login(app).await,
         "wake.get" => {
             let wake = app.state::<WakeService>();
             serde_json::to_value(wake.status())
@@ -311,9 +316,41 @@ async fn runtime_status(app: &AppHandle) -> Result<Value, String> {
         "model": config.model,
         "effort": config.effort,
         "quick_visible": quick_panel::is_visible(app),
+        "autostart_enabled": autostart_enabled(app).ok(),
         "wake": wake,
         "resources": resources,
     }))
+}
+
+async fn conversation_reset(app: &AppHandle) -> Result<Value, String> {
+    let state = app.state::<DesktopState>();
+    state.client.reset().await;
+    *state.session_id.write().await = SessionId::new();
+    state
+        .core
+        .recover()
+        .await
+        .map_err(|error| format!("cannot recover Assistant Core after conversation reset: {error}"))?;
+    Ok(json!({
+        "reset": true,
+        "conversation_id": state.client.conversation_id().await,
+    }))
+}
+
+fn startup_get(app: &AppHandle) -> Result<Value, String> {
+    Ok(json!({ "enabled": autostart_enabled(app)? }))
+}
+
+#[derive(Debug, Deserialize)]
+struct StartupSetPayload {
+    enabled: bool,
+}
+
+fn startup_set(app: &AppHandle, payload: Value) -> Result<Value, String> {
+    let payload: StartupSetPayload = serde_json::from_value(payload)
+        .map_err(|error| format!("invalid startup.set payload: {error}"))?;
+    set_autostart_enabled(app, payload.enabled)?;
+    startup_get(app)
 }
 
 async fn ai_get(app: &AppHandle) -> Result<Value, String> {
@@ -343,6 +380,17 @@ async fn ai_set(app: &AppHandle, payload: Value) -> Result<Value, String> {
     state.antigravity_store.save(&settings)?;
     state.client.update_model_config(model, effort).await;
     ai_get(app).await
+}
+
+async fn ai_login(app: &AppHandle) -> Result<Value, String> {
+    let state = app.state::<DesktopState>();
+    let runtime = state.client.get_config_snapshot().await;
+    launch_cli_login(&runtime.binary)?;
+    Ok(json!({
+        "launched": true,
+        "binary": runtime.binary,
+        "note": "Authentication is verified by a real Antigravity session, not by this launch action."
+    }))
 }
 
 #[derive(Debug, Deserialize)]
