@@ -1,13 +1,13 @@
-# Voice Runtime — Phase 5C Desktop Integration
+# Voice Runtime — Desktop Integration
 
 ## Scope
 
-Phase 5C connects the local audio/VAD/STT modules to the desktop Assistant and adds native Windows text-to-speech.
+The desktop voice path connects CPAL microphone capture, local VAD, Vietnamese Zipformer STT, Assistant Core, and Windows SAPI TTS.
 
-This phase implements **one-shot voice turns**, not an always-listening assistant yet.
+The normal voice turn is still bounded to one utterance at a time; wake can trigger that turn automatically, but the microphone is not left continuously recording between turns.
 
 ```text
-Mic button
+Mic / Wake
    |
 Listening
    |
@@ -15,13 +15,17 @@ CPAL / WASAPI
    |
 local VAD
    |
-Whisper STT
+   +--> active snapshots --> throttled Zipformer partial decode --> Quick UI only
    |
-text request
+complete utterance
    |
-Context Engine
+final Zipformer decode
    |
-Antigravity / Gemini
+final text request
+   |
+Context Engine / local Safe path
+   |
+Antigravity / Gemini + MCP
    |
 text response
    |
@@ -30,74 +34,88 @@ Windows SAPI TTS
 Speaking -> Idle
 ```
 
-## Default build behavior
+## Build behavior
 
-The normal desktop build keeps Whisper disabled.
-
-- text Assistant works;
-- Antigravity/MCP works;
-- Windows SAPI TTS is available;
-- microphone voice turns are disabled with an explicit UI explanation.
-
-This preserves a lightweight default build and avoids requiring the Whisper native C/C++ toolchain for developers who are working on non-voice parts of the project.
-
-## Enabling local Whisper
-
-The desktop Rust crate exposes:
+The preferred desktop feature is:
 
 ```toml
-voice-whisper = ["voice-runtime/whisper"]
+voice-stt
 ```
 
-Enable the `voice-whisper` Cargo feature when building/running the desktop binary locally.
+The historical feature name remains as a compatibility alias:
 
-The exact local command can be chosen to match the developer workflow; the important contract is that the `assisstant-desktop` crate is compiled with the `voice-whisper` feature.
+```toml
+voice-whisper
+```
 
-No GitHub Action is required or configured for this verification.
+In the current desktop crate, `voice-whisper` enables the Zipformer STT path rather than the legacy `whisper-rs` backend. This keeps existing build/release configuration valid while runtime naming is migrated incrementally.
 
-## Whisper model location
+Text Assistant, Antigravity/MCP, and TTS continue to work when voice STT resources are unavailable.
 
-The desktop runtime lazy-loads the model on the first voice turn.
+## Vietnamese STT resource
 
-Default local-data path:
+Resource id:
 
 ```text
-<Windows app local data>/models/whisper/ggml-base.bin
+stt_zipformer_vi
 ```
 
-The path can be overridden before launch:
+Default model directory:
 
 ```text
-ASSISTANT_WHISPER_MODEL=<absolute model path>
+<Windows app local data>/models/stt/
+  sherpa-onnx-zipformer-vi-30M-int8-2026-02-09/
 ```
 
-The repository does not commit or automatically download model files in this phase.
+Required runtime files:
 
-The UI queries `assistant_voice_capabilities` and keeps the microphone button disabled unless:
+```text
+encoder.int8.onnx
+decoder.onnx
+joiner.int8.onnx
+tokens.txt
+```
 
-1. the binary was compiled with `voice-whisper`;
-2. the configured model file exists.
+Optional/preparation file:
 
-Text mode continues to work when either condition is missing.
+```text
+bpe.model
+```
 
-## One-shot voice lifecycle
+Install through the shared runtime resource installer:
+
+```powershell
+assistant resources install stt_zipformer_vi
+```
+
+For diagnostics, the model directory can be overridden with an absolute path:
+
+```text
+ASSISTANT_ZIPFORMER_MODEL_DIR
+```
+
+The UI queries `assistant_voice_capabilities` and treats microphone voice turns as ready only when the voice STT feature is compiled and the complete runtime bundle is present.
+
+## Voice lifecycle
 
 A voice turn is single-flight and uses the Assistant Core state machine:
 
 ```text
 Idle
  |
+(load recognizer if needed)
+ |
 Listening
+ |
+partial voice:transcript events (UI only)
  |
 VAD finds complete utterance
  |
-Whisper transcribes locally
+final Zipformer transcript
  |
-Processing
+Processing / Executing / Confirming as needed
  |
-Antigravity returns response
- |
-Idle
+Assistant response
  |
 Speaking
  |
@@ -106,9 +124,53 @@ Windows SAPI finishes
 Idle
 ```
 
-All capture/model/STT failure paths cancel `Listening` before returning an error to the UI. A failed voice turn must not leave the Assistant stuck in listening state.
+The recognizer is loaded before entering `Listening`, so the first voice turn cannot display a listening state while the model is still being initialized.
+
+All capture/final-STT failure paths cancel `Listening` before returning an error to the UI. A failed voice turn must not leave the Assistant stuck in the listening state.
 
 A 25-second safety timeout bounds microphone capture when no complete utterance is detected.
+
+## Partial transcript UI
+
+While VAD has an active utterance, the backend can emit:
+
+```text
+voice:transcript
+```
+
+Payload:
+
+```text
+text
+is_final
+```
+
+Behavior:
+
+- `is_final=false`: throttled preview generated from an active VAD snapshot;
+- `is_final=true`: authoritative full-utterance recognition result;
+- partial events never call Assistant Core and never create Antigravity requests;
+- Quick clears previous transcript state when a new invocation or request begins;
+- Quick uses the final transcript as `Bạn nói: ...` while the response continues processing/speaking.
+
+The current model is offline, so these partial previews are simulated streaming rather than native frame/token streaming. See `VOICE_STT.md` for the decode/throttle contract.
+
+## Audio level UI signal
+
+While the microphone is active, the backend also emits:
+
+```text
+voice:level
+```
+
+with:
+
+```text
+rms
+peak
+```
+
+Quick and edge effects can consume this event without coupling visual code directly to CPAL.
 
 ## Local TTS
 
@@ -123,59 +185,43 @@ The TTS path:
 - uses voices installed/available to Windows;
 - has configurable SAPI rate and output volume in the Rust abstraction.
 
-Voice turns automatically read the AI response aloud. The text UI also exposes a `Đọc lại phản hồi cuối` action.
+Voice turns automatically read the Assistant response aloud. Quick response actions and Recent Responses reuse the same native `assistant_speak` path for read-aloud.
 
-## Realtime UI signal
+## Wake integration
 
-While the microphone is active, the backend emits:
+Wake detection shows Quick and starts the existing voice turn after the configured wake-to-command gap. Wake is suspended while capture/TTS is active and resumes afterward, reducing self-trigger risk.
 
-```text
-voice:level
-```
-
-with:
-
-```text
-rms
-peak
-```
-
-The Text Desktop UI currently renders a small level meter from this event.
-
-This event is intentionally reusable: the next Gemini-like Edge UI phase can drive border intensity from the same signal without coupling the visual layer to CPAL.
+Wake detection does not bypass the normal voice lifecycle, Assistant Core, MCP permission gateway, or Sensitive confirmation path.
 
 ## Failure isolation
 
-Voice is an optional enhancement around the already-working text Assistant.
+Voice remains an optional enhancement around the text Assistant.
 
 Failures such as:
 
 - no microphone;
 - microphone disconnect;
-- missing Whisper model;
-- invalid model;
-- STT failure;
+- incomplete Zipformer resource bundle;
+- invalid native model;
+- partial STT decode failure;
+- final STT failure;
 - SAPI/TTS failure;
 
 do not remove the text path.
 
-TTS failure after a successful voice request is returned separately as `tts_error`, so the transcript and Gemini response can still be shown in the conversation.
+Partial decode errors are logged and ignored; final recognition remains authoritative. TTS failure after a successful voice request is returned separately as `tts_error`, so the transcript and Assistant response remain available.
 
-## Not included yet
+## Remaining voice work
 
-The following remain separate phases:
+Separate follow-up work includes:
 
-- wake word;
-- always-on listening;
+- true sherpa-onnx `OnlineRecognizer` streaming with a compatible Vietnamese model;
+- stronger/neural VAD such as Silero VAD;
 - barge-in / interrupting TTS by speaking;
-- streaming partial Whisper transcripts;
-- neural VAD;
-- model download/update management;
-- custom voice model;
-- Gemini-like full-screen edge glow.
-
-The next UI phase can now use stable Assistant states (`Listening`, `Processing`, `Speaking`) plus `voice:level` to implement the screen-edge visual experience independently of the voice engine.
+- contextual biasing / application-name hotwords;
+- commercial-friendly STT model selection if required;
+- measured latency/accuracy tuning on target Windows hardware.
 
 ## Verification policy
 
-No tests, GitHub Actions, or workflow runs are executed by this development process. Native microphone, Whisper, SAPI and Tauri behavior is intended to be verified on the local Windows machine.
+No tests, GitHub Actions, workflow runs, native builds, model downloads, or microphone tests are executed by the remote development process. Native microphone, Zipformer, SAPI and Tauri behavior is intended to be verified on the target Windows machine.
