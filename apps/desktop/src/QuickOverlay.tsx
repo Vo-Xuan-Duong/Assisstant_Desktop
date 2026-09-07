@@ -29,9 +29,22 @@ const QUICK_MIN_HEIGHT = 206;
 const QUICK_MAX_HEIGHT = 380;
 const QUICK_RESIZE_EVENT = "quick:resize_request";
 const QUICK_CANCEL_EVENT = "quick:cancel_request";
+const BARGE_IN_STOP_TIMEOUT_MS = 1_600;
 
 function isCancellationError(cause: unknown) {
   return String(cause).toLowerCase().includes("cancel");
+}
+
+async function waitForIdle(
+  readState: () => AssistantState,
+  timeoutMs = BARGE_IN_STOP_TIMEOUT_MS,
+): Promise<boolean> {
+  const startedAt = performance.now();
+  while (performance.now() - startedAt < timeoutMs) {
+    if (readState() === "idle") return true;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 20));
+  }
+  return readState() === "idle";
 }
 
 function SparkIcon() {
@@ -92,6 +105,8 @@ export default function QuickOverlay() {
   const cardRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const busyRef = useRef(false);
+  const assistantStateRef = useRef<AssistantState>("idle");
+  const voiceOperationRef = useRef(0);
   const cancelRequestedRef = useRef(false);
   const wakeVoiceStarterRef = useRef<() => void>(() => {});
   const wakeTimerRef = useRef<number | null>(null);
@@ -168,6 +183,7 @@ export default function QuickOverlay() {
     const unlisten: Array<() => void> = [];
 
     void listen<QuickShownPayload>("quick:shown", ({ payload }) => {
+      voiceOperationRef.current += 1;
       setError(null);
       setStreamingText("");
       setVoiceTranscript(null);
@@ -202,6 +218,7 @@ export default function QuickOverlay() {
 
     void onAssistantEvent((event) => {
       if (event.type === "state_changed") {
+        assistantStateRef.current = event.to;
         setAssistantState(event.to);
         if (event.to !== "listening") setVoiceLevel(0);
         if (event.to === "idle") {
@@ -221,6 +238,7 @@ export default function QuickOverlay() {
         setCancelPending(false);
         cancelRequestedRef.current = false;
       } else if (event.type === "error") {
+        assistantStateRef.current = "error";
         setAssistantState("error");
         setError(event.message);
         setVoiceLevel(0);
@@ -270,7 +288,7 @@ export default function QuickOverlay() {
   }, [refreshVoice]);
 
   const statusLabel = useMemo(() => {
-    if (cancelPending) return "Đang dừng lượt AI…";
+    if (cancelPending) return "Đang dừng…";
 
     switch (assistantState) {
       case "listening":
@@ -293,7 +311,7 @@ export default function QuickOverlay() {
   const voiceReady = Boolean(voice?.whisper_compiled && voice.model_available);
   const displayedResponse = streamingText || response;
   const active = busy || !["idle", "error"].includes(assistantState);
-  const cancellable = assistantState === "processing";
+  const cancellable = assistantState === "processing" || assistantState === "speaking";
   const style = {
     "--voice-level": voiceLevel.toFixed(3),
   } as CSSProperties;
@@ -303,8 +321,14 @@ export default function QuickOverlay() {
   }, [assistantState, displayedResponse, error, scheduleResize, voiceTranscript]);
 
   const requestCancel = useCallback(async () => {
-    if (assistantState !== "processing" || cancelPending) return;
+    const state = assistantStateRef.current;
+    if ((state !== "processing" && state !== "speaking") || cancelPending) return;
 
+    // Invalidate any active voice promise before an interrupted TTS operation
+    // resolves so stale finally/result handlers cannot overwrite a new turn.
+    if (state === "speaking") {
+      voiceOperationRef.current += 1;
+    }
     cancelRequestedRef.current = true;
     setCancelPending(true);
     setStreamingText("");
@@ -317,7 +341,7 @@ export default function QuickOverlay() {
       setCancelPending(false);
       setError(`Không thể gửi yêu cầu dừng: ${String(cause)}`);
     }
-  }, [assistantState, cancelPending]);
+  }, [cancelPending]);
 
   const send = useCallback(async () => {
     const prompt = input.trim();
@@ -349,9 +373,44 @@ export default function QuickOverlay() {
   }, [input]);
 
   const startVoice = useCallback(async () => {
-    if (busyRef.current) return;
+    const startingState = assistantStateRef.current;
+    const interruptingSpeech = startingState === "speaking";
+    if (busyRef.current && !interruptingSpeech) return;
+
+    const operation = voiceOperationRef.current + 1;
+    voiceOperationRef.current = operation;
+
+    if (interruptingSpeech) {
+      cancelRequestedRef.current = true;
+      setCancelPending(true);
+      setError(null);
+
+      try {
+        await emit(QUICK_CANCEL_EVENT);
+      } catch (cause) {
+        if (voiceOperationRef.current === operation) {
+          cancelRequestedRef.current = false;
+          setCancelPending(false);
+          setError(`Không thể ngắt câu trả lời: ${String(cause)}`);
+        }
+        return;
+      }
+
+      const stopped = await waitForIdle(() => assistantStateRef.current);
+      if (voiceOperationRef.current !== operation) return;
+      if (!stopped) {
+        cancelRequestedRef.current = false;
+        setCancelPending(false);
+        setError("Không thể dừng TTS để bắt đầu lượt nói mới.");
+        return;
+      }
+
+      cancelRequestedRef.current = false;
+      setCancelPending(false);
+    }
 
     const capabilities = await refreshVoice();
+    if (voiceOperationRef.current !== operation) return;
     const ready = Boolean(capabilities?.whisper_compiled && capabilities.model_available);
     if (!ready) {
       setError("STT tiếng Việt chưa sẵn sàng. Dùng `assistant resources install stt_zipformer_vi` trong terminal.");
@@ -371,23 +430,31 @@ export default function QuickOverlay() {
 
     try {
       const result = await runVoiceTurn();
+      if (voiceOperationRef.current !== operation) return;
+
       // Final transcript events arrive before Assistant processing/TTS. Keep this
       // assignment as a compatibility fallback if an event is ever missed.
       setVoiceTranscript(result.transcript);
       setVoiceTranscriptFinal(true);
       setResponse(result.response);
-      if (result.tts_error) {
+      if (result.tts_error && !isCancellationError(result.tts_error)) {
         setError(`TTS: ${result.tts_error}`);
       }
     } catch (cause) {
-      if (!cancelRequestedRef.current && !isCancellationError(cause)) {
+      if (
+        voiceOperationRef.current === operation
+        && !cancelRequestedRef.current
+        && !isCancellationError(cause)
+      ) {
         setError(`Voice turn thất bại: ${String(cause)}`);
       }
     } finally {
-      busyRef.current = false;
-      setBusy(false);
-      setVoiceLevel(0);
-      window.setTimeout(() => inputRef.current?.focus(), 20);
+      if (voiceOperationRef.current === operation) {
+        busyRef.current = false;
+        setBusy(false);
+        setVoiceLevel(0);
+        window.setTimeout(() => inputRef.current?.focus(), 20);
+      }
     }
   }, [refreshVoice]);
 
@@ -422,8 +489,8 @@ export default function QuickOverlay() {
             {cancellable && (
               <button
                 type="button"
-                title="Dừng lượt AI hiện tại"
-                aria-label="Dừng lượt AI hiện tại"
+                title={assistantState === "speaking" ? "Dừng đọc câu trả lời" : "Dừng lượt AI hiện tại"}
+                aria-label={assistantState === "speaking" ? "Dừng đọc câu trả lời" : "Dừng lượt AI hiện tại"}
                 disabled={cancelPending}
                 onClick={() => void requestCancel()}
               >
@@ -477,9 +544,15 @@ export default function QuickOverlay() {
           <button
             type="button"
             className={`quick-mic ${assistantState === "listening" ? "quick-mic-listening" : ""}`}
-            disabled={busy && assistantState !== "listening"}
-            title={voiceReady ? "Nói với Assistant" : "STT chưa sẵn sàng"}
-            aria-label="Nói với Assistant"
+            disabled={!voiceReady || (busy && assistantState !== "speaking")}
+            title={
+              !voiceReady
+                ? "STT chưa sẵn sàng"
+                : assistantState === "speaking"
+                  ? "Ngắt câu trả lời và nói với Assistant"
+                  : "Nói với Assistant"
+            }
+            aria-label={assistantState === "speaking" ? "Ngắt câu trả lời và nói với Assistant" : "Nói với Assistant"}
             onClick={() => void startVoice()}
           >
             <span className="quick-mic-ring" aria-hidden="true" />

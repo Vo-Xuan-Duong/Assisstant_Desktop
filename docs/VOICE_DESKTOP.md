@@ -119,7 +119,7 @@ Assistant response
  |
 Speaking
  |
-Windows SAPI finishes
+Windows SAPI finishes or is explicitly interrupted
  |
 Idle
 ```
@@ -176,20 +176,65 @@ Quick and edge effects can consume this event without coupling visual code direc
 
 `WindowsSapiTts` uses the Windows `SpVoice` COM component through `windows-rs`.
 
-The COM voice object is created and used entirely inside a blocking worker because SAPI COM interfaces are not moved into the async runtime.
+SAPI now runs on a dedicated COM worker thread. Speech is queued asynchronously with `SVSFlagsAsync`, and the worker polls `WaitUntilDone` in short intervals. This lets the same worker receive an out-of-band Cancel command and purge active/pending speech with `SVSFPurgeBeforeSpeak`.
+
+```text
+Assistant -> Speaking
+        |
+WindowsSapiTts worker
+        |
+SpVoice async speech
+        |
+        +-- WaitUntilDone(40 ms)
+        |
+Quick Stop / Mic
+        |
+SapiCommand::Cancel
+        |
+purge active stream
+        |
+Assistant -> Idle
+```
 
 The TTS path:
 
 - does not use Antigravity quota;
 - does not require a network request;
 - uses voices installed/available to Windows;
-- has configurable SAPI rate and output volume in the Rust abstraction.
+- has configurable SAPI rate and output volume in the Rust abstraction;
+- can be interrupted without aborting or moving the COM voice across threads.
 
-Voice turns automatically read the Assistant response aloud. Quick response actions and Recent Responses reuse the same native `assistant_speak` path for read-aloud.
+Voice turns automatically read the Assistant response aloud. Quick response actions and Recent Responses reuse the same native `assistant_speak` path for read-aloud. An intentional SAPI cancellation is treated as expected control flow rather than a read-aloud failure.
+
+## Explicit barge-in
+
+While the Assistant is in `Speaking`, the Quick microphone button remains available. Pressing it performs explicit click-to-barge-in:
+
+```text
+Speaking
+   |
+Mic click
+   |
+quick:cancel_request
+   |
+SAPI purge
+   |
+Idle
+   |
+new assistant_voice_turn
+   |
+Listening
+```
+
+Quick assigns a generation to each voice UI operation. Starting barge-in invalidates the interrupted generation so stale result/finally handlers from the previous voice promise cannot overwrite or clear the new turn.
+
+This phase does **not** keep the microphone open while TTS is playing. Automatic speech-over-TTS interruption requires echo/AEC safeguards; otherwise the current RMS VAD could interpret the Assistant's own speaker output as user speech.
 
 ## Wake integration
 
 Wake detection shows Quick and starts the existing voice turn after the configured wake-to-command gap. Wake is suspended while capture/TTS is active and resumes afterward, reducing self-trigger risk.
+
+Wake suspension is reference-counted. Rapid consecutive turns or explicit barge-in can temporarily overlap old cooldown timers with a new suspension; wake resumes only when the final outstanding suspension is released. This prevents an older `resume_after(...)` timer from re-enabling wake detection while a newer voice turn is listening.
 
 Wake detection does not bypass the normal voice lifecycle, Assistant Core, MCP permission gateway, or Sensitive confirmation path.
 
@@ -209,15 +254,18 @@ Failures such as:
 
 do not remove the text path.
 
-Partial decode errors are logged and ignored; final recognition remains authoritative. TTS failure after a successful voice request is returned separately as `tts_error`, so the transcript and Assistant response remain available.
+Partial decode errors are logged and ignored; final recognition remains authoritative. TTS failure after a successful voice request is returned separately as `tts_error`, so the transcript and Assistant response remain available. Intentional TTS cancellation is suppressed by Quick rather than presented as a red failure.
 
 ## Remaining voice work
 
 Separate follow-up work includes:
 
+- microphone/VAD cancellation while `Listening`;
+- local STT decode cancellation where practical;
+- one shared turn-level voice cancellation controller;
+- automatic acoustic barge-in with echo/AEC safeguards;
 - true sherpa-onnx `OnlineRecognizer` streaming with a compatible Vietnamese model;
 - stronger/neural VAD such as Silero VAD;
-- barge-in / interrupting TTS by speaking;
 - contextual biasing / application-name hotwords;
 - commercial-friendly STT model selection if required;
 - measured latency/accuracy tuning on target Windows hardware.

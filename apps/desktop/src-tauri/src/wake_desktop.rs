@@ -1,5 +1,11 @@
 use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
 
+#[cfg(feature = "wake-word")]
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "wake-word")]
 use uuid::Uuid;
@@ -110,6 +116,8 @@ pub struct WakeService {
     events: broadcast::Sender<WakeRuntimeEvent>,
     #[cfg(feature = "wake-word")]
     reload_gate: AsyncMutex<()>,
+    #[cfg(feature = "wake-word")]
+    suspend_depth: Arc<AtomicUsize>,
     model_dir: Option<PathBuf>,
     keywords_path: Option<PathBuf>,
     #[cfg(feature = "wake-word")]
@@ -183,6 +191,7 @@ impl WakeService {
             handle: Mutex::new(handle),
             events,
             reload_gate: AsyncMutex::new(()),
+            suspend_depth: Arc::new(AtomicUsize::new(0)),
             model_dir: Some(model_dir),
             keywords_path: Some(keywords_path),
             settings,
@@ -319,8 +328,10 @@ impl WakeService {
     pub async fn suspend(&self) {
         #[cfg(feature = "wake-word")]
         if let Some(handle) = self.current_handle() {
+            self.suspend_depth.fetch_add(1, Ordering::AcqRel);
             let mut state = handle.subscribe_state();
             if handle.suspend().await.is_err() {
+                let _ = release_suspend(&self.suspend_depth);
                 return;
             }
 
@@ -346,9 +357,12 @@ impl WakeService {
     pub fn resume_after(&self, delay: Duration) {
         #[cfg(feature = "wake-word")]
         if let Some(handle) = self.current_handle() {
+            let suspend_depth = Arc::clone(&self.suspend_depth);
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(delay).await;
-                let _ = handle.resume().await;
+                if release_suspend(&suspend_depth) {
+                    let _ = handle.resume().await;
+                }
             });
         }
 
@@ -395,6 +409,16 @@ impl WakeService {
             .and_then(|value| value.clone())
             .unwrap_or_else(|| "Wake-word runtime hiện không khả dụng.".into())
     }
+}
+
+#[cfg(feature = "wake-word")]
+fn release_suspend(depth: &AtomicUsize) -> bool {
+    depth
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            current.checked_sub(1)
+        })
+        .map(|previous| previous == 1)
+        .unwrap_or(false)
 }
 
 #[cfg(feature = "wake-word")]

@@ -1,8 +1,19 @@
+use std::{
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, Sender, TryRecvError},
+    },
+    thread,
+};
+
 use async_trait::async_trait;
 use thiserror::Error;
+use tokio::sync::oneshot;
 use windows::{
     Win32::{
-        Media::Speech::{ISpeechVoice, SpVoice, SpeechVoiceSpeakFlags},
+        Media::Speech::{
+            ISpeechVoice, SpVoice, SVSFPurgeBeforeSpeak, SVSFlagsAsync, SpeechVoiceSpeakFlags,
+        },
         System::Com::{
             CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
         },
@@ -14,6 +25,10 @@ use windows::{
 pub enum TtsError {
     #[error("text-to-speech input is empty")]
     EmptyText,
+    #[error("text-to-speech request was cancelled")]
+    Cancelled,
+    #[error("text-to-speech backend is already speaking")]
+    Busy,
     #[error("text-to-speech backend failed: {0}")]
     Backend(String),
     #[error("text-to-speech worker failed: {0}")]
@@ -40,59 +55,220 @@ impl Default for TtsConfig {
 #[async_trait]
 pub trait TextToSpeech: Send + Sync {
     async fn speak(&self, text: &str) -> Result<(), TtsError>;
+
+    /// Requests cancellation of the currently active speech operation.
+    /// Implementations return false when no cancellation command can be sent.
+    fn cancel(&self) -> bool {
+        false
+    }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Clone)]
 pub struct WindowsSapiTts {
-    config: TtsConfig,
+    runtime: Arc<SapiRuntime>,
+}
+
+impl Default for WindowsSapiTts {
+    fn default() -> Self {
+        Self::new(TtsConfig::default())
+    }
 }
 
 impl WindowsSapiTts {
     pub fn new(config: TtsConfig) -> Self {
-        Self { config }
+        Self {
+            runtime: Arc::new(SapiRuntime::spawn(config)),
+        }
     }
 
-    fn speak_blocking(config: TtsConfig, text: String) -> Result<(), TtsError> {
-        if text.trim().is_empty() {
-            return Err(TtsError::EmptyText);
-        }
-
-        let initialize = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-        if initialize.is_err() {
-            return Err(TtsError::Backend(
-                WindowsError::from_hresult(initialize).to_string(),
-            ));
-        }
-        let _com = ComGuard;
-
-        unsafe {
-            let voice: ISpeechVoice = CoCreateInstance(&SpVoice, None, CLSCTX_ALL)
-                .map_err(|error| TtsError::Backend(error.to_string()))?;
-            voice
-                .SetRate(config.rate.clamp(-10, 10))
-                .map_err(|error| TtsError::Backend(error.to_string()))?;
-            voice
-                .SetVolume(config.volume.clamp(0, 100))
-                .map_err(|error| TtsError::Backend(error.to_string()))?;
-
-            let text = BSTR::from(text);
-            voice
-                .Speak(&text, SpeechVoiceSpeakFlags::default())
-                .map_err(|error| TtsError::Backend(error.to_string()))?;
-        }
-
-        Ok(())
+    /// Sends an out-of-band purge request to the dedicated SAPI worker.
+    /// The worker owns the COM voice for its full lifetime, so cancellation does
+    /// not depend on aborting a Tokio `spawn_blocking` task.
+    pub fn cancel(&self) -> bool {
+        self.runtime.cancel()
     }
 }
 
 #[async_trait]
 impl TextToSpeech for WindowsSapiTts {
     async fn speak(&self, text: &str) -> Result<(), TtsError> {
-        let config = self.config;
-        let text = text.to_owned();
-        tokio::task::spawn_blocking(move || Self::speak_blocking(config, text))
+        if text.trim().is_empty() {
+            return Err(TtsError::EmptyText);
+        }
+        self.runtime.speak(text.to_owned()).await
+    }
+
+    fn cancel(&self) -> bool {
+        WindowsSapiTts::cancel(self)
+    }
+}
+
+enum SapiCommand {
+    Speak {
+        text: String,
+        result: oneshot::Sender<Result<(), TtsError>>,
+    },
+    Cancel,
+}
+
+struct SapiRuntime {
+    commands: Option<Sender<SapiCommand>>,
+}
+
+impl SapiRuntime {
+    fn spawn(config: TtsConfig) -> Self {
+        let (commands, receiver) = mpsc::channel();
+        let worker = thread::Builder::new()
+            .name("assistant-sapi-tts".into())
+            .spawn(move || sapi_worker(config, receiver));
+
+        Self {
+            commands: worker.ok().map(|_| commands),
+        }
+    }
+
+    async fn speak(&self, text: String) -> Result<(), TtsError> {
+        let commands = self.commands.as_ref().ok_or_else(|| {
+            TtsError::Worker("Windows SAPI worker thread could not be started".into())
+        })?;
+        let (result_tx, result_rx) = oneshot::channel();
+        commands
+            .send(SapiCommand::Speak {
+                text,
+                result: result_tx,
+            })
+            .map_err(|_| TtsError::Worker("Windows SAPI worker is unavailable".into()))?;
+        result_rx
             .await
-            .map_err(|error| TtsError::Worker(error.to_string()))?
+            .map_err(|_| TtsError::Worker("Windows SAPI worker stopped unexpectedly".into()))?
+    }
+
+    fn cancel(&self) -> bool {
+        self.commands
+            .as_ref()
+            .is_some_and(|commands| commands.send(SapiCommand::Cancel).is_ok())
+    }
+}
+
+fn sapi_worker(config: TtsConfig, receiver: Receiver<SapiCommand>) {
+    let initialize = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    if initialize.is_err() {
+        let message = WindowsError::from_hresult(initialize).to_string();
+        reject_worker_commands(receiver, message);
+        return;
+    }
+    let _com = ComGuard;
+
+    let voice: ISpeechVoice = match unsafe { CoCreateInstance(&SpVoice, None, CLSCTX_ALL) } {
+        Ok(voice) => voice,
+        Err(error) => {
+            reject_worker_commands(receiver, error.to_string());
+            return;
+        }
+    };
+
+    let setup = unsafe {
+        voice
+            .SetRate(config.rate.clamp(-10, 10))
+            .and_then(|_| voice.SetVolume(config.volume.clamp(0, 100)))
+    };
+    if let Err(error) = setup {
+        reject_worker_commands(receiver, error.to_string());
+        return;
+    }
+
+    while let Ok(command) = receiver.recv() {
+        match command {
+            SapiCommand::Speak { text, result } => {
+                if !run_speech(&voice, &receiver, text, result) {
+                    break;
+                }
+            }
+            SapiCommand::Cancel => {
+                // Idle cancellation is intentionally harmless. A cancel command
+                // may arrive just after the previous stream completed.
+            }
+        }
+    }
+}
+
+fn run_speech(
+    voice: &ISpeechVoice,
+    receiver: &Receiver<SapiCommand>,
+    text: String,
+    result: oneshot::Sender<Result<(), TtsError>>,
+) -> bool {
+    let text = BSTR::from(text);
+    let speak_flags = SpeechVoiceSpeakFlags(SVSFlagsAsync.0 | SVSFPurgeBeforeSpeak.0);
+    if let Err(error) = unsafe { voice.Speak(&text, speak_flags) } {
+        let _ = result.send(Err(TtsError::Backend(error.to_string())));
+        return true;
+    }
+
+    loop {
+        match unsafe { voice.WaitUntilDone(40) } {
+            Ok(done) if done.as_bool() => {
+                let _ = result.send(Ok(()));
+                return true;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let _ = result.send(Err(TtsError::Backend(error.to_string())));
+                return true;
+            }
+        }
+
+        loop {
+            match receiver.try_recv() {
+                Ok(SapiCommand::Cancel) => {
+                    let purge = purge_voice(voice);
+                    let outcome = match purge {
+                        Ok(()) => Err(TtsError::Cancelled),
+                        Err(error) => Err(error),
+                    };
+                    let _ = result.send(outcome);
+                    return true;
+                }
+                Ok(SapiCommand::Speak { result, .. }) => {
+                    let _ = result.send(Err(TtsError::Busy));
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    let _ = purge_voice(voice);
+                    let _ = result.send(Err(TtsError::Cancelled));
+                    return false;
+                }
+            }
+        }
+    }
+}
+
+fn purge_voice(voice: &ISpeechVoice) -> Result<(), TtsError> {
+    let empty = BSTR::from("");
+    let flags = SpeechVoiceSpeakFlags(SVSFlagsAsync.0 | SVSFPurgeBeforeSpeak.0);
+    match unsafe { voice.Speak(&empty, flags) } {
+        Ok(_) => Ok(()),
+        Err(purge_error) => {
+            // Some SAPI voices/audio drivers can reject a purge while the output
+            // device is busy. `Skip` is the documented sentence-level escape
+            // hatch, so use it as a bounded fallback on the same COM worker.
+            let sentence = BSTR::from("Sentence");
+            unsafe { voice.Skip(&sentence, i32::MAX) }
+                .map(|_| ())
+                .map_err(|skip_error| {
+                    TtsError::Backend(format!(
+                        "SAPI purge failed: {purge_error}; sentence skip fallback failed: {skip_error}"
+                    ))
+                })
+        }
+    }
+}
+
+fn reject_worker_commands(receiver: Receiver<SapiCommand>, message: String) {
+    while let Ok(command) = receiver.recv() {
+        if let SapiCommand::Speak { result, .. } = command {
+            let _ = result.send(Err(TtsError::Backend(message.clone())));
+        }
     }
 }
 
