@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
-import { onAssistantEvent } from "./api";
+import { onAssistantEvent, speakResponse } from "./api";
 import { copyQuickText } from "./quickClipboard";
 import { setQuickAutoDismissHold } from "./quickLifecycle";
+import type { AssistantState } from "./types";
 import "./quick-recent-responses.css";
 
 const MAX_RECENT_RESPONSES = 5;
 const COPY_FEEDBACK_MS = 1_200;
+const SPEAK_ERROR_MS = 1_600;
 const QUICK_RESIZE_EVENT = "quick:resize_request";
 const QUICK_HISTORY_HEIGHT = 380;
 const DUPLICATE_EVENT_WINDOW_MS = 500;
@@ -36,6 +38,15 @@ function CopyIcon() {
   );
 }
 
+function SpeakerIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 10v4h3l4 3V7L8 10H5Z" />
+      <path d="M15 9.2a4 4 0 0 1 0 5.6M17.6 6.8a7.4 7.4 0 0 1 0 10.4" />
+    </svg>
+  );
+}
+
 function formatTime(timestamp: number) {
   return new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
@@ -46,9 +57,13 @@ function formatTime(timestamp: number) {
 export default function QuickRecentResponses() {
   const [items, setItems] = useState<RecentResponse[]>([]);
   const [open, setOpen] = useState(false);
+  const [assistantState, setAssistantState] = useState<AssistantState>("idle");
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [speakPendingId, setSpeakPendingId] = useState<number | null>(null);
+  const [speakErrorId, setSpeakErrorId] = useState<number | null>(null);
   const nextIdRef = useRef(1);
   const feedbackTimerRef = useRef<number | null>(null);
+  const speakErrorTimerRef = useRef<number | null>(null);
   const previousHeightRef = useRef<number | null>(null);
 
   const requestHeight = (height: number) => {
@@ -82,6 +97,10 @@ export default function QuickRecentResponses() {
     const unlisten: Array<() => void> = [];
 
     void onAssistantEvent((event) => {
+      if (event.type === "state_changed") {
+        setAssistantState(event.to);
+        return;
+      }
       if (event.type !== "response_completed") return;
 
       const text = event.text.trim();
@@ -114,6 +133,8 @@ export default function QuickRecentResponses() {
       setQuickAutoDismissHold(AUTO_DISMISS_HOLD_SOURCE, false);
       setOpen(false);
       setCopiedId(null);
+      setSpeakPendingId(null);
+      setSpeakErrorId(null);
       previousHeightRef.current = null;
     }).then((fn) => {
       if (disposed) fn();
@@ -125,6 +146,9 @@ export default function QuickRecentResponses() {
       setQuickAutoDismissHold(AUTO_DISMISS_HOLD_SOURCE, false);
       if (feedbackTimerRef.current !== null) {
         window.clearTimeout(feedbackTimerRef.current);
+      }
+      if (speakErrorTimerRef.current !== null) {
+        window.clearTimeout(speakErrorTimerRef.current);
       }
       for (const fn of unlisten) fn();
     };
@@ -140,6 +164,19 @@ export default function QuickRecentResponses() {
       setCopiedId(null);
     }, COPY_FEEDBACK_MS);
   };
+
+  const showSpeakError = (id: number) => {
+    if (speakErrorTimerRef.current !== null) {
+      window.clearTimeout(speakErrorTimerRef.current);
+    }
+    setSpeakErrorId(id);
+    speakErrorTimerRef.current = window.setTimeout(() => {
+      speakErrorTimerRef.current = null;
+      setSpeakErrorId(null);
+    }, SPEAK_ERROR_MS);
+  };
+
+  const canSpeak = assistantState === "idle" && speakPendingId === null;
 
   if (items.length === 0) return null;
 
@@ -170,6 +207,8 @@ export default function QuickRecentResponses() {
               onClick={() => {
                 setItems([]);
                 setCopiedId(null);
+                setSpeakPendingId(null);
+                setSpeakErrorId(null);
                 closeDrawer();
               }}
             >
@@ -178,27 +217,54 @@ export default function QuickRecentResponses() {
           </header>
 
           <div className="quick-history-list">
-            {items.map((item) => (
-              <article key={item.id} className="quick-history-item">
-                <div className="quick-history-item-meta">
-                  <time>{formatTime(item.createdAt)}</time>
-                  <button
-                    type="button"
-                    title="Sao chép câu trả lời này"
-                    aria-label="Sao chép câu trả lời này"
-                    onClick={() => {
-                      void copyQuickText(item.text)
-                        .then(() => showCopied(item.id))
-                        .catch(() => setCopiedId(null));
-                    }}
-                  >
-                    <CopyIcon />
-                    <span>{copiedId === item.id ? "Đã copy" : "Copy"}</span>
-                  </button>
-                </div>
-                <p>{item.text}</p>
-              </article>
-            ))}
+            {items.map((item) => {
+              const speakingThisItem = speakPendingId === item.id || (
+                assistantState === "speaking" && speakPendingId === item.id
+              );
+              const speakFailed = speakErrorId === item.id;
+
+              return (
+                <article key={item.id} className="quick-history-item">
+                  <div className="quick-history-item-meta">
+                    <time>{formatTime(item.createdAt)}</time>
+                    <div className="quick-history-item-actions">
+                      <button
+                        type="button"
+                        title="Sao chép câu trả lời này"
+                        aria-label="Sao chép câu trả lời này"
+                        onClick={() => {
+                          void copyQuickText(item.text)
+                            .then(() => showCopied(item.id))
+                            .catch(() => setCopiedId(null));
+                        }}
+                      >
+                        <CopyIcon />
+                        <span>{copiedId === item.id ? "Đã copy" : "Copy"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={speakFailed ? "quick-history-speak-error" : ""}
+                        title={speakFailed ? "Không thể đọc câu trả lời này" : "Đọc câu trả lời này"}
+                        aria-label={speakFailed ? "Không thể đọc câu trả lời này" : "Đọc câu trả lời này"}
+                        disabled={!canSpeak}
+                        onClick={() => {
+                          if (!canSpeak) return;
+                          setSpeakErrorId(null);
+                          setSpeakPendingId(item.id);
+                          void speakResponse(item.text)
+                            .catch(() => showSpeakError(item.id))
+                            .finally(() => setSpeakPendingId(null));
+                        }}
+                      >
+                        <SpeakerIcon />
+                        <span>{speakFailed ? "Lỗi" : speakingThisItem ? "Đang đọc" : "Đọc"}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <p>{item.text}</p>
+                </article>
+              );
+            })}
           </div>
         </section>
       )}
