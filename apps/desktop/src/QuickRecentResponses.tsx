@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
 import { onAssistantEvent } from "./api";
 import { copyQuickText } from "./quickClipboard";
+import { setQuickAutoDismissHold } from "./quickLifecycle";
 import "./quick-recent-responses.css";
 
 const MAX_RECENT_RESPONSES = 5;
@@ -9,6 +10,7 @@ const COPY_FEEDBACK_MS = 1_200;
 const QUICK_RESIZE_EVENT = "quick:resize_request";
 const QUICK_HISTORY_HEIGHT = 380;
 const DUPLICATE_EVENT_WINDOW_MS = 500;
+const AUTO_DISMISS_HOLD_SOURCE = "recent-responses";
 
 interface RecentResponse {
   id: number;
@@ -54,6 +56,7 @@ export default function QuickRecentResponses() {
   };
 
   const closeDrawer = () => {
+    setQuickAutoDismissHold(AUTO_DISMISS_HOLD_SOURCE, false);
     setOpen(false);
     const previousHeight = previousHeightRef.current;
     previousHeightRef.current = null;
@@ -69,6 +72,7 @@ export default function QuickRecentResponses() {
     }
 
     previousHeightRef.current = Math.max(1, Math.round(window.innerHeight));
+    setQuickAutoDismissHold(AUTO_DISMISS_HOLD_SOURCE, true);
     requestHeight(QUICK_HISTORY_HEIGHT);
     setOpen(true);
   };
@@ -107,6 +111,7 @@ export default function QuickRecentResponses() {
     });
 
     void listen("quick:shown", () => {
+      setQuickAutoDismissHold(AUTO_DISMISS_HOLD_SOURCE, false);
       setOpen(false);
       setCopiedId(null);
       previousHeightRef.current = null;
@@ -117,6 +122,7 @@ export default function QuickRecentResponses() {
 
     return () => {
       disposed = true;
+      setQuickAutoDismissHold(AUTO_DISMISS_HOLD_SOURCE, false);
       if (feedbackTimerRef.current !== null) {
         window.clearTimeout(feedbackTimerRef.current);
       }
