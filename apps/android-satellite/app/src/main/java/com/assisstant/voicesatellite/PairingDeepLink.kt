@@ -40,12 +40,32 @@ object PairingDeepLink {
 
     private fun isValidHost(host: String): Boolean {
         if (host.isEmpty() || host.length > MAX_HOST_CHARS) return false
-        if (host == "0.0.0.0" || host == "127.0.0.1" || host.equals("localhost", true)) {
-            return false
+        if (!host.all { it.isAsciiHostChar() }) return false
+        if (host.equals("localhost", true)) return false
+
+        val looksNumeric = host.all { it in '0'..'9' || it == '.' }
+        if (looksNumeric) {
+            val parts = host.split('.')
+            if (parts.size != 4) return false
+            val octets = parts.map { part ->
+                if (part.isEmpty() || part.length > 3) return false
+                part.toIntOrNull() ?: return false
+            }
+            if (octets.any { it !in 0..255 }) return false
+            if (octets.all { it == 0 } || octets[0] == 127) return false
+            return true
         }
+
         if (host.startsWith('.') || host.endsWith('.') || host.contains("..")) return false
-        return host.all { it.isLetterOrDigit() || it == '-' || it == '.' }
+        return host.split('.').all { label ->
+            label.isNotEmpty() &&
+                !label.startsWith('-') &&
+                !label.endsWith('-')
+        }
     }
+
+    private fun Char.isAsciiHostChar(): Boolean =
+        this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9' || this == '-' || this == '.'
 
     private fun Char.isHexDigit(): Boolean =
         this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
