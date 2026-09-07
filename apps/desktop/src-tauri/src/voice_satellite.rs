@@ -1,3 +1,6 @@
+#[path = "satellite_devices.rs"]
+mod satellite_devices;
+
 use std::{fs, sync::LazyLock, time::Duration};
 
 use assistant_common::{AssistantState, UserRequest};
@@ -23,6 +26,7 @@ const WEBSOCKET_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_FRAME_BYTES: usize = 64 * 1024;
 const SETTINGS_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const DEVICE_TRUST_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 static COMMAND_GATE: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
 
@@ -65,6 +69,7 @@ impl Default for ResponseLanguage {
 enum ClientMessage {
     Hello {
         token: String,
+        device_id: String,
         device_name: Option<String>,
         protocol: u32,
     },
@@ -417,9 +422,9 @@ async fn run_server(app: AppHandle, config: SatelliteConfig) -> Result<(), Strin
             .await
             .map_err(|error| format!("voice satellite accept failed: {error}"))?;
 
-        // Phase 26 intentionally trusts one active phone connection at a time.
-        // Keeping the connection inside this supervisor-owned task also means a
-        // token rotation/revoke aborts the active connection immediately.
+        // Keep one active phone session in this supervisor-owned task. Token
+        // rotation/revoke aborts this entire task and device revoke is checked
+        // independently inside the authenticated connection loop below.
         if let Err(error) = handle_connection(app.clone(), stream, config.token.clone()).await {
             debug!(%peer, %error, "voice satellite connection closed");
         }
@@ -432,7 +437,22 @@ async fn handle_connection(
     expected_token: String,
 ) -> Result<(), String> {
     let mut socket = WebSocketConnection::accept(stream).await?;
-    authenticate(&mut socket, &expected_token).await?;
+    let device_id = match authenticate(&app, &mut socket, &expected_token).await {
+        Ok(device_id) => device_id,
+        Err(error) => {
+            let _ = send_json(
+                &mut socket,
+                &ServerMessage::Error {
+                    id: None,
+                    code: "authentication_failed",
+                    message: "Pairing or trusted-device authentication was rejected by the desktop.",
+                },
+            )
+            .await;
+            return Err(error);
+        }
+    };
+
     send_json(
         &mut socket,
         &ServerMessage::Ready {
@@ -443,7 +463,26 @@ async fn handle_connection(
     .await?;
 
     loop {
-        match socket.read_frame().await? {
+        let frame = tokio::select! {
+            frame = socket.read_frame() => frame?,
+            _ = tokio::time::sleep(DEVICE_TRUST_POLL_INTERVAL) => {
+                if satellite_devices::is_device_revoked(&app, &device_id)? {
+                    let _ = send_json(
+                        &mut socket,
+                        &ServerMessage::Error {
+                            id: None,
+                            code: "device_revoked",
+                            message: "This Android satellite device has been revoked on the desktop.",
+                        },
+                    )
+                    .await;
+                    return Err(format!("satellite device `{device_id}` was revoked"));
+                }
+                continue;
+            }
+        };
+
+        match frame {
             IncomingFrame::Text(text) => {
                 let message = match serde_json::from_str::<ClientMessage>(&text) {
                     Ok(message) => message,
@@ -499,9 +538,10 @@ async fn handle_connection(
 }
 
 async fn authenticate(
+    app: &AppHandle,
     socket: &mut WebSocketConnection,
     expected_token: &str,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let first = tokio::time::timeout(Duration::from_secs(5), socket.read_frame())
         .await
         .map_err(|_| "voice satellite authentication timed out".to_owned())??;
@@ -514,6 +554,7 @@ async fn authenticate(
         .map_err(|error| format!("invalid voice satellite hello: {error}"))?;
     let ClientMessage::Hello {
         token,
+        device_id,
         device_name,
         protocol,
     } = hello
@@ -530,11 +571,17 @@ async fn authenticate(
         return Err("voice satellite pairing token was rejected".to_owned());
     }
 
+    let (device_id, device_name) = satellite_devices::record_authenticated_device(
+        app,
+        &device_id,
+        device_name.as_deref(),
+    )?;
     info!(
-        device = device_name.as_deref().unwrap_or("android"),
+        device_id = %device_id,
+        device = %device_name,
         "Android voice satellite authenticated"
     );
-    Ok(())
+    Ok(device_id)
 }
 
 async fn handle_command(
