@@ -1,6 +1,6 @@
 #[path = "management_ipc.rs"]
 mod management_ipc;
-#[path = "voice_satellite.rs"]
+#[path = "../voice_satellite.rs"]
 mod voice_satellite;
 
 use std::time::Duration;
