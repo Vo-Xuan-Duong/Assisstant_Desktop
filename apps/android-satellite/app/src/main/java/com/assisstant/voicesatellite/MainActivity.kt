@@ -1,6 +1,7 @@
 package com.assisstant.voicesatellite
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -56,6 +57,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         loadSettings()
+        consumePairingIntent(intent)
 
         satelliteClient = SatelliteClient(
             context = this,
@@ -103,6 +105,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumePairingIntent(intent)
     }
 
     override fun onDestroy() {
@@ -269,6 +277,26 @@ class MainActivity : ComponentActivity() {
                 Text(lastResponse, style = MaterialTheme.typography.bodyLarge)
             }
         }
+    }
+
+    private fun consumePairingIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+
+        PairingDeepLink.parse(intent.data)
+            .onSuccess { pairing ->
+                if (::satelliteClient.isInitialized) {
+                    satelliteClient.close()
+                }
+                connected = false
+                connectionStatus = "Đã nhập pairing từ QR"
+                desktopAddress = pairing.desktopAddress
+                pairingToken = pairing.token
+                saveSettings()
+                statusMessage = "Đã nhập pairing từ QR. Kiểm tra địa chỉ rồi nhấn Kết nối."
+            }
+            .onFailure { error ->
+                statusMessage = error.message ?: "Không thể đọc pairing QR."
+            }
     }
 
     private fun startSpeechRecognition() {
