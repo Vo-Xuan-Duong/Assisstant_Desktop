@@ -1,11 +1,16 @@
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 const APP_IDENTIFIER: &str = "com.voduong.assisstantdesktop";
 const SETTINGS_FILE: &str = "satellite.json";
+const DEVICES_FILE: &str = "satellite-devices.json";
 const DEFAULT_BIND: &str = "0.0.0.0:8765";
+const MAX_DEVICE_ID_CHARS: usize = 128;
 
 type CliResult<T> = Result<T, String>;
 
@@ -29,6 +34,22 @@ impl Default for SatelliteSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct DeviceRegistry {
+    #[serde(default)]
+    devices: Vec<TrustedDevice>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TrustedDevice {
+    id: String,
+    name: String,
+    first_seen_unix: u64,
+    last_seen_unix: u64,
+    #[serde(default)]
+    revoked: bool,
+}
+
 fn default_bind() -> String {
     DEFAULT_BIND.to_owned()
 }
@@ -44,6 +65,7 @@ fn run() -> CliResult<()> {
     let mut args = env::args().skip(1).collect::<Vec<_>>();
     let data_dir = extract_data_dir(&mut args)?;
     let settings_path = resolve_settings_path(data_dir)?;
+    let devices_path = settings_path.with_file_name(DEVICES_FILE);
     let command = args.first().map(String::as_str).unwrap_or("show");
 
     match command {
@@ -57,6 +79,9 @@ fn run() -> CliResult<()> {
         "disable" => set_enabled(&settings_path, false),
         "revoke" => revoke(&settings_path),
         "bind" => set_bind(&settings_path, &args[1..]),
+        "devices" => list_devices(&devices_path),
+        "revoke-device" => set_device_revoked(&devices_path, &args[1..], true),
+        "allow-device" => set_device_revoked(&devices_path, &args[1..], false),
         other => Err(format!("unknown satellite command `{other}`")),
     }
 }
@@ -73,12 +98,19 @@ COMMANDS
   pair [--bind <host:port>]    Create a new pairing token and enable the receiver
   enable                       Enable the receiver using the current token
   disable                      Disable the receiver but keep the pairing token
-  revoke                       Disable the receiver and invalidate the pairing token
+  revoke                       Disable the receiver and invalidate the shared pairing token
   bind <host:port>             Change the listener bind address
+  devices                      List known Android satellite devices
+  revoke-device <device-id>    Revoke one Android device without rotating the shared token
+  allow-device <device-id>     Re-enable a previously revoked Android device
 
-The running desktop watches settings/satellite.json and normally applies changes
-within about one second. A legacy ASSISTANT_VOICE_SATELLITE_TOKEN environment
-override takes precedence over this file until that environment override is removed.
+The running desktop watches settings/satellite.json and normally applies listener
+changes within about one second. Trusted-device revocation is checked by an active
+phone session about once per second as well.
+
+A legacy ASSISTANT_VOICE_SATELLITE_TOKEN environment override takes precedence over
+satellite.json until that environment override is removed. Per-device revocation
+still applies to authenticated Android clients.
 
 ENVIRONMENT
   ASSISTANT_APP_DATA            Override the application data root
@@ -166,6 +198,64 @@ fn set_bind(path: &Path, args: &[String]) -> CliResult<()> {
     Ok(())
 }
 
+fn list_devices(path: &Path) -> CliResult<()> {
+    let mut registry = load_device_registry(path)?;
+    registry.devices.sort_by(|left, right| {
+        right
+            .last_seen_unix
+            .cmp(&left.last_seen_unix)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    if registry.devices.is_empty() {
+        println!("No Android satellite devices have authenticated yet.");
+        println!("registry  {}", path.display());
+        return Ok(());
+    }
+
+    println!("Android Voice Satellite devices");
+    for device in registry.devices {
+        println!(
+            "  [{}] {}  {}",
+            if device.revoked { "revoked" } else { "trusted" },
+            device.id,
+            device.name
+        );
+        println!("      first_seen_unix  {}", device.first_seen_unix);
+        println!("      last_seen_unix   {}", device.last_seen_unix);
+    }
+    println!("registry  {}", path.display());
+    Ok(())
+}
+
+fn set_device_revoked(path: &Path, args: &[String], revoked: bool) -> CliResult<()> {
+    if args.len() != 1 {
+        return Err(if revoked {
+            "usage: assistant-satellite revoke-device <device-id>".into()
+        } else {
+            "usage: assistant-satellite allow-device <device-id>".into()
+        });
+    }
+    let device_id = validate_device_id(&args[0])?;
+    let mut registry = load_device_registry(path)?;
+    let device = registry
+        .devices
+        .iter_mut()
+        .find(|device| device.id == device_id)
+        .ok_or_else(|| format!("unknown satellite device `{device_id}`"))?;
+    device.revoked = revoked;
+    let name = device.name.clone();
+    save_device_registry(path, &registry)?;
+
+    if revoked {
+        println!("Revoked satellite device `{device_id}` ({name}).");
+        println!("An active connection from this device should be closed by the desktop within about one second.");
+    } else {
+        println!("Allowed satellite device `{device_id}` ({name}) again.");
+    }
+    Ok(())
+}
+
 fn validate_bind(value: &str) -> CliResult<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -179,6 +269,23 @@ fn validate_bind(value: &str) -> CliResult<String> {
         .map_err(|_| "bind address port must be 1..65535".to_owned())?;
     if port == 0 {
         return Err("bind address port must be 1..65535".into());
+    }
+    Ok(value.to_owned())
+}
+
+fn validate_device_id(value: &str) -> CliResult<String> {
+    let value = value.trim();
+    let chars = value.chars().count();
+    if !(8..=MAX_DEVICE_ID_CHARS).contains(&chars) {
+        return Err(format!(
+            "device-id must contain 8..={MAX_DEVICE_ID_CHARS} characters"
+        ));
+    }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+    {
+        return Err("device-id contains unsupported characters".into());
     }
     Ok(value.to_owned())
 }
@@ -269,6 +376,37 @@ fn save_settings(path: &Path, settings: &SatelliteSettings) -> CliResult<()> {
     let temp = path.with_extension(format!("json.tmp-{}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(settings)
         .map_err(|error| format!("cannot serialize satellite settings: {error}"))?;
+    fs::write(&temp, bytes)
+        .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
+    if path.exists() {
+        fs::remove_file(path)
+            .map_err(|error| format!("cannot replace {}: {error}", path.display()))?;
+    }
+    fs::rename(&temp, path)
+        .map_err(|error| format!("cannot promote {}: {error}", path.display()))?;
+    Ok(())
+}
+
+fn load_device_registry(path: &Path) -> CliResult<DeviceRegistry> {
+    if !path.exists() {
+        return Ok(DeviceRegistry::default());
+    }
+    let bytes = fs::read(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("cannot parse {}: {error}", path.display()))
+}
+
+fn save_device_registry(path: &Path, registry: &DeviceRegistry) -> CliResult<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("path has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+
+    let temp = path.with_extension(format!("json.tmp-{}", std::process::id()));
+    let bytes = serde_json::to_vec_pretty(registry)
+        .map_err(|error| format!("cannot serialize satellite device registry: {error}"))?;
     fs::write(&temp, bytes)
         .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
     if path.exists() {
