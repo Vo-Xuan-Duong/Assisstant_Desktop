@@ -13,6 +13,7 @@ It listens through Android `SpeechRecognizer`, shows partial recognition locally
 - system `SpeechRecognizer` fallback;
 - push-to-talk;
 - authenticated WebSocket connection over trusted LAN;
+- QR/deep-link pairing without manually typing the endpoint/token;
 - stable per-installation `device_id`;
 - desktop trusted-device registry and per-device revoke;
 - response modes `VI`, `EN`, `Auto`;
@@ -30,35 +31,77 @@ in Android Studio, sync Gradle, then build/install on the target phone.
 
 This source-first phase does not commit the Gradle wrapper JAR/binary. Generate a wrapper locally if command-line builds are required. No remote build or GitHub Actions validation is required for this phase.
 
-## Pair with Windows
+## Recommended pairing: QR
 
-On the PC:
+On the Windows PC:
+
+```powershell
+assistant-satellite pair --qr
+```
+
+The helper:
+
+1. creates a fresh random 64-character pairing token;
+2. enables/hot-reloads the desktop listener;
+3. chooses a phone-reachable IPv4 address when possible;
+4. creates a compact `assd://p?...` pairing deep link;
+5. generates the QR entirely inside the local terminal.
+
+No QR web service is used and the token is not uploaded anywhere.
+
+If Windows selected the wrong adapter/IP, specify it explicitly:
+
+```powershell
+assistant-satellite pair --qr --host 192.168.1.20
+```
+
+You may combine it with a listener bind override:
+
+```powershell
+assistant-satellite pair --qr --host 192.168.1.20 --bind 0.0.0.0:8765
+```
+
+Scan the QR with the phone camera/QR scanner. Android opens the Voice Satellite app through the registered `assd://p` deep link and imports:
+
+- desktop address;
+- WebSocket port;
+- pairing token.
+
+**Scanning does not automatically connect.** The app displays the imported address and requires an explicit **Kết nối** tap. This prevents an arbitrary QR from immediately causing a network connection.
+
+Windows Terminal or another ANSI-capable terminal is recommended for the terminal-rendered QR. The helper also prints the pairing URI as a fallback.
+
+## Manual pairing fallback
+
+You can still use:
 
 ```powershell
 assistant-satellite pair
 ```
 
-This generates a random 64-character shared pairing token and enables the LAN receiver. Persistent configuration is stored at:
-
-```text
-%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite.json
-```
-
-Enter on Android:
+Then enter:
 
 ```text
 ws://<PC-LAN-IP>:8765
 ```
 
-and the token printed by `assistant-satellite pair`.
+and the printed token manually in the Android app.
 
-The Windows runtime watches pairing settings and normally applies changes within about one second without a restart.
+Persistent listener configuration is stored at:
+
+```text
+%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite.json
+```
+
+The Windows runtime watches this file and normally applies changes within about one second without a restart.
 
 Useful commands:
 
 ```powershell
 assistant-satellite show
 assistant-satellite pair
+assistant-satellite pair --qr
+assistant-satellite pair --qr --host <PC-LAN-IP>
 assistant-satellite enable
 assistant-satellite disable
 assistant-satellite bind 0.0.0.0:8765
@@ -100,13 +143,13 @@ To allow it again:
 assistant-satellite allow-device <device-id>
 ```
 
-Reinstalling/clearing app storage can create a new installation identity. Device-specific QR credentials are planned next.
+Reinstalling/clearing app storage can create a new installation identity. The current QR transports the shared bootstrap token; device-specific QR credentials and Keystore/DPAPI hardening remain follow-up work.
 
 ## Using the app
 
 1. Put the phone and PC on the same trusted Wi-Fi/LAN.
-2. Pair from Windows if necessary.
-3. Enter the desktop WebSocket address and pairing token.
+2. Prefer `assistant-satellite pair --qr` on Windows.
+3. Scan the QR and confirm the imported desktop address.
 4. Tap **Kết nối**.
 5. Choose **Tiếng Việt** or **English** recognition.
 6. Choose desktop response language **VI**, **EN**, or **Auto**.
@@ -128,7 +171,9 @@ The normal recognizer is vendor-dependent. On phones using Google services it ma
 
 The current transport is unencrypted `ws://` and is intended only for a trusted/private LAN. Do not expose port `8765` directly to the public Internet.
 
-The phone is low-authority: it cannot bypass desktop permission checks or approve Sensitive actions. The shared token is still a local credential and should not be published in logs/screenshots.
+The pairing QR contains a credential. Treat the QR/URI like the token itself: do not post screenshots or store it in public logs. The custom Android deep-link scheme is an MVP convenience mechanism, not a replacement for future device-specific credentials/Keystore-backed trust.
+
+The phone is low-authority: it cannot bypass desktop permission checks or approve Sensitive actions.
 
 For development compatibility, `ASSISTANT_VOICE_SATELLITE_TOKEN` and `ASSISTANT_VOICE_SATELLITE_BIND` remain supported as environment overrides.
 
