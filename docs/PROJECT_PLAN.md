@@ -9,7 +9,7 @@ The product architecture is deliberately split:
 - **Android Voice Satellite**: microphone + speech recognition + text-command transport;
 - **Windows Desktop**: Assistant Core + context + Antigravity/Gemini reasoning + MCP + Windows tools + permission enforcement + spoken response.
 
-The target experience is:
+Target experience:
 
 ```text
 User speaks to phone
@@ -43,7 +43,7 @@ The user must be able to speak Vietnamese or English without requiring a paid sp
 6. Desktop owns the assistant response and TTS.
 7. Simple commands should receive short, friendly confirmations.
 8. Response language must support `VI`, `EN`, and `Auto`.
-9. Local desktop STT must remain a fallback while the satellite migration stabilizes.
+9. Local desktop STT remains a fallback while the satellite migration stabilizes.
 10. No paid speech API is required for the primary architecture.
 
 ## 3. Non-goals
@@ -52,10 +52,10 @@ The project will not:
 
 - reverse-engineer Google credentials, Gemini consumer-app internals, or private APIs;
 - expose unrestricted shell execution to the model;
-- allow the Android device to bypass Assistant Core/MCP permissions;
+- allow Android to bypass Assistant Core/MCP permissions;
 - use `SpeechRecognizer` as a permanent always-listening loop;
 - expose the current unencrypted LAN WebSocket directly to the public Internet;
-- remove desktop-local voice fallback before the Android path has been locally validated;
+- remove desktop-local voice fallback before Android voice is validated locally;
 - require Python services in the production runtime.
 
 ## 4. Locked technology stack
@@ -82,15 +82,18 @@ The project will not:
 - `createOnDeviceSpeechRecognizer()` when Android reports on-device recognition support;
 - system `SpeechRecognizer` fallback;
 - OkHttp WebSocket client;
-- `vi-VN` and `en-US` initial recognition languages.
+- `vi-VN` and `en-US` initial recognition languages;
+- stable random per-installation `device_id` stored in private app preferences.
 
 ### Satellite desktop transport
 
 - RFC 6455 WebSocket over the existing Tokio runtime;
-- JSON application protocol, version 1;
-- required pairing token;
-- trusted LAN for the MVP;
-- one active satellite phone connection during the current pairing phase;
+- JSON application protocol v1;
+- shared pairing token as bootstrap credential;
+- trusted-device registry after token verification;
+- race-resistant per-device revocation markers;
+- trusted/private LAN for the MVP;
+- one active phone connection during the current pairing phase;
 - one active satellite command at a time.
 
 ## 5. Architecture
@@ -105,11 +108,14 @@ The project will not:
                     +-------------+-------------+
                                   |
                          authenticated WebSocket
+                         token + device identity
                                   |
                                   v
 +----------------------------------------------------------------+
 | Windows Assisstant Desktop                                     |
 |                                                                |
+| Pairing + trusted-device gate                                  |
+|          |                                                     |
 | Voice Satellite Adapter                                        |
 |          |                                                     |
 |          +----> Quick transcript UI                            |
@@ -117,7 +123,6 @@ The project will not:
 |          v                                                     |
 |     Assistant Core                                             |
 |        /      \                                                |
-|       /        \                                               |
 | Context       Antigravity Bridge                               |
 |                  |                                             |
 |             Antigravity CLI                                    |
@@ -138,7 +143,7 @@ Fallback input:
 Windows Mic -> CPAL/WASAPI -> VAD -> Zipformer -> Assistant Core
 ```
 
-No Android module is permitted to execute Windows actions directly. All satellite requests must cross the same Assistant Core and permission boundaries as desktop text/voice requests.
+No Android module may execute Windows actions directly. All satellite requests cross the same Assistant Core and permission boundaries as desktop text/voice requests.
 
 ## 6. Development history
 
@@ -159,9 +164,9 @@ Phases 0–24 established the desktop foundation, including:
 - wake-capture isolation;
 - RMS VAD hysteresis.
 
-The local Zipformer path proved useful as an offline fallback but is not accurate enough to remain the preferred speech-input path for the desired user experience. The roadmap therefore changed at Phase 25 rather than continuing to optimize a small local recognizer indefinitely.
+Phase 25 changed the preferred voice architecture from local desktop STT to Android Voice Satellite while keeping Zipformer as fallback. It was squash-merged to `main` through PR #76.
 
-Phase 25 introduced the Android Voice Satellite and was squash-merged to `main` through PR #76.
+Phase 26 pairing bootstrap introduced persistent pairing/hot reload and was squash-merged through PR #77.
 
 ## 7. Current and next phases
 
@@ -173,41 +178,52 @@ Delivered:
 - microphone permission handling;
 - push-to-talk;
 - `vi-VN` / `en-US` recognition;
-- prefer Android on-device recognition when available;
+- Android on-device recognizer preference;
 - system recognizer fallback;
 - partial transcript shown only on Android;
 - final transcript sent to desktop exactly once;
-- authenticated WebSocket protocol v1;
-- pairing token required before the desktop LAN listener starts;
-- desktop busy rejection/single satellite turn;
-- Quick transcript reuse;
+- authenticated WebSocket transport;
 - Assistant Core/Antigravity/MCP routing;
 - desktop SAPI response;
-- response language `VI`, `EN`, `Auto`;
+- `VI` / `EN` / `Auto` response text;
 - friendly/natural/concise response policy;
 - desktop Zipformer retained as fallback.
 
-Target-device Windows/Android validation remains a local release gate; no remote build/test claim is implied by source completion.
+Target-device Windows/Android validation remains a local release gate.
 
 ### Phase 26 — Pairing, settings, and device management — CURRENT
 
-Goal: replace environment-variable-first setup with productized, revocable device management.
+Goal: remove environment-variable-first setup and provide manageable, revocable phone trust.
 
-#### Implemented in the current pairing bootstrap
+#### Implemented
 
-- durable `%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite.json` settings;
-- generated 64-character high-entropy pairing token;
-- dedicated `assistant-satellite` management helper;
-- `show` with masked token;
-- `pair` / token rotation;
-- enable/disable LAN listener;
-- revoke pairing/token;
-- listener bind-address control;
-- roughly one-second settings polling/hot reload;
-- active phone session is dropped when token/config is rotated, revoked, disabled, or rebound;
-- listener restarts after unexpected server-task completion;
-- legacy `ASSISTANT_VOICE_SATELLITE_TOKEN` / `ASSISTANT_VOICE_SATELLITE_BIND` compatibility;
-- one active trusted phone connection in this bootstrap.
+Pairing/listener bootstrap:
+
+- durable `%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite.json`;
+- generated 64-character shared pairing token;
+- `assistant-satellite` helper;
+- masked token status;
+- pair/token rotation;
+- enable/disable listener;
+- bind-address control;
+- shared-token revoke;
+- roughly one-second live configuration reload;
+- active session dropped when listener/token config changes;
+- legacy environment override compatibility.
+
+Trusted-device layer:
+
+- stable random Android installation `device_id`;
+- device identity included in the WebSocket `hello` message;
+- bounded/sanitized device id and name handling;
+- `%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite-devices.json` registry;
+- first-seen and last-seen timestamps;
+- automatic registration only after shared-token verification;
+- `assistant-satellite devices`;
+- `assistant-satellite revoke-device <device-id>`;
+- `assistant-satellite allow-device <device-id>`;
+- active-session device-trust polling and disconnect after revoke;
+- dedicated revocation marker files so a concurrent last-seen write cannot accidentally undo a revoke.
 
 Current helper surface:
 
@@ -219,22 +235,38 @@ assistant-satellite enable
 assistant-satellite disable
 assistant-satellite bind <host:port>
 assistant-satellite revoke
+assistant-satellite devices
+assistant-satellite revoke-device <device-id>
+assistant-satellite allow-device <device-id>
 ```
 
 #### Remaining Phase 26 work
 
-- fold pairing commands under the canonical `assistant satellite ...` CLI surface;
-- QR pairing flow to remove manual endpoint/token entry;
-- per-device trusted-device registry;
-- connected-device / last-seen diagnostics;
-- device-specific revoke rather than only shared-token rotation;
-- Windows Firewall/private-network setup guidance or safe automation;
-- stronger secret-at-rest handling, such as Windows DPAPI and Android Keystore;
-- narrower/default bind-interface UX where practical.
+Priority order:
+
+1. **Canonical management surface**
+   - fold pairing/device commands under `assistant satellite ...`;
+   - package/install the management path consistently with desktop releases.
+2. **QR pairing**
+   - generate a short-lived pairing payload on Windows;
+   - include endpoint + bootstrap credential without manual typing;
+   - Android scanner/import flow;
+   - bind the accepted pairing to the installation `device_id`.
+3. **Connection diagnostics/UI**
+   - currently connected device;
+   - last seen in user-friendly local time;
+   - pairing/listener health in normal status/readiness surfaces.
+4. **Network safety**
+   - private-network Windows Firewall guidance or safe automation;
+   - narrower/default bind-interface UX where practical.
+5. **Credential hardening**
+   - Windows DPAPI for sensitive persisted material;
+   - Android Keystore-backed credential storage;
+   - move from one shared bootstrap token toward device-specific credentials.
 
 Phase 26 exit criteria:
 
-A normal user can pair and revoke a phone without manually creating environment variables or handling a long token/endpoint by hand, and can inspect which device is trusted/connected.
+A normal user can pair a phone by QR, inspect trusted devices, revoke one phone independently, and reconnect without manually configuring environment variables or typing long credentials/endpoints.
 
 ### Phase 27 — Language-aware desktop TTS
 
@@ -249,7 +281,7 @@ Deliverables:
 - automatic locale-aware voice selection for `Auto`;
 - rate/volume settings retained;
 - graceful fallback to default SAPI voice;
-- friendly concise response style remains model-side, not hard-coded canned phrases.
+- friendly concise response style remains model-side.
 
 Exit criteria:
 
@@ -282,8 +314,8 @@ Deliverables:
 - confidence/alternative-result handling where Android exposes useful data;
 - command vocabulary/context hints where platform support permits;
 - app/tool-name normalization;
-- better retry UX for `NO_MATCH`, network, recognizer-busy, and disconnected desktop;
-- automatic fallback recommendation to desktop local STT when phone recognition is unavailable;
+- retry UX for `NO_MATCH`, network, recognizer-busy, and disconnected desktop;
+- fallback recommendation to desktop local STT when phone recognition is unavailable;
 - connectivity health and latency metrics;
 - duplicate-command protection with request IDs.
 
@@ -297,7 +329,7 @@ Deliverables:
 - no public raw port exposure;
 - device-specific credentials;
 - token rotation;
-- replay/expiry protections as required by the final threat model;
+- replay/expiry protections;
 - remote-device visibility/revocation.
 
 ### Phase 31 — Continuous/full-duplex assistant UX
@@ -351,15 +383,18 @@ Windows tools remain categorized as:
 
 Satellite-specific rules:
 
-- no active token -> listener disabled;
+- no active shared pairing token -> listener disabled;
 - text-only command surface;
 - bounded protocol/frame sizes;
 - protocol-version validation;
-- one active phone in the current bootstrap;
+- valid shared token is required before device registration;
+- stable installation identity is required after pairing;
+- per-device revocation survives concurrent diagnostics updates via dedicated markers;
+- revoked active device is disconnected on the next trust poll;
+- one active phone connection in the current phase;
 - one satellite command at a time;
-- token rotation/revoke tears down the active session;
-- satellite cannot answer Sensitive confirmation on behalf of the user in the MVP;
-- Android never receives MCP credentials or permission-broker secrets;
+- satellite cannot answer Sensitive confirmation on behalf of the user;
+- Android never receives MCP/permission-broker/management secrets;
 - current `ws://` is trusted-LAN-only.
 
 ## 10. Cost and privacy policy
@@ -369,7 +404,7 @@ The architecture must not require a paid speech-recognition API.
 Android speech recognition is provided by the device/platform:
 
 - on-device recognition is used when available and selected;
-- the normal system recognizer may, depending on the device/vendor, use an online service;
+- the normal system recognizer may use an online vendor service;
 - on Google-enabled Android devices the system recognizer may use Google's speech service;
 - no dedicated paid STT API key is required by Assisstant Desktop.
 
@@ -377,9 +412,9 @@ The desktop receives final text rather than phone microphone audio.
 
 Antigravity remains the primary AI/reasoning backend under its existing authentication/quota model.
 
-## 11. MVP acceptance scenarios
+## 11. Acceptance scenarios
 
-From the Android satellite, the user should be able to say natural variants of:
+Voice scenarios:
 
 - `Mở Chrome`;
 - `Mở Visual Studio Code`;
@@ -394,24 +429,27 @@ From the Android satellite, the user should be able to say natural variants of:
 - `Open Visual Studio Code`;
 - `What is the current volume?`.
 
-For each scenario:
+For each voice scenario:
 
 1. Android recognizes speech;
-2. only the final transcript is sent;
-3. desktop shows/handles one request;
-4. Antigravity/MCP or the appropriate safe path performs the operation;
+2. only final text is submitted;
+3. one desktop request is created;
+4. Antigravity/MCP or safe local path performs the operation;
 5. permissions are not bypassed;
-6. the reply language follows `VI`/`EN`/`Auto`;
+6. response language follows `VI`/`EN`/`Auto`;
 7. Windows speaks the response.
 
-Pairing-specific Phase 26 acceptance scenarios additionally require:
+Current Phase 26 pairing/device scenarios:
 
 1. `assistant-satellite pair` creates a fresh token without manual environment setup;
-2. a running desktop applies the pairing without restart;
-3. `disable` stops accepting phone connections;
-4. `revoke` disconnects the active phone and invalidates the old token;
-5. re-pairing with a new token works without restarting the desktop;
-6. QR/trusted-device UX is added before Phase 26 is called complete.
+2. running desktop applies listener changes without restart;
+3. first valid Android connection creates one trusted device entry;
+4. reconnect updates `last_seen_unix`;
+5. `revoke-device` disconnects that active phone and prevents reconnect even with the correct shared token;
+6. `allow-device` permits it again;
+7. shared `revoke` disconnects the active phone and invalidates the bootstrap token;
+8. rotating token does not silently clear explicit per-device revocation;
+9. QR/canonical CLI still must be added before Phase 26 is called complete.
 
 ## 12. Definition of completion
 
