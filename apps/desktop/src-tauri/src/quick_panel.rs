@@ -22,6 +22,7 @@ const QUICK_SIDE_MARGIN: u32 = 28;
 const QUICK_BOTTOM_MARGIN: u32 = 18;
 const QUICK_RESIZE_EVENT: &str = "quick:resize_request";
 const QUICK_CANCEL_EVENT: &str = "quick:cancel_request";
+const QUICK_CANCEL_RETRY_DELAY: Duration = Duration::from_millis(20);
 
 #[derive(Debug, Clone, Serialize)]
 struct QuickShownEvent {
@@ -81,46 +82,49 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         }
     });
 
-    // Cancellation is routed by the active Assistant phase:
+    // Cancellation is routed strictly by the active Assistant phase:
     // - Processing: terminate the current Antigravity session out-of-band.
     // - Speaking: ask the COM-owning SAPI worker to purge its current utterance.
     //
-    // Processing is published immediately before AgentBackend::complete enters
-    // AntigravityClient::ask(). A human can theoretically click Stop inside that
-    // tiny registration gap. Retry exactly once after 20 ms while the same core
-    // phase is still Processing; this closes the gap without making cancellation
-    // sticky enough to affect a later request.
+    // Both states are published immediately before their backend receiver may be
+    // registered. Retry exactly once after 20 ms while the same phase is still
+    // active. This closes the human-clickable registration race without making
+    // cancellation sticky enough to affect a later request or utterance.
     let cancel_app = app.clone();
     app.listen(QUICK_CANCEL_EVENT, move |_| {
         let state = cancel_app.state::<crate::DesktopState>();
-
-        // The Antigravity client can answer synchronously whether a turn receiver
-        // is already registered, so preserve the immediate fast path.
-        if state.client.cancel_active_turn() {
-            debug!("requested cancellation of active Antigravity turn");
-            return;
-        }
-
         let client = state.client.clone();
         let core = state.core.clone();
         let tts = state.tts.clone();
+
         tauri::async_runtime::spawn(async move {
             match core.state().await {
-                AssistantState::Speaking => {
-                    if tts.cancel() {
-                        debug!("requested cancellation of active Windows SAPI speech");
-                    } else {
-                        debug!("ignored Quick cancel request because no SAPI worker was active");
-                    }
-                }
                 AssistantState::Processing => {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    if client.cancel_active_turn() {
+                        debug!("requested cancellation of active Antigravity turn");
+                        return;
+                    }
+
+                    tokio::time::sleep(QUICK_CANCEL_RETRY_DELAY).await;
                     if core.state().await == AssistantState::Processing
                         && client.cancel_active_turn()
                     {
                         debug!("requested cancellation after Antigravity turn registration");
                     } else {
                         debug!("ignored Quick cancel request because no cancellable Antigravity turn was active");
+                    }
+                }
+                AssistantState::Speaking => {
+                    if tts.cancel() {
+                        debug!("requested cancellation of active Windows SAPI speech");
+                        return;
+                    }
+
+                    tokio::time::sleep(QUICK_CANCEL_RETRY_DELAY).await;
+                    if core.state().await == AssistantState::Speaking && tts.cancel() {
+                        debug!("requested cancellation after Windows SAPI worker registration");
+                    } else {
+                        debug!("ignored Quick cancel request because no cancellable SAPI speech was active");
                     }
                 }
                 _ => {
