@@ -320,7 +320,9 @@ async fn supervise_server(app: AppHandle) {
             }
         };
 
-        let server_finished = server_task.as_ref().is_some_and(|task| task.is_finished());
+        let server_finished = server_task
+            .as_ref()
+            .is_some_and(|task| task.inner().is_finished());
         if desired_config != active_config || server_finished {
             if let Some(task) = server_task.take() {
                 task.abort();
