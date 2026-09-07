@@ -1,4 +1,4 @@
-use std::{sync::LazyLock, time::Duration};
+use std::{fs, sync::LazyLock, time::Duration};
 
 use assistant_common::{AssistantState, UserRequest};
 use serde::{Deserialize, Serialize};
@@ -17,17 +17,33 @@ const PROTOCOL_VERSION: u32 = 1;
 const DEFAULT_BIND: &str = "0.0.0.0:8765";
 const TOKEN_ENV: &str = "ASSISTANT_VOICE_SATELLITE_TOKEN";
 const BIND_ENV: &str = "ASSISTANT_VOICE_SATELLITE_BIND";
+const SETTINGS_FILE: &str = "satellite.json";
 const VOICE_TRANSCRIPT_EVENT: &str = "voice:transcript";
 const WEBSOCKET_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_FRAME_BYTES: usize = 64 * 1024;
+const SETTINGS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 static COMMAND_GATE: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SatelliteConfig {
     bind: String,
     token: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PersistedSatelliteSettings {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default = "default_bind")]
+    bind: String,
+    #[serde(default)]
+    token: Option<String>,
+}
+
+fn default_bind() -> String {
+    DEFAULT_BIND.to_owned()
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -278,39 +294,111 @@ impl WebSocketConnection {
 }
 
 pub fn setup(app: &AppHandle) {
-    let Some(config) = config_from_env() else {
-        info!(
-            env = TOKEN_ENV,
-            "Android voice satellite disabled because no pairing token is configured"
-        );
-        return;
-    };
-
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = run_server(app, config).await {
-            warn!(%error, "Android voice satellite server stopped");
-        }
+        supervise_server(app).await;
     });
 }
 
-fn config_from_env() -> Option<SatelliteConfig> {
-    let token = std::env::var(TOKEN_ENV).ok()?;
-    let token = token.trim().to_owned();
-    if token.len() < 16 {
-        warn!(
-            env = TOKEN_ENV,
-            "Android voice satellite pairing token must contain at least 16 characters"
-        );
-        return None;
+async fn supervise_server(app: AppHandle) {
+    let mut active_config: Option<SatelliteConfig> = None;
+    let mut server_task: Option<tauri::async_runtime::JoinHandle<()>> = None;
+    let mut last_config_error: Option<String> = None;
+
+    loop {
+        let desired_config = match config_from_app(&app) {
+            Ok(config) => {
+                last_config_error = None;
+                config
+            }
+            Err(error) => {
+                if last_config_error.as_deref() != Some(error.as_str()) {
+                    warn!(%error, "Android voice satellite configuration was rejected");
+                    last_config_error = Some(error);
+                }
+                None
+            }
+        };
+
+        let server_finished = server_task
+            .as_ref()
+            .is_some_and(|task| task.inner().is_finished());
+        if desired_config != active_config || server_finished {
+            if let Some(task) = server_task.take() {
+                task.abort();
+            }
+
+            active_config = desired_config.clone();
+            server_task = desired_config.map(|config| {
+                let server_app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = run_server(server_app, config).await {
+                        warn!(%error, "Android voice satellite server stopped");
+                    }
+                })
+            });
+
+            if active_config.is_none() {
+                info!("Android voice satellite listener is disabled");
+            }
+        }
+
+        tokio::time::sleep(SETTINGS_POLL_INTERVAL).await;
+    }
+}
+
+fn config_from_app(app: &AppHandle) -> Result<Option<SatelliteConfig>, String> {
+    if let Ok(token) = std::env::var(TOKEN_ENV) {
+        let token = token.trim().to_owned();
+        if token.len() < 16 {
+            return Err(format!("{TOKEN_ENV} must contain at least 16 characters"));
+        }
+        let bind = std::env::var(BIND_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(default_bind);
+        return Ok(Some(SatelliteConfig { bind, token }));
     }
 
-    let bind = std::env::var(BIND_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_BIND.to_owned());
+    let state = app.state::<DesktopState>();
+    let settings_path = state
+        .runtime_paths
+        .app_local_data
+        .join("settings")
+        .join(SETTINGS_FILE);
+    let bytes = match fs::read(&settings_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "cannot read satellite settings {}: {error}",
+                settings_path.display()
+            ));
+        }
+    };
+    let settings: PersistedSatelliteSettings = serde_json::from_slice(&bytes).map_err(|error| {
+        format!(
+            "cannot parse satellite settings {}: {error}",
+            settings_path.display()
+        )
+    })?;
+    if !settings.enabled {
+        return Ok(None);
+    }
+    let bind = settings.bind.trim();
+    if bind.is_empty() {
+        return Err("satellite bind address cannot be empty".into());
+    }
+    let token = settings
+        .token
+        .map(|value| value.trim().to_owned())
+        .filter(|value| value.len() >= 16)
+        .ok_or_else(|| "satellite is enabled but has no valid pairing token".to_owned())?;
 
-    Some(SatelliteConfig { bind, token })
+    Ok(Some(SatelliteConfig {
+        bind: bind.to_owned(),
+        token,
+    }))
 }
 
 async fn run_server(app: AppHandle, config: SatelliteConfig) -> Result<(), String> {
@@ -328,14 +416,13 @@ async fn run_server(app: AppHandle, config: SatelliteConfig) -> Result<(), Strin
             .accept()
             .await
             .map_err(|error| format!("voice satellite accept failed: {error}"))?;
-        let app = app.clone();
-        let expected_token = config.token.clone();
 
-        tauri::async_runtime::spawn(async move {
-            if let Err(error) = handle_connection(app, stream, expected_token).await {
-                debug!(%peer, %error, "voice satellite connection closed");
-            }
-        });
+        // Phase 26 intentionally trusts one active phone connection at a time.
+        // Keeping the connection inside this supervisor-owned task also means a
+        // token rotation/revoke aborts the active connection immediately.
+        if let Err(error) = handle_connection(app.clone(), stream, config.token.clone()).await {
+            debug!(%peer, %error, "voice satellite connection closed");
+        }
     }
 }
 
