@@ -1,5 +1,7 @@
 #[path = "management_ipc.rs"]
 mod management_ipc;
+#[path = "../voice_satellite.rs"]
+mod voice_satellite;
 
 use std::time::Duration;
 
@@ -143,6 +145,11 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let management = management_ipc::ManagementIpc::setup(app, &state.runtime_paths)
         .map_err(|error| tauri::Error::Io(std::io::Error::other(error)))?;
     app.manage(management);
+
+    // Android is now the preferred speech-input surface. The receiver is
+    // intentionally fail-secure: without a pairing token it does not bind a LAN
+    // socket. Desktop microphone/Zipformer remains available as a fallback.
+    voice_satellite::setup(app);
 
     Ok(())
 }

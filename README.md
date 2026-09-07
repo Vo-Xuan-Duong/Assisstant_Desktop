@@ -1,130 +1,268 @@
 # Assisstant Desktop
 
-Windows-first AI assistant powered by **Google Antigravity CLI + Gemini + MCP + Rust/Tauri**.
+Windows-first AI system assistant powered by **Google Antigravity CLI + Gemini + MCP + Rust/Tauri**, with an **Android Voice Satellite** as the preferred speech-input surface.
 
-Assisstant Desktop is designed as a background system assistant, not a conventional chatbot window. Normal graphical interaction is intentionally limited to a Gemini-style quick overlay, perimeter glow, and Sensitive permission confirmation. Configuration, diagnostics, resources, permissions, runtime control, and logs are managed through `assistant.exe`.
+Assisstant Desktop is designed as a background system assistant rather than a conventional chatbot window. The Windows app owns reasoning, context, permissions, tools, UI, and spoken responses. The Android companion app owns microphone capture and speech recognition, then sends only the final recognized text to the desktop.
+
+## Current architecture
+
+```text
+                    Android Voice Satellite
+                    -----------------------
+                    Microphone
+                       |
+                    SpeechRecognizer
+                    |- partial -> phone UI only
+                    `- final text
+                       |
+                 authenticated WebSocket
+                       |
+                       v
++------------------------------------------------------------+
+| Assisstant Desktop                                         |
+|                                                            |
+| Voice Satellite Adapter                                    |
+|       |                                                    |
+|       +----> Quick transcript UI                           |
+|       |                                                    |
+|       v                                                    |
+| Assistant Core                                             |
+|    /        \                                              |
+| Context     Antigravity Bridge                             |
+|                |                                           |
+|          Antigravity CLI / Gemini                          |
+|                |                                           |
+|               MCP                                          |
+|                |                                           |
+|        Permission Gateway                                  |
+|                |                                           |
+|          Windows Tools                                     |
+|                |                                           |
+|       Win32 / UIA / CoreAudio                              |
+|                                                            |
+| Response -> VI / EN / Auto -> Windows SAPI -> speakers     |
++------------------------------------------------------------+
+
+Fallback voice input:
+
+Windows microphone -> CPAL/WASAPI -> VAD -> Zipformer -> Assistant Core
+```
 
 ## Current status
 
-- **Target:** Windows first.
+- **Target:** Windows first, with Android companion input.
 - **Background host:** Tauri 2 + Rust.
 - **Interaction UI:** React QuickOverlay + four click-through edge surfaces.
 - **Sensitive confirmation UI:** dedicated hidden-by-default permission surface.
 - **Management:** `assistant.exe` CLI / terminal dashboard.
 - **AI backend:** Google Antigravity CLI in headless `stream-json` mode.
 - **Tool protocol:** MCP over stdio.
-- **Windows integration:** Win32 / COM / UI Automation / CoreAudio / CPAL.
-- **Primary STT:** sherpa-onnx Vietnamese Zipformer 30M INT8.
-- **TTS:** Windows SAPI.
-- **Wake word:** sherpa-onnx.
+- **Windows integration:** Win32 / COM / UI Automation / CoreAudio.
+- **Preferred voice input:** Android Voice Satellite using Android `SpeechRecognizer`.
+- **Android recognition:** `vi-VN` / `en-US`, on-device when available, system recognizer fallback.
+- **Satellite transport:** authenticated RFC 6455 WebSocket over a trusted LAN.
+- **Desktop fallback STT:** sherpa-onnx Vietnamese Zipformer 30M INT8.
+- **Desktop TTS:** Windows SAPI.
+- **Response language:** Vietnamese, English, or Auto.
+- **Response style:** friendly, natural, concise; simple commands normally receive one short confirmation.
+- **Desktop wake word:** sherpa-onnx remains available for the local fallback path.
 - **Installer:** NSIS current-user package.
 - **Safety default:** unknown, blocked, stale, malformed, or unconfirmed Sensitive actions fail closed.
 
-The project is at a late beta / technical release-candidate stage. The major runtime, overlay, CLI-management, voice, wake, MCP, permission, and packaging paths are implemented in source. Target-Windows compile/runtime validation is still required before a public release.
+The desktop runtime, Antigravity/MCP path, Quick UI, permission path, local voice fallback, and the initial Android Voice Satellite source are implemented source-first. Target Windows/Android runtime validation is still required before a public release.
+
+## Why voice recognition moved to Android
+
+The existing local Zipformer recognizer is small and efficient, but its Vietnamese recognition quality is not sufficient to remain the preferred voice-input path for the desired assistant experience.
+
+Instead of continuing to spend desktop CPU on a small local ASR model, the project now treats the phone as a **voice terminal**:
+
+```text
+Phone: microphone + speech-to-text
+Desktop: reasoning + tools + response + TTS
+```
+
+This keeps the desktop architecture intact while allowing Android to use the speech-recognition stack already available on the device. No dedicated paid STT API is required by the project.
+
+The Android system recognizer is device/vendor-dependent and may use an online recognition service. When Android reports an on-device recognizer, the companion app can prefer that path.
+
+## Android Voice Satellite
+
+Source:
+
+```text
+apps/android-satellite/
+```
+
+The current MVP provides:
+
+- Kotlin + Jetpack Compose UI;
+- push-to-talk;
+- microphone permission handling;
+- Vietnamese `vi-VN` recognition;
+- English `en-US` recognition;
+- Android on-device recognizer when supported;
+- fallback to the normal system recognizer;
+- partial transcript shown on the phone only;
+- exactly one final text command sent to the desktop;
+- pairing token authentication;
+- desktop processing/speaking status;
+- response language selector: `VI`, `EN`, `Auto`;
+- desktop response text display;
+- no phone-side tool execution or TTS.
+
+`SpeechRecognizer` is intentionally not kept running continuously. Always-on phone wake/hardware activation is a later phase.
+
+### Desktop satellite setup
+
+The LAN receiver is **disabled by default**. It binds only when a pairing token is configured.
+
+Development example:
+
+```powershell
+$env:ASSISTANT_VOICE_SATELLITE_TOKEN = "replace-with-a-random-32-plus-character-token"
+$env:ASSISTANT_VOICE_SATELLITE_BIND = "0.0.0.0:8765"
+pnpm desktop:dev
+```
+
+Then configure the Android app with:
+
+```text
+ws://<PC-LAN-IP>:8765
+```
+
+and the same token.
+
+The current MVP uses unencrypted `ws://`, so it is for a **trusted/private LAN only**. Do not expose port `8765` directly to the public Internet. Productized QR pairing, device revocation, WSS/private-overlay networking, and CLI management are planned next.
+
+See [`docs/VOICE_SATELLITE.md`](docs/VOICE_SATELLITE.md) for protocol and security details.
+
+## Spoken responses
+
+The response is generated and spoken on the Windows desktop.
+
+Modes:
+
+```text
+VI    -> always reply in Vietnamese
+EN    -> always reply in English
+Auto  -> reply in the language used by the user
+```
+
+Voice-originated prompts also include a concise response policy so ordinary commands sound natural rather than like verbose CLI output.
+
+Examples:
+
+```text
+User: "Mở Visual Studio Code"
+Assistant: "Được, mình đã mở Visual Studio Code."
+
+User: "Open Visual Studio Code"
+Assistant: "Sure, I’ve opened Visual Studio Code."
+```
+
+The current implementation still uses the configured/default Windows SAPI voice instance. Automatic selection of installed Vietnamese vs English SAPI voices is planned in the next TTS phase; `VI`/`EN`/`Auto` currently controls generated response text first.
+
+## Desktop fallback voice pipeline
+
+Desktop-local STT is retained for offline/fallback use:
+
+```text
+Microphone
+   |
+CPAL / WASAPI
+   |
+RMS VAD + hysteresis
+   |
+active snapshots -> bounded partial Zipformer previews -> Quick UI only
+   |
+complete utterance -> final Zipformer decode
+   |
+Assistant Core
+   |
+Antigravity / MCP
+   |
+Windows SAPI TTS
+```
+
+The model is sherpa-onnx Vietnamese Zipformer 30M INT8 and remains an `OfflineRecognizer`; its partial UI updates are simulated by bounded snapshot decodes. Only final text enters Assistant Core.
+
+STT resource id:
+
+```text
+stt_zipformer_vi
+```
+
+Install while the desktop runtime is running:
+
+```powershell
+assistant resources install stt_zipformer_vi
+```
+
+The current Vietnamese Zipformer model has separate upstream license terms (**CC-BY-NC-ND-4.0**) and should not be assumed suitable for commercial redistribution.
 
 ## User experience
 
-Normal use:
+Primary voice path:
 
 ```text
-Current Windows application
-          |
-   Alt + Space / Wake
-          |
-          +------> Edge Glow
-          |
-          +------> Quick Assistant
-                       |
-                       +-- text input
-                       +-- microphone
-                       +-- short response
+Phone
+  |
+Push-to-talk
+  |
+Android speech recognition
+  |
+final text
+  |
+Desktop Quick Overlay
+  |
+Assistant Core / Antigravity / MCP
+  |
+Windows action
+  |
+Desktop spoken response
 ```
 
-Sensitive tool request:
+Desktop interaction remains available through:
+
+```text
+Alt + Space
+Text input
+Desktop microphone fallback
+Desktop wake path
+```
+
+Sensitive request:
 
 ```text
 Assistant / MCP
       |
 Sensitive tool
       |
-      v
 Permission broker
       |
-      v
-compact confirmation window
+compact desktop confirmation
       |
 Allow once / Deny
 ```
 
-Management:
-
-```powershell
-assistant
-assistant status
-assistant doctor
-assistant logs --follow
-```
-
-The old full React chat/settings application is no longer mounted and its retired management source has been removed. The remaining frontend source is intentionally limited to QuickOverlay, EdgeOverlay, PermissionSurface, and their shared contracts/styles.
-
-## Architecture
-
-```text
-Wake / Alt+Space / Mic / Text
-             |
-             v
-        Quick Overlay
-             |
-             v
-        Assistant Core
-        /           \
-       /             \
-Local Safe Path    Context Engine
-       |             |
-       |             v
-       |       Antigravity Bridge
-       |             |
-       |       Antigravity CLI
-       |             |
-       |            MCP
-       |             |
-       |      Permission Gateway
-       |             |
-       +------> Windows Tools
-                     |
-                     v
-          Win32 / UIA / CoreAudio
-```
-
-Management is a separate surface over the same background runtime:
-
-```text
-assistant.exe
-     |
-     +-- durable settings / policy
-     |
-     +-- authenticated management protocol
-              |
-              v
-       background Tauri runtime
-```
-
-The management endpoint is raw JSON over an ephemeral `127.0.0.1` port with a per-runtime 256-bit secret. It is not an HTTP/LAN service and does not expose Windows MCP tools directly.
+The Android satellite cannot approve Sensitive actions or bypass the desktop permission boundary.
 
 ## Workspace
 
 ```text
-apps/desktop/src-tauri    background Tauri/Rust host + assistant.exe
-apps/desktop              Quick, edge, permission React surfaces
-crates/common             shared contracts
-crates/assistant-core     state machine and request lifecycle
-crates/antigravity-bridge long-running Antigravity session
-crates/context-engine     on-demand desktop context
-crates/permission-broker  authenticated local confirmation broker
-crates/permission-engine  risk and permission policy
-crates/voice-runtime      microphone, VAD, STT, TTS, wake runtime
-crates/windows-tools      native Windows operations
-crates/windows-mcp        MCP server and permission gateway
+apps/android-satellite       Android speech-input companion
+apps/desktop/src-tauri       background Tauri/Rust host + assistant.exe
+apps/desktop                 Quick, edge, permission React surfaces
+crates/common                shared contracts
+crates/assistant-core        state machine and request lifecycle
+crates/antigravity-bridge    long-running Antigravity session
+crates/context-engine        on-demand desktop context
+crates/permission-broker     authenticated local confirmation broker
+crates/permission-engine     risk and permission policy
+crates/voice-runtime         desktop mic/VAD/STT/TTS/wake fallback runtime
+crates/windows-tools         native Windows operations
+crates/windows-mcp           MCP server and permission gateway
 ```
 
 ## Assistant lifecycle
@@ -141,96 +279,36 @@ Speaking
 Error
 ```
 
-The core uses a single-flight request gate. Permission confirmation is a real lifecycle state.
+The core uses a single-flight request gate. Permission confirmation is a real lifecycle state. Satellite commands also use a dedicated single-command gate so multiple phones/connections cannot intentionally start overlapping voice turns/TTS in the MVP.
 
-## Vietnamese voice pipeline
+## Satellite security boundary
 
-The normal desktop build no longer uses Whisper as its primary recognizer.
+The phone is deliberately low-authority.
 
-```text
-Microphone
-   |
-CPAL / WASAPI
-   |
-UtteranceSegmenter / VAD
-   |
-   +---- active snapshots ----> throttled Zipformer decode
-   |                               |
-   |                               +--> voice:transcript (UI only)
-   |
-   +---- complete utterance ---> final Zipformer decode
-                                   |
-                              final transcript
-                                   |
-                            complete_prompt()
-                                   |
-                   +---------------+---------------+
-                   |                               |
-        deterministic local Safe path        Antigravity + MCP
-                                                   |
-                                           Windows SAPI TTS
-```
+It may submit only bounded text commands. It receives response/state messages, but it does not receive:
 
-The bundled Vietnamese model is an offline recognizer. During Listening, the desktop now performs bounded simulated-streaming preview decodes from VAD snapshots so Quick can show `Đang nhận dạng: ...`. These partial results never enter Assistant Core. When VAD closes the utterance, the full audio is decoded again, Quick receives `Bạn nói: ...`, and only that final transcript is submitted to the assistant.
+- MCP credentials;
+- direct Win32 access;
+- raw shell access;
+- permission-broker secrets;
+- Antigravity credentials;
+- desktop management IPC secrets.
 
-Partial snapshot submission begins after roughly 650 ms of active audio and is throttled to roughly one request every 850 ms. Native offline decode calls are serialized so partial and final recognition do not race the same sherpa-onnx recognizer. True online ASR remains a future model/runtime migration rather than being emulated at the Assistant Core boundary.
+Current receiver rules include:
 
-STT resource id:
-
-```text
-stt_zipformer_vi
-```
-
-Required runtime files:
-
-```text
-encoder.int8.onnx
-decoder.onnx
-joiner.int8.onnx
-tokens.txt
-```
-
-The installer also retains `bpe.model` for model preparation/context work.
-
-Install from terminal while the background runtime is running:
-
-```powershell
-assistant resources install stt_zipformer_vi
-```
-
-The command reuses the same verified `ResourceInstaller` as the native runtime; there is no second CLI downloader. The transaction uses an immutable model revision, pinned file sizes/SHA-256 where applicable, bounded `tokens.txt` validation, staging cleanup, and atomic promotion.
-
-The selected Vietnamese model is **CC-BY-NC-ND-4.0**. A commercial distribution must use a model with suitable terms.
-
-## Wake word
-
-Wake uses sherpa-onnx. QuickOverlay is created for the lifetime of the background application even while hidden, so it owns wake-triggered voice turns.
-
-```text
-wake detected
-   |
-show QuickOverlay
-   |
-wait 180 ms
-   |
-assistant_voice_turn
-   |
-Zipformer STT -> Assistant Core -> TTS
-```
-
-Change the active phrase through the terminal:
-
-```powershell
-assistant wake phrase "HEY ASSISTANT"
-```
-
-The command performs SentencePiece encoding, validates tokens, stages `keywords.txt`, validates the native Sherpa detector, rolls back on failure, and only persists the phrase after successful hot reload.
-
-Wake-model automatic download remains disabled until archive checksum and redistribution/license terms are explicitly pinned.
+- no pairing token -> no listener;
+- pairing token minimum length check;
+- first-message authentication timeout;
+- protocol version validation;
+- masked client WebSocket frames;
+- bounded WebSocket payload size;
+- one satellite command at a time;
+- busy rejection during another Assistant turn;
+- existing Sensitive confirmation remains authoritative.
 
 ## Deterministic local Safe fast-path
 
-A small read-only set bypasses Antigravity:
+The desktop text/local voice path includes a small read-only deterministic set:
 
 ```text
 audio_get_volume
@@ -239,9 +317,9 @@ window_get_active
 system_get_info
 ```
 
-The desktop re-validates every local mapping against `windows_tools::TOOL_CATALOG` and refuses execution unless the tool remains `Safe`.
-
 Mutating or ambiguous requests continue through Antigravity + MCP + permission handling.
+
+The Phase 25 satellite adapter currently sends satellite commands through the normal Assistant Core/Antigravity path so the friendly `VI`/`EN`/`Auto` response policy is consistently applied. Fast-path unification for satellite turns can follow once response synthesis is separated cleanly from tool routing.
 
 ## Permission model
 
@@ -253,129 +331,57 @@ Blocked    -> Deny
 Unknown    -> Deny
 ```
 
-Runtime overrides are a Moderate-only invariant. Safe, Sensitive, and Blocked baselines cannot be weakened through the generic override path.
-
-Sensitive confirmations use an authenticated local broker with an ephemeral loopback endpoint, RAM-only secret, request UUID, exact tool/risk/arguments, bounded timeout, and fail-closed behavior.
-
-The normal `main` Tauri window is now a hidden permission-only host. It no longer mounts the full management application.
+Runtime overrides cannot weaken Safe/Sensitive/Blocked invariants. Sensitive confirmations remain desktop-owned and fail closed.
 
 ## CLI management
 
-Running without a subcommand opens the current terminal dashboard:
+Running without a subcommand opens the terminal dashboard:
 
 ```powershell
 assistant
 ```
 
-Important commands:
+Useful commands include:
 
 ```powershell
 assistant status [--json]
 assistant doctor
 assistant paths
-
 assistant runtime status [--json]
 assistant runtime ping
 assistant runtime restart
-
 assistant conversation reset
-
 assistant startup show
 assistant startup enable
 assistant startup disable
-
 assistant overlay show
 assistant overlay hide
-
 assistant ai show
 assistant ai models
 assistant ai login
 assistant ai set --model <id>
 assistant ai set --effort <value>
 assistant ai reset
-
 assistant wake show
 assistant wake enable
 assistant wake disable
 assistant wake phrase <text>
-
 assistant resources list
 assistant resources install stt_zipformer_vi
-
 assistant permissions list
 assistant permissions set <tool> <allow|ask|deny>
 assistant permissions clear <tool>
-
 assistant logs
-assistant logs --lines 300
 assistant logs --follow
 ```
 
-AI/wake configuration uses live authenticated management IPC when the background process is running and durable settings fallback where safe when it is offline. Antigravity login launch, conversation reset, and Windows autostart mutations are live-runtime operations and intentionally require the background process.
-
-`assistant startup ...` is the canonical terminal-first autostart management path. The existing tray autostart checkbox remains temporarily for compatibility; its checkmark is initialized when the desktop process starts and does not yet live-refresh after an autostart change made through the CLI. This legacy duplicate control should be removed after local Windows verification.
-
-## Persistent logs
-
-Default Windows files:
-
-```text
-%LOCALAPPDATA%\com.voduong.assisstantdesktop\logs\assistant.log
-%LOCALAPPDATA%\com.voduong.assisstantdesktop\logs\assistant.log.1
-```
-
-The active log is bounded to roughly 5 MiB and one backup is retained. `assistant logs --follow` tracks the active file across normal truncation/rotation.
-
-Logs are local diagnostics but may contain operational errors, local paths, application/tool names, or transcript-related runtime details. Review/redact them before sharing.
-
-## Desktop context and privacy
-
-Context is request-driven. Possible sources are source-window metadata, clipboard text, and an active-window screenshot.
-
-Desktop-derived text is escaped and marked untrusted. Clipboard context is bounded. Screenshot artifacts are transient and removed when their request snapshot is dropped.
-
-The external foreground HWND is captured before Quick takes focus, so active-window/context requests still refer to the application the user was using when the Assistant was invoked.
-
-## Runtime data layout
-
-```text
-<app-local-data>/
-├── context/
-├── models/
-│   ├── stt/
-│   └── wake/
-├── settings/
-│   ├── wake.json
-│   └── antigravity.json
-├── permissions/
-│   └── policy.json
-├── audit/
-│   └── permissions.jsonl
-├── logs/
-│   ├── assistant.log
-│   └── assistant.log.1
-└── runtime/
-    ├── management.json
-    └── .agents/
-        └── mcp_config.json
-```
-
-## Windows lifecycle
-
-- single instance;
-- `Alt + Space` toggles Quick Assistant;
-- wake shows Quick and starts one voice turn;
-- compact always-on-top quick overlay;
-- click-through perimeter edge glow;
-- permission-only main window hidden by default;
-- tray show/hide/background services;
-- Windows autostart managed through the authenticated terminal management path;
-- authenticated local management channel;
-- persistent bounded runtime log.
+Dedicated `assistant satellite ...` management is planned for the pairing/settings phase. Phase 25 uses environment variables intentionally so the transport can be validated before adding permanent device-management UX.
 
 ## Development
 
-Windows prerequisites:
+### Windows
+
+Prerequisites:
 
 - Node.js `^20.19.0 || >=22.12.0`;
 - pnpm 10;
@@ -390,85 +396,76 @@ Install:
 pnpm install --frozen-lockfile
 ```
 
-Prepare native dependencies/assets:
+Prepare native dependencies/assets when required:
 
 ```powershell
 pnpm desktop:native:prepare
 pnpm desktop:assets:prepare
 ```
 
-Start development:
+Start desktop development:
 
 ```powershell
 pnpm desktop:dev
 ```
 
-Validation scripts already present include:
+### Android
 
-```powershell
-pnpm check
-pnpm test
-pnpm test:models
+Open:
+
+```text
+apps/android-satellite/
 ```
 
-`test:models` uses installed local native models/synthetic audio and does not open the microphone.
+in Android Studio, sync Gradle, and install the app on the target phone.
+
+The current source-first Android phase does not include the Gradle wrapper JAR/binary. Generate a local wrapper if command-line Android builds are needed.
+
+See [`apps/android-satellite/README.md`](apps/android-satellite/README.md).
 
 ## Local validation gates
 
-Recent CLI, logging, Zipformer, wake, Quick voice, and UI-retirement changes were prepared source-first. Before calling the current code release-ready, verify on the target Windows machine:
+No remote GitHub Actions/build/test/model-download/installer run is implied by this migration. Validate on the target Windows PC and Android phone.
 
-```powershell
-cargo build -p assisstant-desktop --bin assistant --locked
-cargo build -p assisstant-desktop --features voice-stt,wake-word --locked
+Satellite checks:
 
-assistant status
-assistant doctor
-assistant runtime ping
-assistant runtime status
-assistant conversation reset
-assistant startup show
-assistant startup enable
-assistant startup disable
-assistant overlay show
-assistant overlay hide
-assistant ai login
-assistant logs --follow
-```
+- phone and PC are on the same trusted LAN;
+- desktop token configured;
+- Android pairs with the correct token;
+- invalid token is rejected;
+- microphone permission flow works;
+- `vi-VN` recognizes a command and sends exactly one final transcript;
+- `en-US` recognizes an English command;
+- partial recognition stays phone-side;
+- Quick shows the final satellite transcript;
+- normal MCP/permission path executes the Windows action;
+- desktop speaks the response;
+- `VI`, `EN`, and `Auto` response modes behave as expected;
+- busy state is rejected cleanly;
+- disconnect/reconnect works;
+- Windows Firewall is limited to the intended private/trusted profile;
+- local Zipformer microphone path remains usable as fallback.
 
-Also exercise:
+Existing desktop checks should still cover hotkey, Quick/edge UI, permission Allow/Deny/timeout, Antigravity login/session reset, startup behavior, Windows tools, logs, and NSIS packaging.
 
-- `Alt + Space` on the source monitor;
-- manual Mic turn;
-- partial `Đang nhận dạng:` updates during a 2–3 second utterance;
-- final `Bạn nói:` transcript before the Assistant response completes;
-- exactly one Assistant request per voice turn despite partial transcript events;
-- wake -> exactly one voice turn;
-- Vietnamese STT quality/latency;
-- Sensitive Deny / Allow Once / timeout / queued requests;
-- permission surface auto-hide and edge cleanup;
-- STT model install from CLI;
-- wake phrase validation/hot reload;
-- Antigravity login/account/session reset behavior;
-- autostart enable/disable and background startup after sign-in;
-- real Windows automation tools;
-- NSIS packaging and installed `assistant.exe`.
+## Roadmap
 
-No manual build/test/model download/installer/workflow run is implied by the source merges performed during this migration.
+The current roadmap is maintained in [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
 
-## Release
+The next planned phases after the Voice Satellite MVP are:
 
-Windows release config still retains the historical `voice-whisper` feature name as a compatibility alias; it resolves to Zipformer STT rather than whisper-rs.
-
-```powershell
-pnpm desktop:release:prepare
-pnpm desktop:release:verify
-pnpm desktop:release:build
-```
-
-A public release should wait until the current target-Windows STT/wake/quick/permission/CLI/install/logging path has been exercised locally.
+1. productized pairing/device management + QR flow;
+2. locale-aware SAPI voice selection for Vietnamese/English;
+3. phone wake/quick/hardware activation without continuous SpeechRecognizer looping;
+4. voice quality/retry/duplicate-command resilience;
+5. secure remote satellite transport (WSS/private overlay such as Tailscale);
+6. later full-duplex/barge-in conversational UX.
 
 ## Key documentation
 
+- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)
+- [`docs/VOICE_SATELLITE.md`](docs/VOICE_SATELLITE.md)
+- [`apps/android-satellite/README.md`](apps/android-satellite/README.md)
 - [`docs/CLI_MANAGEMENT.md`](docs/CLI_MANAGEMENT.md)
 - [`docs/EDGE_UI.md`](docs/EDGE_UI.md)
 - [`docs/VOICE_STT.md`](docs/VOICE_STT.md)
@@ -481,4 +478,4 @@ A public release should wait until the current target-Windows STT/wake/quick/per
 
 ## License
 
-See the repository license for application source terms. Runtime/model resources may have separate upstream licenses; the current Vietnamese Zipformer STT model is CC-BY-NC-ND-4.0.
+See the repository license for application source terms. Runtime/model resources may have separate upstream licenses. The current fallback Vietnamese Zipformer STT model is CC-BY-NC-ND-4.0.
