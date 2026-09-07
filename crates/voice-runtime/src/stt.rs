@@ -8,6 +8,8 @@ pub const WHISPER_SAMPLE_RATE: u32 = 16_000;
 
 #[derive(Debug, Error)]
 pub enum SttError {
+    #[error("speech recognition was cancelled")]
+    Cancelled,
     #[error("invalid speech audio: {0}")]
     InvalidAudio(String),
     #[error("speech recognition backend failed: {0}")]

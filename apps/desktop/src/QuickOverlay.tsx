@@ -222,6 +222,7 @@ export default function QuickOverlay() {
         setAssistantState(event.to);
         if (event.to !== "listening") setVoiceLevel(0);
         if (event.to === "idle") {
+          busyRef.current = false;
           setBusy(false);
           setStreamingText("");
           setCancelPending(false);
@@ -311,7 +312,7 @@ export default function QuickOverlay() {
   const voiceReady = Boolean(voice?.whisper_compiled && voice.model_available);
   const displayedResponse = streamingText || response;
   const active = busy || !["idle", "error"].includes(assistantState);
-  const cancellable = assistantState === "processing" || assistantState === "speaking";
+  const cancellable = ["listening", "processing", "speaking"].includes(assistantState);
   const style = {
     "--voice-level": voiceLevel.toFixed(3),
   } as CSSProperties;
@@ -322,11 +323,12 @@ export default function QuickOverlay() {
 
   const requestCancel = useCallback(async () => {
     const state = assistantStateRef.current;
-    if ((state !== "processing" && state !== "speaking") || cancelPending) return;
+    if (!["listening", "processing", "speaking"].includes(state) || cancelPending) return;
 
-    // Invalidate any active voice promise before an interrupted TTS operation
-    // resolves so stale finally/result handlers cannot overwrite a new turn.
-    if (state === "speaking") {
+    // Listening/Speaking own a voice promise whose eventual completion must not
+    // mutate UI after an explicit Stop. Processing cancellation already unwinds
+    // through the normal Antigravity cancellation path.
+    if (state === "listening" || state === "speaking") {
       voiceOperationRef.current += 1;
     }
     cancelRequestedRef.current = true;
@@ -489,8 +491,20 @@ export default function QuickOverlay() {
             {cancellable && (
               <button
                 type="button"
-                title={assistantState === "speaking" ? "Dừng đọc câu trả lời" : "Dừng lượt AI hiện tại"}
-                aria-label={assistantState === "speaking" ? "Dừng đọc câu trả lời" : "Dừng lượt AI hiện tại"}
+                title={
+                  assistantState === "listening"
+                    ? "Dừng nghe"
+                    : assistantState === "speaking"
+                      ? "Dừng đọc câu trả lời"
+                      : "Dừng lượt AI hiện tại"
+                }
+                aria-label={
+                  assistantState === "listening"
+                    ? "Dừng nghe"
+                    : assistantState === "speaking"
+                      ? "Dừng đọc câu trả lời"
+                      : "Dừng lượt AI hiện tại"
+                }
                 disabled={cancelPending}
                 onClick={() => void requestCancel()}
               >
@@ -544,7 +558,7 @@ export default function QuickOverlay() {
           <button
             type="button"
             className={`quick-mic ${assistantState === "listening" ? "quick-mic-listening" : ""}`}
-            disabled={!voiceReady || (busy && assistantState !== "speaking")}
+            disabled={busy && assistantState !== "speaking"}
             title={
               !voiceReady
                 ? "STT chưa sẵn sàng"

@@ -1,5 +1,6 @@
 #[cfg(feature = "wake-sherpa")]
 pub mod sherpa_wake;
+pub mod cancellation;
 pub mod stt;
 pub mod tts;
 pub mod vad;
@@ -121,6 +122,7 @@ pub struct MicrophoneStream {
     info: MicrophoneInfo,
     dropped_chunks: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
+    cancellation: cancellation::CancellationToken,
 }
 
 impl MicrophoneStream {
@@ -143,6 +145,7 @@ impl MicrophoneStream {
         let (sender, receiver) = mpsc::channel(channel_capacity);
         let dropped_chunks = Arc::new(AtomicU64::new(0));
         let last_error = Arc::new(Mutex::new(None));
+        let cancellation = cancellation::CancellationToken::subscribe();
 
         let stream = build_input_stream(
             &device,
@@ -177,6 +180,7 @@ impl MicrophoneStream {
             info,
             dropped_chunks,
             last_error,
+            cancellation,
         })
     }
 
@@ -193,7 +197,16 @@ impl MicrophoneStream {
     }
 
     pub async fn next_chunk(&mut self) -> Option<AudioChunk> {
-        self.receiver.recv().await
+        if self.cancellation.is_cancelled() {
+            return None;
+        }
+
+        let receiver = &mut self.receiver;
+        let cancellation = &mut self.cancellation;
+        tokio::select! {
+            chunk = receiver.recv() => chunk,
+            _ = cancellation.cancelled() => None,
+        }
     }
 
     pub fn pause(&self) -> Result<(), VoiceError> {
