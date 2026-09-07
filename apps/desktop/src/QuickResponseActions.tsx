@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { onAssistantEvent, speakResponse } from "./api";
 import { copyQuickText } from "./quickClipboard";
+import { setQuickAutoDismissHold } from "./quickLifecycle";
 import type { AssistantState } from "./types";
 import "./quick-response-actions.css";
+
+const MANUAL_PIN_HOLD_SOURCE = "manual-pin";
 
 function CopyIcon() {
   return (
@@ -23,12 +26,22 @@ function SpeakerIcon() {
   );
 }
 
+function PinIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m9 4 6 0-.8 5 2.8 2.8v1.2H7v-1.2L9.8 9 9 4Z" />
+      <path d="M12 13v7" />
+    </svg>
+  );
+}
+
 export default function QuickResponseActions() {
   const [response, setResponse] = useState<string | null>(null);
   const [assistantState, setAssistantState] = useState<AssistantState>("idle");
   const [copyFeedback, setCopyFeedback] = useState<"copied" | "error" | null>(null);
   const [speakError, setSpeakError] = useState(false);
   const [speakPending, setSpeakPending] = useState(false);
+  const [pinned, setPinned] = useState(false);
   const copyTimerRef = useRef<number | null>(null);
   const speakTimerRef = useRef<number | null>(null);
 
@@ -46,6 +59,11 @@ export default function QuickResponseActions() {
       speakTimerRef.current = null;
     }
     setSpeakError(false);
+  };
+
+  const releasePin = () => {
+    setQuickAutoDismissHold(MANUAL_PIN_HOLD_SOURCE, false);
+    setPinned(false);
   };
 
   const showCopyFeedback = (value: "copied" | "error") => {
@@ -86,6 +104,7 @@ export default function QuickResponseActions() {
         setSpeakPending(false);
         clearCopyFeedback();
         clearSpeakFeedback();
+        releasePin();
       }
     }).then((fn) => {
       if (disposed) fn();
@@ -97,6 +116,7 @@ export default function QuickResponseActions() {
       setSpeakPending(false);
       clearCopyFeedback();
       clearSpeakFeedback();
+      releasePin();
     }).then((fn) => {
       if (disposed) fn();
       else unlisten.push(fn);
@@ -104,6 +124,7 @@ export default function QuickResponseActions() {
 
     return () => {
       disposed = true;
+      setQuickAutoDismissHold(MANUAL_PIN_HOLD_SOURCE, false);
       if (copyTimerRef.current !== null) {
         window.clearTimeout(copyTimerRef.current);
       }
@@ -128,6 +149,9 @@ export default function QuickResponseActions() {
     : speaking
       ? "Đang đọc câu trả lời"
       : "Đọc câu trả lời";
+  const pinLabel = pinned
+    ? "Bỏ ghim Quick"
+    : "Ghim Quick để không tự ẩn";
 
   return (
     <div className="quick-response-actions" aria-live="polite">
@@ -163,6 +187,22 @@ export default function QuickResponseActions() {
       >
         <SpeakerIcon />
         <span>{speakError ? "Lỗi" : speaking ? "Đang đọc" : "Đọc"}</span>
+      </button>
+
+      <button
+        type="button"
+        className={`quick-response-action quick-response-pin ${pinned ? "quick-response-pin-active" : ""}`}
+        title={pinLabel}
+        aria-label={pinLabel}
+        aria-pressed={pinned}
+        onClick={() => {
+          const nextPinned = !pinned;
+          setQuickAutoDismissHold(MANUAL_PIN_HOLD_SOURCE, nextPinned);
+          setPinned(nextPinned);
+        }}
+      >
+        <PinIcon />
+        <span>{pinned ? "Đã ghim" : "Ghim"}</span>
       </button>
     </div>
   );
