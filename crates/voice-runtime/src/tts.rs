@@ -246,9 +246,22 @@ fn run_speech(
 fn purge_voice(voice: &ISpeechVoice) -> Result<(), TtsError> {
     let empty = BSTR::from("");
     let flags = SpeechVoiceSpeakFlags(SVSFlagsAsync.0 | SVSFPurgeBeforeSpeak.0);
-    unsafe { voice.Speak(&empty, flags) }
-        .map(|_| ())
-        .map_err(|error| TtsError::Backend(error.to_string()))
+    match unsafe { voice.Speak(&empty, flags) } {
+        Ok(_) => Ok(()),
+        Err(purge_error) => {
+            // Some SAPI voices/audio drivers can reject a purge while the output
+            // device is busy. `Skip` is the documented sentence-level escape
+            // hatch, so use it as a bounded fallback on the same COM worker.
+            let sentence = BSTR::from("Sentence");
+            unsafe { voice.Skip(&sentence, i32::MAX) }
+                .map(|_| ())
+                .map_err(|skip_error| {
+                    TtsError::Backend(format!(
+                        "SAPI purge failed: {purge_error}; sentence skip fallback failed: {skip_error}"
+                    ))
+                })
+        }
+    }
 }
 
 fn reject_worker_commands(receiver: Receiver<SapiCommand>, message: String) {
