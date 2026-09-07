@@ -6,30 +6,44 @@ use std::sync::{
 use tokio::sync::watch;
 
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+static CANCELLED_GENERATION: AtomicU64 = AtomicU64::new(u64::MAX);
+static EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static EVENTS: LazyLock<watch::Sender<u64>> = LazyLock::new(|| {
     let (sender, _) = watch::channel(0);
     sender
 });
 
-/// Snapshot the current voice-operation cancellation generation.
-/// Work started under this value is stale as soon as `cancel_current()` bumps it.
+/// Snapshot the currently active voice-operation generation.
 pub fn generation() -> u64 {
     GENERATION.load(Ordering::Acquire)
 }
 
-/// Cancel voice capture/STT work that started before this call.
-///
-/// This is intentionally separate from Assistant Core cancellation: native audio
-/// and offline STT need a lightweight out-of-band signal that does not wait on
-/// the desktop turn/session mutexes.
-pub fn cancel_current() -> u64 {
+fn signal_change() {
+    let sequence = EVENT_SEQUENCE.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+    EVENTS.send_replace(sequence);
+}
+
+fn begin_operation() -> u64 {
     let next = GENERATION.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-    EVENTS.send_replace(next);
+    signal_change();
     next
+}
+
+/// Cancel the current voice capture/STT generation without advancing it.
+///
+/// Keeping the cancelled generation current is deliberate: final/partial STT
+/// work that starts just after the Stop signal still observes that the same
+/// voice turn was cancelled. A new microphone operation advances the generation.
+pub fn cancel_current() -> u64 {
+    let current = generation();
+    CANCELLED_GENERATION.store(current, Ordering::Release);
+    signal_change();
+    current
 }
 
 pub fn is_cancelled(start_generation: u64) -> bool {
     generation() != start_generation
+        || CANCELLED_GENERATION.load(Ordering::Acquire) == start_generation
 }
 
 pub struct CancellationToken {
@@ -38,8 +52,10 @@ pub struct CancellationToken {
 }
 
 impl CancellationToken {
+    /// Start a new microphone-backed voice operation. Starting a newer operation
+    /// invalidates older tokens, which preserves the single-capture contract.
     pub fn subscribe() -> Self {
-        let generation = generation();
+        let generation = begin_operation();
         Self {
             generation,
             events: EVENTS.subscribe(),
@@ -51,10 +67,10 @@ impl CancellationToken {
     }
 
     pub fn is_cancelled(&self) -> bool {
-        *self.events.borrow() != self.generation || is_cancelled(self.generation)
+        is_cancelled(self.generation)
     }
 
-    /// Resolves once this token's generation is no longer current.
+    /// Resolves once this token's generation is cancelled or superseded.
     pub async fn cancelled(&mut self) {
         if self.is_cancelled() {
             return;
@@ -73,15 +89,28 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn cancellation_invalidates_existing_token_only() {
+    async fn cancellation_stays_sticky_until_next_operation() {
         let mut first = CancellationToken::subscribe();
+        let first_generation = first.generation();
         assert!(!first.is_cancelled());
 
-        cancel_current();
+        assert_eq!(cancel_current(), first_generation);
         first.cancelled().await;
         assert!(first.is_cancelled());
+        assert!(is_cancelled(first_generation));
 
         let second = CancellationToken::subscribe();
+        assert!(!second.is_cancelled());
+        assert_ne!(second.generation(), first_generation);
+        assert!(is_cancelled(first_generation));
+    }
+
+    #[tokio::test]
+    async fn newer_operation_invalidates_older_token() {
+        let first = CancellationToken::subscribe();
+        let second = CancellationToken::subscribe();
+
+        assert!(first.is_cancelled());
         assert!(!second.is_cancelled());
     }
 }
