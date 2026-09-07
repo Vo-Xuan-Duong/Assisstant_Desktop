@@ -6,8 +6,12 @@ use crate::AudioChunk;
 
 #[derive(Debug, Clone, Copy)]
 pub struct VadConfig {
-    /// RMS threshold in normalized f32 units used by the baseline local VAD.
+    /// RMS threshold in normalized f32 units required to start speech.
     pub speech_rms_threshold: f32,
+    /// Lower RMS threshold used after speech has started. Keeping this below the
+    /// start threshold adds hysteresis so quiet trailing syllables do not count
+    /// as silence immediately.
+    pub speech_continue_rms_threshold: f32,
     /// Consecutive speech required before an utterance starts.
     pub start_trigger_ms: u32,
     /// Silence duration that closes an active utterance.
@@ -24,6 +28,7 @@ impl Default for VadConfig {
     fn default() -> Self {
         Self {
             speech_rms_threshold: 0.012,
+            speech_continue_rms_threshold: 0.0075,
             start_trigger_ms: 120,
             end_silence_ms: 650,
             pre_roll_ms: 220,
@@ -91,7 +96,21 @@ impl UtteranceSegmenter {
         }
 
         let sample_rate = chunk.sample_rate;
-        let speech = chunk.level.rms >= self.config.speech_rms_threshold;
+        let start_threshold = self.config.speech_rms_threshold.max(0.0);
+        // A malformed config cannot accidentally make continuation stricter than
+        // speech start. This keeps hysteresis monotonic without adding a fallible
+        // constructor to the current lightweight VAD API.
+        let continue_threshold = self
+            .config
+            .speech_continue_rms_threshold
+            .max(0.0)
+            .min(start_threshold);
+        let speech = chunk.level.rms
+            >= if self.active_started {
+                continue_threshold
+            } else {
+                start_threshold
+            };
 
         if !self.active_started {
             self.push_pre_roll(&chunk.samples, sample_rate);
@@ -240,6 +259,26 @@ mod tests {
     fn speech_then_silence_produces_utterance() {
         let mut vad = UtteranceSegmenter::default();
         assert!(matches!(vad.push(chunk(0.1, 150)), VadEvent::SpeechStarted));
+        let event = vad.push(chunk(0.0, 700));
+        assert!(matches!(event, VadEvent::UtteranceReady(_)));
+    }
+
+    #[test]
+    fn continuation_threshold_does_not_start_from_idle() {
+        let mut vad = UtteranceSegmenter::default();
+        assert!(matches!(vad.push(chunk(0.009, 300)), VadEvent::Idle));
+        assert!(vad.active_snapshot().is_none());
+    }
+
+    #[test]
+    fn hysteresis_keeps_quiet_tail_inside_active_utterance() {
+        let mut vad = UtteranceSegmenter::default();
+        assert!(matches!(vad.push(chunk(0.1, 150)), VadEvent::SpeechStarted));
+
+        // Below the 0.012 start threshold, but above the 0.0075 continuation
+        // threshold: this should reset the silence run instead of ending speech.
+        assert!(matches!(vad.push(chunk(0.009, 700)), VadEvent::SpeechContinues));
+
         let event = vad.push(chunk(0.0, 700));
         assert!(matches!(event, VadEvent::UtteranceReady(_)));
     }

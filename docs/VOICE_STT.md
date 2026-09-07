@@ -32,7 +32,7 @@ Microphone audio remains local. Only the **final** transcript enters Assistant C
 
 The current Vietnamese model bundle is an **offline** Zipformer recognizer. It is not an `OnlineRecognizer` model, so the desktop does not pretend that the recognizer itself is natively streaming.
 
-Instead, the voice runtime now provides a bounded simulated-streaming preview:
+Instead, the voice runtime provides a bounded simulated-streaming preview:
 
 - VAD keeps the authoritative active utterance buffer;
 - `UtteranceSegmenter::active_snapshot()` copies the current active audio without consuming or modifying the final buffer;
@@ -65,6 +65,8 @@ Partial decode failure is non-fatal. The normal final recognition path remains a
 Partial snapshots and the final utterance reuse the same `OfflineRecognizer`. `ZipformerRecognizer` therefore owns a shared decode gate so native sherpa-onnx decode calls are serialized.
 
 This avoids concurrent calls into the same offline recognizer while still keeping microphone capture asynchronous. If a partial worker is cancelled when VAD closes the utterance, any already-running blocking decode may finish internally, but it cannot publish a stale partial event after the worker is aborted. The final decode waits for the native decode gate when necessary.
+
+Voice-turn cancellation adds a second stale-result boundary. A cancelled Zipformer decode may finish inside native `OfflineRecognizer::decode`, but its result is discarded before it can become a final transcript or Assistant prompt.
 
 ### What this is not
 
@@ -176,18 +178,43 @@ Inside `voice-runtime`, the historical `WhisperConfig` / `WhisperRecognizer` sym
 
 ## Current VAD
 
-The baseline local utterance segmenter uses:
+The local utterance segmenter remains lightweight and model-free, but now uses **RMS hysteresis** rather than one threshold for both speech entry and continuation.
 
-- speech RMS threshold: `0.012`;
+Default thresholds/timing:
+
+- speech **start** RMS threshold: `0.012`;
+- speech **continue** RMS threshold: `0.0075`;
 - speech start trigger: `120 ms`;
 - pre-roll: `220 ms`;
 - end-of-speech silence: `650 ms`;
 - minimum utterance: `250 ms`;
 - maximum utterance: `15 s`.
 
-The new active-snapshot API does not change any of these segmentation rules or consume the final utterance buffer.
+Behavior:
 
-A later voice-quality phase can replace the RMS VAD with Silero VAD without changing Assistant Core or the `voice:transcript` frontend contract.
+```text
+Idle
+  |
+RMS >= 0.012 for >= 120 ms
+  |
+SpeechStarted
+  |
+  +-- RMS >= 0.0075 ------> keep speech active / reset silence run
+  |
+  +-- RMS < 0.0075 ------> accumulate silence
+                                |
+                          >= 650 ms
+                                |
+                         UtteranceReady
+```
+
+The lower continuation threshold is intentionally only used **after** speech has started. Audio at e.g. RMS `0.009` cannot open a new utterance, but it can keep an existing utterance alive. This reduces premature end-of-speech decisions around quiet Vietnamese trailing syllables without making idle start detection more sensitive to background noise.
+
+If a caller supplies a continuation threshold higher than the start threshold, the segmenter clamps the effective continuation threshold down to the start threshold so configuration cannot accidentally create reverse hysteresis.
+
+The active-snapshot API still does not consume or mutate the authoritative final utterance buffer. Voice cancellation also remains orthogonal to segmentation: Stop ends the foreground microphone generation, while the wake microphone uses its own uncancellable capture path and Wake Suspend/Resume lifecycle.
+
+A later measured voice-quality phase can add adaptive noise-floor logic or replace the RMS segmenter with Silero/neural VAD without changing Assistant Core or the `voice:transcript` frontend contract.
 
 ## Contextual biasing status
 
@@ -201,9 +228,11 @@ After pulling this phase on the target Windows machine, verify manually:
 2. confirm Quick shows one or more `Đang nhận dạng:` updates before end-of-speech;
 3. stop speaking and confirm the label becomes `Bạn nói:` with the final transcript;
 4. confirm only one Assistant request is produced for the voice turn;
-5. confirm short/noisy utterances still follow existing VAD discard behavior;
-6. speak a long sentence and confirm partial updates remain bounded rather than arriving for every microphone chunk;
-7. confirm final STT still completes if a partial decode fails or is slow;
-8. repeat wake → voice turns and confirm no stale partial text leaks into a later invocation.
+5. speak a phrase that ends quietly and confirm the final syllable is less likely to be clipped;
+6. expose the microphone to low steady room noise below the start threshold and confirm it does not open a voice turn;
+7. confirm true silence still closes active speech after roughly `650 ms`;
+8. speak a long sentence and confirm partial updates remain bounded rather than arriving for every microphone chunk;
+9. cancel Listening/final STT and confirm no cancelled transcript becomes an Assistant request;
+10. repeat wake → voice turns and confirm no stale partial text leaks into a later invocation.
 
 No GitHub Action, native build, microphone test or model download is manually dispatched as part of this remote repository change. Validate accuracy, latency and native DLL loading locally on the target Windows machine after merging.
