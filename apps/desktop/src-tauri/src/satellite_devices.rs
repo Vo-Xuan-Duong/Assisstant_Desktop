@@ -10,6 +10,7 @@ use tauri::{AppHandle, Manager};
 use crate::DesktopState;
 
 const DEVICES_FILE: &str = "satellite-devices.json";
+const REVOKED_DIR: &str = "satellite-revoked";
 const MAX_DEVICE_ID_CHARS: usize = 128;
 const MAX_DEVICE_NAME_CHARS: usize = 96;
 
@@ -35,12 +36,19 @@ pub fn record_authenticated_device(
     raw_name: Option<&str>,
 ) -> Result<(String, String), String> {
     let id = normalize_device_id(raw_id)?;
+    if revocation_marker_path(app, &id).is_file() {
+        return Err("this Android satellite device has been revoked".to_owned());
+    }
+
     let name = normalize_device_name(raw_name);
     let path = registry_path(app);
     let mut registry = load_registry(&path)?;
     let now = unix_now();
 
     if let Some(device) = registry.devices.iter_mut().find(|device| device.id == id) {
+        // Keep the registry flag for backwards compatibility and diagnostics.
+        // The dedicated marker file is authoritative for new revocations because
+        // it cannot be overwritten by a concurrent last-seen registry update.
         if device.revoked {
             return Err("this Android satellite device has been revoked".to_owned());
         }
@@ -63,6 +71,10 @@ pub fn record_authenticated_device(
 
 pub fn is_device_revoked(app: &AppHandle, raw_id: &str) -> Result<bool, String> {
     let id = normalize_device_id(raw_id)?;
+    if revocation_marker_path(app, &id).is_file() {
+        return Ok(true);
+    }
+
     let path = registry_path(app);
     let registry = load_registry(&path)?;
     Ok(registry
@@ -72,13 +84,19 @@ pub fn is_device_revoked(app: &AppHandle, raw_id: &str) -> Result<bool, String> 
         .is_some_and(|device| device.revoked))
 }
 
-fn registry_path(app: &AppHandle) -> PathBuf {
+fn settings_dir(app: &AppHandle) -> PathBuf {
     let state = app.state::<DesktopState>();
-    state
-        .runtime_paths
-        .app_local_data
-        .join("settings")
-        .join(DEVICES_FILE)
+    state.runtime_paths.app_local_data.join("settings")
+}
+
+fn registry_path(app: &AppHandle) -> PathBuf {
+    settings_dir(app).join(DEVICES_FILE)
+}
+
+fn revocation_marker_path(app: &AppHandle, device_id: &str) -> PathBuf {
+    settings_dir(app)
+        .join(REVOKED_DIR)
+        .join(format!("{device_id}.revoked"))
 }
 
 fn normalize_device_id(raw: &str) -> Result<String, String> {
