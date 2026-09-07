@@ -2,133 +2,134 @@
 
 This Android app is the preferred speech-input surface for Assisstant Desktop.
 
-It does three things only:
+It listens through Android `SpeechRecognizer`, shows partial recognition locally, and sends only the final recognized text to Windows. The phone does not execute Windows tools, run MCP, call Antigravity directly, or speak the assistant response.
 
-1. listen to the user through Android `SpeechRecognizer`;
-2. show partial recognition locally on the phone;
-3. send only the final recognized text to the paired Windows desktop.
-
-The phone does not execute Windows tools, run MCP, call Antigravity, or speak the assistant response. Those responsibilities remain on the desktop.
-
-## Current MVP
+## Current capabilities
 
 - Kotlin + Jetpack Compose;
 - Android 8.0+ (`minSdk 26`);
-- Vietnamese `vi-VN` and English `en-US` recognition;
-- prefers Android on-device speech recognition when available on Android 12+;
-- falls back to the device/system `SpeechRecognizer` service;
-- push-to-talk interaction;
-- authenticated WebSocket connection to the desktop;
-- response language selector: `VI`, `EN`, or `Auto`;
-- desktop response text/status display;
-- desktop remains responsible for TTS.
+- `vi-VN` and `en-US` speech recognition;
+- Android on-device recognizer when available;
+- system `SpeechRecognizer` fallback;
+- push-to-talk;
+- authenticated WebSocket connection over trusted LAN;
+- stable per-installation `device_id`;
+- desktop trusted-device registry and per-device revoke;
+- response modes `VI`, `EN`, `Auto`;
+- desktop owns reasoning, Windows tools, permissions, and TTS.
 
 ## Build locally
 
-Open this directory in Android Studio:
+Open:
 
 ```text
 apps/android-satellite/
 ```
 
-Sync the Gradle project and build/install it on the Android device from Android Studio.
+in Android Studio, sync Gradle, then build/install on the target phone.
 
-This source-first phase does not commit the Gradle wrapper JAR/binary. If command-line builds are required, generate the Gradle wrapper locally from a compatible Gradle/Android Studio installation.
+This source-first phase does not commit the Gradle wrapper JAR/binary. Generate a wrapper locally if command-line builds are required. No remote build or GitHub Actions validation is required for this phase.
 
-No remote build or GitHub Actions validation is required by this phase.
+## Pair with Windows
 
-## Desktop pairing
-
-Use the desktop pairing helper:
+On the PC:
 
 ```powershell
 assistant-satellite pair
 ```
 
-It creates a random 64-character pairing token, enables the receiver, and persists the configuration at:
+This generates a random 64-character shared pairing token and enables the LAN receiver. Persistent configuration is stored at:
 
 ```text
 %LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite.json
 ```
 
-The helper prints the full token when a new pairing is created. Treat it as a local credential and do not publish it in logs/screenshots.
+Enter on Android:
+
+```text
+ws://<PC-LAN-IP>:8765
+```
+
+and the token printed by `assistant-satellite pair`.
+
+The Windows runtime watches pairing settings and normally applies changes within about one second without a restart.
 
 Useful commands:
 
 ```powershell
 assistant-satellite show
 assistant-satellite pair
-assistant-satellite pair --bind 0.0.0.0:8765
 assistant-satellite enable
 assistant-satellite disable
 assistant-satellite bind 0.0.0.0:8765
 assistant-satellite revoke
+assistant-satellite devices
+assistant-satellite revoke-device <device-id>
+assistant-satellite allow-device <device-id>
 ```
 
-When Assisstant Desktop is running, it watches `satellite.json` and normally applies pairing, enable/disable, bind, and revoke changes within about one second. Rotating/revoking the token also drops the active phone connection so the previous token cannot continue to use an authenticated session.
+## Trusted-device identity
 
-For backwards compatibility, the desktop still accepts these environment variables and they take precedence when present:
+The Android app generates a UUID once per installation and stores it in private `SharedPreferences`. It sends that `device_id` in the WebSocket `hello` message together with the pairing token and device name.
+
+After the token is verified, Windows records the device in:
 
 ```text
-ASSISTANT_VOICE_SATELLITE_TOKEN
-ASSISTANT_VOICE_SATELLITE_BIND
+%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite-devices.json
 ```
 
-If the legacy token environment override is set, persistent-file changes do not replace that override until the environment variable is removed and the desktop process is restarted.
+Run:
 
-Find the PC's LAN IPv4 address, then enter on Android:
-
-```text
-ws://<PC-LAN-IP>:8765
+```powershell
+assistant-satellite devices
 ```
 
-Use exactly the token printed by `assistant-satellite pair`.
+to see registered devices and their first/last-seen Unix timestamps.
 
-The current MVP uses unencrypted `ws://` and is intended only for a trusted LAN. Do not expose port 8765 directly to the public Internet.
+To block only one phone:
+
+```powershell
+assistant-satellite revoke-device <device-id>
+```
+
+A connected revoked phone should be disconnected by Windows within roughly one second and cannot reconnect even if it still knows the current shared token.
+
+To allow it again:
+
+```powershell
+assistant-satellite allow-device <device-id>
+```
+
+Reinstalling/clearing app storage can create a new installation identity. Device-specific QR credentials are planned next.
 
 ## Using the app
 
-1. Connect the phone and PC to the same trusted Wi-Fi/LAN.
-2. Run `assistant-satellite pair` on the PC if the satellite is not paired yet.
-3. Enter the desktop WebSocket address on Android.
-4. Enter the pairing token.
-5. Tap **Kết nối**.
-6. Choose recognition language: **Tiếng Việt** or **English**.
-7. Choose desktop response language: **VI**, **EN**, or **Auto**.
-8. Leave **Ưu tiên nhận dạng on-device** enabled if desired.
-9. Tap **Nói với Assistant** and speak.
-10. Partial text is shown on the phone while recognition is in progress.
-11. Only the final recognized text is sent to the desktop.
-12. The desktop processes the command and speaks the answer through Windows TTS.
+1. Put the phone and PC on the same trusted Wi-Fi/LAN.
+2. Pair from Windows if necessary.
+3. Enter the desktop WebSocket address and pairing token.
+4. Tap **Kết nối**.
+5. Choose **Tiếng Việt** or **English** recognition.
+6. Choose desktop response language **VI**, **EN**, or **Auto**.
+7. Leave **Ưu tiên nhận dạng on-device** enabled if desired.
+8. Tap **Nói với Assistant** and speak.
+9. Partial recognition stays on the phone.
+10. Only the final text is submitted to Windows.
+11. Windows processes the command through Assistant Core/Antigravity/MCP/permissions and speaks the answer through desktop TTS.
 
-## Recognition behavior
+## Speech-recognition behavior
 
-When `Ưu tiên nhận dạng on-device` is enabled, the app uses Android's on-device recognizer only when the platform reports that it is available. Otherwise it falls back to the normal system recognizer.
+When on-device recognition is preferred, the app uses Android's on-device recognizer only when the platform reports it available. Otherwise it falls back to the normal system recognizer.
 
-The normal system recognizer is device/vendor-dependent and may use an online service. On Android devices using Google services this can be backed by Google's speech-recognition service. The project does not require a paid speech API key for this path.
+The normal recognizer is vendor-dependent. On phones using Google services it may be backed by Google's speech-recognition service and may require Internet. No dedicated paid STT API key is required by this project.
 
-`SpeechRecognizer` is deliberately not kept listening continuously. Always-on voice activation will be implemented later with an appropriate wake-word/hardware-trigger mechanism.
+`SpeechRecognizer` is not kept running continuously; always-on wake/hardware activation is a later phase.
 
-## Response language
+## Security notes
 
-- `VI`: desktop generates a friendly Vietnamese response.
-- `EN`: desktop generates a friendly English response.
-- `Auto`: desktop responds in the language used in the command.
+The current transport is unencrypted `ws://` and is intended only for a trusted/private LAN. Do not expose port `8765` directly to the public Internet.
 
-Simple commands are intentionally answered with short natural confirmations.
+The phone is low-authority: it cannot bypass desktop permission checks or approve Sensitive actions. The shared token is still a local credential and should not be published in logs/screenshots.
 
-## Troubleshooting
-
-If the phone cannot connect:
-
-- confirm the PC and phone are on the same LAN;
-- verify the PC LAN IP;
-- run `assistant-satellite show` and confirm `enabled=true` and `paired=true`;
-- wait about one second after changing persistent pairing settings;
-- verify the pairing token matches exactly;
-- check Windows Firewall for TCP port 8765 on the trusted/private network profile;
-- do not use `127.0.0.1` or `localhost` on the phone, because those point to the phone itself.
-
-If the persistent config is not desired during development, the legacy `ASSISTANT_VOICE_SATELLITE_TOKEN` environment variable can still be used.
+For development compatibility, `ASSISTANT_VOICE_SATELLITE_TOKEN` and `ASSISTANT_VOICE_SATELLITE_BIND` remain supported as environment overrides.
 
 See [`../../docs/VOICE_SATELLITE.md`](../../docs/VOICE_SATELLITE.md) for protocol and security details.
