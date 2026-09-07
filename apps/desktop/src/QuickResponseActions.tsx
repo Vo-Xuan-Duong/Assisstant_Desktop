@@ -5,6 +5,10 @@ import { copyQuickText } from "./quickClipboard";
 import type { AssistantState } from "./types";
 import "./quick-response-actions.css";
 
+function isCancellationError(cause: unknown) {
+  return String(cause).toLowerCase().includes("cancel");
+}
+
 function CopyIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -157,7 +161,9 @@ export default function QuickResponseActions() {
           clearSpeakFeedback();
           setSpeakPending(true);
           void speakResponse(response)
-            .catch(() => showSpeakError())
+            .catch((cause) => {
+              if (!isCancellationError(cause)) showSpeakError();
+            })
             .finally(() => setSpeakPending(false));
         }}
       >
