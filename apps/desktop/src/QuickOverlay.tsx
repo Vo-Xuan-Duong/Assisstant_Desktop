@@ -255,7 +255,9 @@ export default function QuickOverlay() {
   }, [refreshVoice]);
 
   const statusLabel = useMemo(() => {
-    if (cancelPending) return "Đang dừng lượt AI…";
+    if (cancelPending) {
+      return assistantState === "speaking" ? "Đang dừng đọc…" : "Đang dừng lượt AI…";
+    }
 
     switch (assistantState) {
       case "listening":
@@ -278,7 +280,10 @@ export default function QuickOverlay() {
   const voiceReady = Boolean(voice?.whisper_compiled && voice.model_available);
   const displayedResponse = streamingText || response;
   const active = busy || !["idle", "error"].includes(assistantState);
-  const cancellable = assistantState === "processing";
+  const cancellable = assistantState === "processing" || assistantState === "speaking";
+  const cancelLabel = assistantState === "speaking"
+    ? "Dừng đọc câu trả lời"
+    : "Dừng lượt AI hiện tại";
   const style = {
     "--voice-level": voiceLevel.toFixed(3),
   } as CSSProperties;
@@ -288,7 +293,7 @@ export default function QuickOverlay() {
   }, [assistantState, displayedResponse, error, scheduleResize]);
 
   const requestCancel = useCallback(async () => {
-    if (assistantState !== "processing" || cancelPending) return;
+    if (!["processing", "speaking"].includes(assistantState) || cancelPending) return;
 
     cancelRequestedRef.current = true;
     setCancelPending(true);
@@ -399,8 +404,8 @@ export default function QuickOverlay() {
             {cancellable && (
               <button
                 type="button"
-                title="Dừng lượt AI hiện tại"
-                aria-label="Dừng lượt AI hiện tại"
+                title={cancelLabel}
+                aria-label={cancelLabel}
                 disabled={cancelPending}
                 onClick={() => void requestCancel()}
               >
