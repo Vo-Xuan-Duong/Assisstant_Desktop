@@ -319,7 +319,7 @@ async fn run_worker(
 
         if microphone.is_none() {
             transition(&state_tx, &events, WakeRuntimeState::Starting);
-            match MicrophoneStream::open_default(config.microphone) {
+            match MicrophoneStream::open_default_uncancellable(config.microphone) {
                 Ok(stream) => {
                     debug!(device = %stream.info().device, "wake microphone opened");
                     microphone = Some(stream);
