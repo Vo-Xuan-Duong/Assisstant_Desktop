@@ -1,6 +1,10 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect } from "react";
 import { hideQuickAssistant, onAssistantEvent } from "./api";
+import {
+  QUICK_AUTO_DISMISS_HOLD_EVENT,
+  type QuickAutoDismissHoldDetail,
+} from "./quickLifecycle";
 import type { AssistantState } from "./types";
 
 const SHORT_RESPONSE_DISMISS_MS = 9_000;
@@ -21,6 +25,7 @@ export function useQuickAutoDismiss() {
     let responseLength = 0;
     let pointerInside = false;
     let timer: number | null = null;
+    const holdSources = new Set<string>();
     const unlisten: Array<() => void> = [];
 
     const clearTimer = () => {
@@ -39,6 +44,7 @@ export function useQuickAutoDismiss() {
       !disposed &&
       assistantState === "idle" &&
       responseReady &&
+      holdSources.size === 0 &&
       !pointerInside &&
       !composerHasText();
 
@@ -60,6 +66,7 @@ export function useQuickAutoDismiss() {
     void listen("quick:shown", () => {
       responseReady = false;
       responseLength = 0;
+      holdSources.clear();
       clearTimer();
     }).then((fn) => {
       if (disposed) fn();
@@ -111,17 +118,34 @@ export function useQuickAutoDismiss() {
       else schedule();
     };
 
+    const onHoldChange = (event: Event) => {
+      if (!(event instanceof CustomEvent)) return;
+      const detail = event.detail as QuickAutoDismissHoldDetail | undefined;
+      if (!detail?.source) return;
+
+      if (detail.held) {
+        holdSources.add(detail.source);
+        clearTimer();
+      } else {
+        holdSources.delete(detail.source);
+        schedule();
+      }
+    };
+
     const root = document.documentElement;
     root.addEventListener("pointerenter", onPointerEnter);
     root.addEventListener("pointerleave", onPointerLeave);
     document.addEventListener("input", onInput, true);
+    window.addEventListener(QUICK_AUTO_DISMISS_HOLD_EVENT, onHoldChange);
 
     return () => {
       disposed = true;
       clearTimer();
+      holdSources.clear();
       root.removeEventListener("pointerenter", onPointerEnter);
       root.removeEventListener("pointerleave", onPointerLeave);
       document.removeEventListener("input", onInput, true);
+      window.removeEventListener(QUICK_AUTO_DISMISS_HOLD_EVENT, onHoldChange);
       for (const fn of unlisten) fn();
     };
   }, []);
