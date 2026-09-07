@@ -43,38 +43,84 @@ The Android app supports:
 - partial transcript display on the phone;
 - final-transcript-only submission to the desktop.
 
-The system recognizer is implementation-dependent. On some devices it may use a vendor/cloud recognition service. Selecting `prefer on-device` asks the app to use Android's on-device recognizer when the platform reports it available.
+The system recognizer is implementation-dependent. On Android phones with Google services it may be backed by Google's speech-recognition service; other vendors may provide a different implementation. Selecting `prefer on-device` asks the app to use Android's on-device recognizer when the platform reports it available.
 
 The MVP is push-to-talk. `SpeechRecognizer` is not used as an always-listening loop. A future wake/hardware-trigger phase should activate recognition only when needed.
 
-## Desktop listener
+## Persistent pairing configuration
 
-The desktop listener is disabled unless a pairing token is configured.
+The preferred pairing source is now:
 
-Environment variables:
+```text
+%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite.json
+```
+
+Example shape:
+
+```json
+{
+  "enabled": true,
+  "bind": "0.0.0.0:8765",
+  "token": "<64-character-random-token>"
+}
+```
+
+Do not hand-author the token unless necessary. Use the pairing helper:
+
+```powershell
+assistant-satellite pair
+```
+
+Useful commands:
+
+```powershell
+assistant-satellite show
+assistant-satellite pair
+assistant-satellite pair --bind 0.0.0.0:8765
+assistant-satellite enable
+assistant-satellite disable
+assistant-satellite bind 0.0.0.0:8765
+assistant-satellite revoke
+```
+
+`pair` creates a new 64-character random token, stores it, enables the receiver, and prints the full token for entry into the Android app. `show` masks the token. `revoke` clears it and disables the listener.
+
+The bootstrap implementation loads this file when the desktop runtime starts. Restart Assisstant Desktop after pairing changes. Live listener reload and integration under `assistant satellite ...` remain Phase 26 follow-up work.
+
+### Legacy environment override
+
+For development/backwards compatibility these environment variables are still accepted:
 
 ```text
 ASSISTANT_VOICE_SATELLITE_TOKEN
 ASSISTANT_VOICE_SATELLITE_BIND
 ```
 
-`ASSISTANT_VOICE_SATELLITE_TOKEN` is required and must contain at least 16 characters. Use a random value of 32 characters or more for real use.
-
-`ASSISTANT_VOICE_SATELLITE_BIND` is optional. The default is:
+When `ASSISTANT_VOICE_SATELLITE_TOKEN` is present, the environment configuration takes precedence over `satellite.json`. The token must contain at least 16 characters. The default bind remains:
 
 ```text
 0.0.0.0:8765
 ```
 
-Example PowerShell development session:
+New setups should prefer the persistent pairing file/helper.
 
-```powershell
-$env:ASSISTANT_VOICE_SATELLITE_TOKEN = "replace-with-a-random-32-plus-character-token"
-$env:ASSISTANT_VOICE_SATELLITE_BIND = "0.0.0.0:8765"
-pnpm desktop:dev
+## Desktop listener
+
+The listener is fail-secure at startup:
+
+```text
+no environment token
+        |
+read satellite.json
+        |
+ enabled + valid token?
+      /        \
+    no          yes
+    |            |
+no LAN bind   bind WebSocket listener
 ```
 
-The listener uses WebSocket protocol RFC 6455 and the satellite JSON protocol below. The WebSocket implementation is built on the existing Tokio runtime so this phase does not add a new Rust transport dependency or require a Cargo.lock regeneration.
+The listener uses WebSocket protocol RFC 6455 and the satellite JSON protocol below. The WebSocket implementation is built on the existing Tokio runtime so this path does not add a new Rust transport dependency or require a Cargo.lock regeneration.
 
 ## Security boundary
 
@@ -82,9 +128,9 @@ The phone never receives direct MCP, Win32, shell, permission-broker, or Antigra
 
 It can only submit a bounded text command through the satellite adapter. The command then enters the same desktop Assistant Core, Antigravity/MCP, permission, and tool boundaries as other assistant requests.
 
-Current MVP security properties:
+Current security properties:
 
-- no pairing token -> no LAN listener;
+- no active pairing token -> no LAN listener;
 - first WebSocket application message must authenticate;
 - authentication timeout is 5 seconds;
 - protocol version is checked;
@@ -92,9 +138,13 @@ Current MVP security properties:
 - frame payload is bounded to 64 KiB;
 - one satellite command is processed at a time;
 - commands are refused while another assistant turn is active;
-- Sensitive actions still require the desktop permission path.
+- Sensitive actions still require the desktop permission path;
+- the full pairing token is not shown by `assistant-satellite show`;
+- `assistant-satellite revoke` invalidates the persisted pairing secret.
 
-The current LAN transport is `ws://`, not encrypted `wss://`. Use it only on a trusted LAN during this phase. Remote networking, certificate-based WSS, Tailscale, QR pairing, and trusted-device revocation are planned follow-up work.
+The pairing token is a local credential. The current bootstrap stores it in the user's application-data directory and in Android app preferences; do not publish the file/token in logs, screenshots, bug reports, or repositories.
+
+The current LAN transport is `ws://`, not encrypted `wss://`. Use it only on a trusted LAN during this phase. Do not expose port 8765 directly to the public Internet. WSS/Tailscale and stronger per-device trust are later phases.
 
 ## Protocol v1
 
@@ -138,7 +188,7 @@ Successful response:
 - `en` — generate it in English;
 - `auto` — respond in the language used by the user.
 
-The response policy also asks the assistant to be friendly, natural, and concise. Simple successful commands should normally produce one short confirmation sentence.
+The response policy asks the assistant to be friendly, natural, and concise. Simple successful commands should normally produce one short confirmation sentence.
 
 ### 3. Runtime state
 
@@ -207,10 +257,10 @@ No Gradle wrapper binary is committed in this source-first phase. Open the direc
 Do this on the user's own Windows/Android devices; no remote Actions/build/test run is implied by the source work.
 
 1. Put phone and PC on the same trusted LAN.
-2. Set `ASSISTANT_VOICE_SATELLITE_TOKEN` on the desktop.
-3. Start the desktop runtime and confirm the log says the listener is bound.
-4. Allow Windows Firewall access only for the intended trusted network profile.
-5. Enter `ws://<PC-LAN-IP>:8765` and the same token on Android.
+2. Build the `assistant-satellite` binary locally and run `assistant-satellite pair`.
+3. Restart Assisstant Desktop and confirm the log says the listener is bound.
+4. Allow Windows Firewall access only for the intended trusted/private network profile.
+5. Enter `ws://<PC-LAN-IP>:8765` and the printed token on Android.
 6. Grant microphone permission.
 7. Test `vi-VN`: `Mở Visual Studio Code`.
 8. Confirm partial recognition appears only on Android.
@@ -220,4 +270,5 @@ Do this on the user's own Windows/Android devices; no remote Actions/build/test 
 12. Switch response language among `VI`, `EN`, and `Auto`.
 13. Test `en-US` recognition.
 14. Test invalid pairing token, disconnected Wi-Fi, desktop busy state, and reconnect.
-15. Confirm local desktop microphone/Zipformer still works as fallback when built with the voice feature.
+15. Run `assistant-satellite revoke`, restart desktop, and confirm the phone can no longer authenticate.
+16. Confirm local desktop microphone/Zipformer still works as fallback when built with the voice feature.
