@@ -88,8 +88,10 @@ impl CancellationToken {
 mod tests {
     use super::*;
 
+    // Keep this as one test because the cancellation generation is intentionally
+    // process-global; independent parallel tests would race the same state.
     #[tokio::test]
-    async fn cancellation_stays_sticky_until_next_operation() {
+    async fn cancellation_generation_lifecycle() {
         let mut first = CancellationToken::subscribe();
         let first_generation = first.generation();
         assert!(!first.is_cancelled());
@@ -100,17 +102,13 @@ mod tests {
         assert!(is_cancelled(first_generation));
 
         let second = CancellationToken::subscribe();
+        let second_generation = second.generation();
         assert!(!second.is_cancelled());
-        assert_ne!(second.generation(), first_generation);
+        assert_ne!(second_generation, first_generation);
         assert!(is_cancelled(first_generation));
-    }
 
-    #[tokio::test]
-    async fn newer_operation_invalidates_older_token() {
-        let first = CancellationToken::subscribe();
-        let second = CancellationToken::subscribe();
-
-        assert!(first.is_cancelled());
-        assert!(!second.is_cancelled());
+        let third = CancellationToken::subscribe();
+        assert!(second.is_cancelled());
+        assert!(!third.is_cancelled());
     }
 }
