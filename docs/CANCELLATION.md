@@ -14,7 +14,7 @@ Quick exposes Stop while the Assistant is in:
 
 ## Listening / local STT cancellation
 
-Voice capture and local recognition use a shared cancellation generation in `voice-runtime`.
+Foreground voice capture and local recognition use a shared cancellation generation in `voice-runtime`.
 
 ```text
 Quick Stop while Listening
@@ -28,7 +28,7 @@ voice_runtime::cancellation::cancel_current()
           +------------------------------+
           |                              |
           v                              v
-MicrophoneStream                    Offline STT
+voice-turn MicrophoneStream          Offline STT
 CancellationToken                   generation snapshot
           |                              |
 next_chunk() wakes/returns None      decode result becomes stale
@@ -42,7 +42,9 @@ next_chunk() wakes/returns None      decode result becomes stale
                   AssistantCore -> Idle
 ```
 
-Each microphone stream subscribes to the generation that was current when it opened. `next_chunk()` selects between the CPAL audio queue and the cancellation watcher, so Stop does not need to wait for a 25-second capture timeout or for another UI action.
+A foreground voice-turn microphone opened through `MicrophoneStream::open_default()` starts/subscribes to the current voice-operation generation. `next_chunk()` selects between the CPAL audio queue and the cancellation watcher, so Stop does not need to wait for a 25-second capture timeout or for another UI action.
+
+Wake-word capture is intentionally separate. `WakeRuntime` uses `MicrophoneStream::open_default_uncancellable()`, so foreground Quick Stop cannot make the long-lived wake microphone appear to have ended unexpectedly. Wake is controlled by its own Suspend/Resume/enable/cooldown lifecycle instead of by the voice-turn cancellation generation.
 
 Offline Zipformer recognition has no safe mid-native-decode abort primitive in the current sherpa-onnx path. The recognizer therefore checks cancellation:
 
@@ -51,6 +53,8 @@ Offline Zipformer recognition has no safe mid-native-decode abort primitive in t
 3. after native decode returns, before exposing the transcript.
 
 If cancellation occurs while native decode is already executing, CPU work may finish, but its result is returned as `SttError::Cancelled` and can never become the final Assistant prompt. The legacy opt-in Whisper backend follows the same stale-result rule.
+
+Cancellation remains sticky for the current foreground voice generation until a newer voice capture begins. This closes the race where the user presses Stop after VAD has completed but just before final STT starts.
 
 Quick invalidates the active voice UI operation generation when Stop is pressed during `listening`, so a late promise rejection/result from the cancelled turn cannot overwrite the idle/new-turn UI.
 
@@ -146,18 +150,24 @@ Wake suspension is reference-counted. Every `WakeService::suspend()` acquires on
 
 This prevents a delayed resume timer from an interrupted/previous voice turn from re-enabling wake-word detection while a newer voice turn is already listening.
 
+The wake microphone itself is opened through the uncancellable microphone path. This separates two concerns:
+
+- foreground voice cancellation stops only the active command capture/STT generation;
+- wake Suspend/Resume owns wake detector microphone release/reopen behavior.
+
 ## State/error semantics
 
 Cancellation is expected control flow rather than a backend failure.
 
 For voice input/STT cancellation:
 
-- active microphone delivery ends through its cancellation watcher;
+- active foreground microphone delivery ends through its cancellation watcher;
 - Assistant Core returns from `Listening` to `Idle` immediately from the Quick cancellation router;
 - an STT decode already inside native code may finish internally, but its transcript is discarded;
 - no cancelled final transcript is emitted to Quick;
 - no cancelled transcript reaches `complete_prompt()` or Antigravity;
-- stale voice promise handlers are ignored by Quick.
+- stale voice promise handlers are ignored by Quick;
+- the wake microphone is not cancelled or reported as failed by this signal.
 
 For Antigravity cancellation:
 
@@ -183,7 +193,8 @@ It does not guarantee rollback of a Windows/MCP side effect that already started
 | Phase | Cancel support | Notes |
 | --- | --- | --- |
 | Context collection | No explicit Stop | Usually short and occurs before `Processing`. |
-| Microphone capture / VAD (`Listening`) | Yes | Shared voice generation wakes `next_chunk()` and returns Core to Idle. |
+| Foreground microphone capture / VAD (`Listening`) | Yes | Shared voice generation wakes `next_chunk()` and returns Core to Idle. |
+| Wake-word microphone | Separate lifecycle | Uses uncancellable stream; Wake Suspend/Resume owns it. |
 | Local Zipformer decode (`Listening`) | Stale-result cancellation | Native decode is not forcibly aborted; cancelled output is discarded before it can become a prompt. |
 | Legacy Whisper decode | Stale-result cancellation | Same boundary for the optional backend. |
 | Antigravity reasoning / stream | Yes | Terminates the active Antigravity process. |
@@ -204,12 +215,12 @@ On Windows, verify:
 2. Speak a longer utterance and press Stop while partial transcripts are appearing; no final `Bạn nói:` transcript and no Assistant request should follow.
 3. Press Stop immediately after speech ends while final offline STT is likely decoding; even if CPU decode completes internally, no response should start from that cancelled transcript.
 4. Start a fresh voice turn immediately after cancellation and confirm it is not cancelled by the previous generation.
-5. Send a long Antigravity prompt and verify Processing Stop still terminates the active turn.
-6. Let SAPI begin speaking; press Stop and verify audio stops promptly and state returns to Idle.
-7. During voice-response TTS, press Mic; verify explicit barge-in starts exactly one new voice turn.
-8. Repeat rapid stop/barge-in cycles and verify wake-word detection does not resume during active capture.
-9. Verify Stop is not offered during `Executing` or `Confirming`.
-10. Verify `Esc` only hides Quick and does not cancel active work.
+5. Enable wake, cancel a foreground voice turn, and confirm wake does not enter an error/retry cycle because of the foreground cancellation generation.
+6. Confirm wake still suspends during the foreground turn and resumes through its normal cooldown afterward.
+7. Send a long Antigravity prompt and verify Processing Stop still terminates the active turn.
+8. Let SAPI begin speaking; press Stop and verify audio stops promptly and state returns to Idle.
+9. During voice-response TTS, press Mic; verify explicit barge-in starts exactly one new voice turn.
+10. Verify Stop is not offered during `Executing` or `Confirming`, and `Esc` only hides Quick.
 
 ## Remaining cancellation work
 
