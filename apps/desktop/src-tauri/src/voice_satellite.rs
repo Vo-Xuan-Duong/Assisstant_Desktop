@@ -22,10 +22,11 @@ const VOICE_TRANSCRIPT_EVENT: &str = "voice:transcript";
 const WEBSOCKET_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_FRAME_BYTES: usize = 64 * 1024;
+const SETTINGS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 static COMMAND_GATE: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SatelliteConfig {
     bind: String,
     token: String,
@@ -293,27 +294,55 @@ impl WebSocketConnection {
 }
 
 pub fn setup(app: &AppHandle) {
-    let config = match config_from_app(app) {
-        Ok(Some(config)) => config,
-        Ok(None) => {
-            info!(
-                settings = SETTINGS_FILE,
-                "Android voice satellite disabled because no active pairing is configured"
-            );
-            return;
-        }
-        Err(error) => {
-            warn!(%error, "Android voice satellite configuration was rejected");
-            return;
-        }
-    };
-
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = run_server(app, config).await {
-            warn!(%error, "Android voice satellite server stopped");
-        }
+        supervise_server(app).await;
     });
+}
+
+async fn supervise_server(app: AppHandle) {
+    let mut active_config: Option<SatelliteConfig> = None;
+    let mut server_task: Option<tauri::async_runtime::JoinHandle<()>> = None;
+    let mut last_config_error: Option<String> = None;
+
+    loop {
+        let desired_config = match config_from_app(&app) {
+            Ok(config) => {
+                last_config_error = None;
+                config
+            }
+            Err(error) => {
+                if last_config_error.as_deref() != Some(error.as_str()) {
+                    warn!(%error, "Android voice satellite configuration was rejected");
+                    last_config_error = Some(error);
+                }
+                None
+            }
+        };
+
+        let server_finished = server_task.as_ref().is_some_and(|task| task.is_finished());
+        if desired_config != active_config || server_finished {
+            if let Some(task) = server_task.take() {
+                task.abort();
+            }
+
+            active_config = desired_config.clone();
+            server_task = desired_config.map(|config| {
+                let server_app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = run_server(server_app, config).await {
+                        warn!(%error, "Android voice satellite server stopped");
+                    }
+                })
+            });
+
+            if active_config.is_none() {
+                info!("Android voice satellite listener is disabled");
+            }
+        }
+
+        tokio::time::sleep(SETTINGS_POLL_INTERVAL).await;
+    }
 }
 
 fn config_from_app(app: &AppHandle) -> Result<Option<SatelliteConfig>, String> {
@@ -326,7 +355,6 @@ fn config_from_app(app: &AppHandle) -> Result<Option<SatelliteConfig>, String> {
             .ok()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(default_bind);
-        info!(env = TOKEN_ENV, "using legacy environment satellite pairing override");
         return Ok(Some(SatelliteConfig { bind, token }));
     }
 
@@ -365,10 +393,6 @@ fn config_from_app(app: &AppHandle) -> Result<Option<SatelliteConfig>, String> {
         .filter(|value| value.len() >= 16)
         .ok_or_else(|| "satellite is enabled but has no valid pairing token".to_owned())?;
 
-    info!(
-        settings = %settings_path.display(),
-        "using persisted Android voice satellite pairing"
-    );
     Ok(Some(SatelliteConfig {
         bind: bind.to_owned(),
         token,
@@ -390,14 +414,13 @@ async fn run_server(app: AppHandle, config: SatelliteConfig) -> Result<(), Strin
             .accept()
             .await
             .map_err(|error| format!("voice satellite accept failed: {error}"))?;
-        let app = app.clone();
-        let expected_token = config.token.clone();
 
-        tauri::async_runtime::spawn(async move {
-            if let Err(error) = handle_connection(app, stream, expected_token).await {
-                debug!(%peer, %error, "voice satellite connection closed");
-            }
-        });
+        // Phase 26 intentionally trusts one active phone connection at a time.
+        // Keeping the connection inside this supervisor-owned task also means a
+        // token rotation/revoke aborts the active connection immediately.
+        if let Err(error) = handle_connection(app.clone(), stream, config.token.clone()).await {
+            debug!(%peer, %error, "voice satellite connection closed");
+        }
     }
 }
 
