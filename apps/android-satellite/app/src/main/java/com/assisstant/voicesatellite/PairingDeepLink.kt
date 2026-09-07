@@ -28,7 +28,7 @@ object PairingDeepLink {
         require(isValidHost(host)) { "Địa chỉ desktop trong QR không hợp lệ." }
         val port = portRaw.toIntOrNull()
         require(port != null && port in 1..65535) { "Cổng desktop trong QR không hợp lệ." }
-        require(token.length == 64 && token.all(Char::isHexDigit)) {
+        require(token.length == 64 && token.all { it.isHexDigit() }) {
             "Pairing token trong QR không hợp lệ."
         }
 
