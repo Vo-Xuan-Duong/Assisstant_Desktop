@@ -150,7 +150,23 @@ if ($TargetTriple) {
 $RuntimeDir = Join-Path $AppLocalData "runtime"
 $GeneratedMcpConfig = Join-Path $RuntimeDir ".agents\mcp_config.json"
 $ContextDir = Join-Path $AppLocalData "context"
-$WhisperModel = Join-Path $AppLocalData "models\whisper\ggml-base.bin"
+$DefaultSttModelDir = Join-Path $AppLocalData "models\stt\sherpa-onnx-zipformer-vi-30M-int8-2026-02-09"
+$SttModelDir = $DefaultSttModelDir
+if (-not [string]::IsNullOrWhiteSpace($env:ASSISTANT_ZIPFORMER_MODEL_DIR)) {
+    if ([System.IO.Path]::IsPathRooted($env:ASSISTANT_ZIPFORMER_MODEL_DIR)) {
+        $SttModelDir = $env:ASSISTANT_ZIPFORMER_MODEL_DIR
+        Add-Result "stt_model_override" "ready" "Đang dùng ASSISTANT_ZIPFORMER_MODEL_DIR." $SttModelDir
+    }
+    else {
+        Add-Result "stt_model_override" "blocking" "ASSISTANT_ZIPFORMER_MODEL_DIR phải là absolute path để khớp runtime resolver." $env:ASSISTANT_ZIPFORMER_MODEL_DIR
+    }
+}
+
+$SttEncoder = Join-Path $SttModelDir "encoder.int8.onnx"
+$SttDecoder = Join-Path $SttModelDir "decoder.onnx"
+$SttJoiner = Join-Path $SttModelDir "joiner.int8.onnx"
+$SttTokens = Join-Path $SttModelDir "tokens.txt"
+$SttBpe = Join-Path $SttModelDir "bpe.model"
 $WakeModelDir = Join-Path $AppLocalData "models\wake\sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
 $WakeBpe = Join-Path $WakeModelDir "bpe.model"
 $WakeTokens = Join-Path $WakeModelDir "tokens.txt"
@@ -172,11 +188,38 @@ else {
     Add-Result "context_dir" "info" "Context directory sẽ được desktop tạo khi startup." $ContextDir
 }
 
-if (Test-Path $WhisperModel) {
-    Add-Result "whisper_model" "ready" "Whisper model mặc định đã tồn tại." $WhisperModel
+$SttRuntimeResources = @(
+    @{ id = "stt_encoder"; path = $SttEncoder; label = "encoder.int8.onnx" },
+    @{ id = "stt_decoder"; path = $SttDecoder; label = "decoder.onnx" },
+    @{ id = "stt_joiner"; path = $SttJoiner; label = "joiner.int8.onnx" },
+    @{ id = "stt_tokens"; path = $SttTokens; label = "tokens.txt" }
+)
+$SttPresent = @($SttRuntimeResources | Where-Object { Test-Path $_.path -PathType Leaf }).Count
+
+if ($SttPresent -eq $SttRuntimeResources.Count) {
+    Add-Result "stt_zipformer_vi" "ready" "Vietnamese Zipformer runtime bundle đã đầy đủ ($SttPresent/$($SttRuntimeResources.Count) file)." $SttModelDir
+}
+elseif ($SttPresent -eq 0) {
+    Add-Result "stt_zipformer_vi" "optional" "Chưa có Vietnamese Zipformer runtime bundle; text/TTS vẫn hoạt động. Cài bằng `assistant resources install stt_zipformer_vi`." $SttModelDir
 }
 else {
-    Add-Result "whisper_model" "optional" "Chưa có Whisper model mặc định; text assistant vẫn hoạt động." $WhisperModel
+    Add-Result "stt_zipformer_vi" "optional" "Vietnamese Zipformer runtime bundle chưa đầy đủ ($SttPresent/$($SttRuntimeResources.Count) file). Nên xóa bundle dở dang và cài lại bằng Resource Installer." $SttModelDir
+}
+
+foreach ($sttResource in $SttRuntimeResources) {
+    if (Test-Path $sttResource.path -PathType Leaf) {
+        Add-Result $sttResource.id "ready" "$($sttResource.label) đã tồn tại." $sttResource.path
+    }
+    else {
+        Add-Result $sttResource.id "optional" "$($sttResource.label) chưa tồn tại; voice STT chưa sẵn sàng." $sttResource.path
+    }
+}
+
+if (Test-Path $SttBpe -PathType Leaf) {
+    Add-Result "stt_bpe" "ready" "bpe.model preparation/context file đã tồn tại." $SttBpe
+}
+else {
+    Add-Result "stt_bpe" "info" "bpe.model chưa tồn tại; file này không bắt buộc cho Zipformer runtime recognition hiện tại." $SttBpe
 }
 
 if (Test-Path $WakeModelDir) {
@@ -267,6 +310,7 @@ else {
     Write-Host "  pnpm install"
     Write-Host "  pnpm --dir apps/desktop sidecar:stage:dev"
     Write-Host "  pnpm --dir apps/desktop tauri dev"
+    Write-Host "  assistant resources install stt_zipformer_vi"
 }
 
 if ($Blocking -gt 0) {
