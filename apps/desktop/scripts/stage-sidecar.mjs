@@ -51,6 +51,20 @@ execFileSync("cargo", assistantArgs, {
   stdio: "inherit",
 });
 
+const satelliteArgs = [
+  "build",
+  "-p",
+  "assisstant-desktop",
+  "--bin",
+  "assistant-satellite",
+  "--locked",
+];
+if (requestedProfile === "release") satelliteArgs.push("--release");
+execFileSync("cargo", satelliteArgs, {
+  cwd: repoRoot,
+  stdio: "inherit",
+});
+
 // Sherpa stays in DLLs to isolate its bundled protobuf from SentencePiece's.
 const voiceArgs = ["build", "-p", "voice-runtime", "--features", "wake-sherpa", "--locked"];
 if (requestedProfile === "release") voiceArgs.push("--release");
@@ -68,6 +82,10 @@ const assistantSource = path.join(targetDir, requestedProfile, "assistant.exe");
 if (!existsSync(assistantSource)) {
   throw new Error(`Expected management CLI was not produced: ${assistantSource}`);
 }
+const satelliteSource = path.join(targetDir, requestedProfile, "assistant-satellite.exe");
+if (!existsSync(satelliteSource)) {
+  throw new Error(`Expected satellite management helper was not produced: ${satelliteSource}`);
+}
 
 const binariesDir = path.join(tauriDir, "binaries");
 mkdirSync(binariesDir, { recursive: true });
@@ -81,6 +99,11 @@ const assistantDestination = path.join(
   `assistant-${targetTriple}.exe`,
 );
 copyFileSync(assistantSource, assistantDestination);
+const satelliteDestination = path.join(
+  binariesDir,
+  `assistant-satellite-${targetTriple}.exe`,
+);
+copyFileSync(satelliteSource, satelliteDestination);
 
 const runtimeDir = path.join(targetDir, requestedProfile);
 const runtimeDlls = readdirSync(runtimeDir).filter((name) =>
@@ -99,3 +122,4 @@ for (const name of runtimeDlls) {
 
 console.log(`Staged assistant-mcp sidecar: ${destination}`);
 console.log(`Staged assistant management CLI: ${assistantDestination}`);
+console.log(`Staged satellite management helper: ${satelliteDestination}`);
