@@ -122,11 +122,28 @@ pub struct MicrophoneStream {
     info: MicrophoneInfo,
     dropped_chunks: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
-    cancellation: cancellation::CancellationToken,
+    cancellation: Option<cancellation::CancellationToken>,
 }
 
 impl MicrophoneStream {
+    /// Open the default input device as a voice-turn stream. The stream starts a
+    /// fresh cancellation generation and `next_chunk()` returns `None` when that
+    /// generation is explicitly cancelled or superseded.
     pub fn open_default(config: MicrophoneConfig) -> Result<Self, VoiceError> {
+        Self::open_default_inner(config, true)
+    }
+
+    /// Open the default input device without participating in voice-turn
+    /// cancellation. Long-lived infrastructure such as wake-word detection uses
+    /// this path so a Quick Stop cannot look like an unexpected device failure.
+    pub fn open_default_uncancellable(config: MicrophoneConfig) -> Result<Self, VoiceError> {
+        Self::open_default_inner(config, false)
+    }
+
+    fn open_default_inner(
+        config: MicrophoneConfig,
+        cancellable: bool,
+    ) -> Result<Self, VoiceError> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
@@ -145,7 +162,7 @@ impl MicrophoneStream {
         let (sender, receiver) = mpsc::channel(channel_capacity);
         let dropped_chunks = Arc::new(AtomicU64::new(0));
         let last_error = Arc::new(Mutex::new(None));
-        let cancellation = cancellation::CancellationToken::subscribe();
+        let cancellation = cancellable.then(cancellation::CancellationToken::subscribe);
 
         let stream = build_input_stream(
             &device,
@@ -171,6 +188,7 @@ impl MicrophoneStream {
             sample_rate = info.sample_rate,
             channels = info.source_channels,
             sample_format = %info.source_sample_format,
+            cancellable,
             "default microphone stream opened"
         );
 
@@ -197,12 +215,15 @@ impl MicrophoneStream {
     }
 
     pub async fn next_chunk(&mut self) -> Option<AudioChunk> {
-        if self.cancellation.is_cancelled() {
+        let Some(cancellation) = self.cancellation.as_mut() else {
+            return self.receiver.recv().await;
+        };
+
+        if cancellation.is_cancelled() {
             return None;
         }
 
         let receiver = &mut self.receiver;
-        let cancellation = &mut self.cancellation;
         tokio::select! {
             chunk = receiver.recv() => chunk,
             _ = cancellation.cancelled() => None,
