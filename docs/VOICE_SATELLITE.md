@@ -49,7 +49,7 @@ The MVP is push-to-talk. `SpeechRecognizer` is not used as an always-listening l
 
 ## Persistent pairing configuration
 
-The preferred pairing source is now:
+The preferred pairing source is:
 
 ```text
 %LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite.json
@@ -85,7 +85,7 @@ assistant-satellite revoke
 
 `pair` creates a new 64-character random token, stores it, enables the receiver, and prints the full token for entry into the Android app. `show` masks the token. `revoke` clears it and disables the listener.
 
-The bootstrap implementation loads this file when the desktop runtime starts. Restart Assisstant Desktop after pairing changes. Live listener reload and integration under `assistant satellite ...` remain Phase 26 follow-up work.
+The desktop watches this file while running. Pairing, enable/disable, bind-address, and revoke changes are normally applied within about one second. A token rotation/revoke aborts the current satellite server task, which also drops the active phone connection; the previous authenticated session therefore cannot continue after the old token has been invalidated.
 
 ### Legacy environment override
 
@@ -102,23 +102,35 @@ When `ASSISTANT_VOICE_SATELLITE_TOKEN` is present, the environment configuration
 0.0.0.0:8765
 ```
 
-New setups should prefer the persistent pairing file/helper.
+Because environment variables are fixed for a running process, changing/removing this legacy override requires restarting the desktop process before the persistent settings file becomes authoritative. New setups should prefer the persistent pairing file/helper.
 
-## Desktop listener
+## Desktop listener lifecycle
 
-The listener is fail-secure at startup:
+The listener is fail-secure and supervised:
 
 ```text
-no environment token
-        |
-read satellite.json
-        |
- enabled + valid token?
-      /        \
-    no          yes
-    |            |
-no LAN bind   bind WebSocket listener
+legacy env token present?
+     /          \
+   yes           no
+    |             |
+env config    read satellite.json
+                  |
+             enabled + valid token?
+                /        \
+              no          yes
+              |            |
+         no LAN bind    bind listener
+                            |
+                     config changes?
+                        /      \
+                      no        yes
+                      |          |
+                   continue   abort old server
+                              + drop active phone
+                              + start/stop new server
 ```
+
+The supervisor polls the persisted configuration roughly once per second. It also detects a finished listener task and retries from the desired configuration.
 
 The listener uses WebSocket protocol RFC 6455 and the satellite JSON protocol below. The WebSocket implementation is built on the existing Tokio runtime so this path does not add a new Rust transport dependency or require a Cargo.lock regeneration.
 
@@ -136,13 +148,14 @@ Current security properties:
 - protocol version is checked;
 - client WebSocket frames must be masked;
 - frame payload is bounded to 64 KiB;
+- one active satellite phone connection is accepted at a time in this phase;
 - one satellite command is processed at a time;
 - commands are refused while another assistant turn is active;
 - Sensitive actions still require the desktop permission path;
 - the full pairing token is not shown by `assistant-satellite show`;
-- `assistant-satellite revoke` invalidates the persisted pairing secret.
+- `assistant-satellite revoke` invalidates the persisted pairing secret and disconnects the active satellite after hot reload.
 
-The pairing token is a local credential. The current bootstrap stores it in the user's application-data directory and in Android app preferences; do not publish the file/token in logs, screenshots, bug reports, or repositories.
+The pairing token is a local credential. The current bootstrap stores it in the user's application-data directory and in Android app preferences; do not publish the file/token in logs, screenshots, bug reports, or repositories. Windows DPAPI/Android Keystore-backed secret storage and per-device credentials remain later hardening work.
 
 The current LAN transport is `ws://`, not encrypted `wss://`. Use it only on a trusted LAN during this phase. Do not expose port 8765 directly to the public Internet. WSS/Tailscale and stronger per-device trust are later phases.
 
@@ -252,13 +265,35 @@ The current source is a Kotlin + Jetpack Compose push-to-talk client using Andro
 
 No Gradle wrapper binary is committed in this source-first phase. Open the directory in Android Studio for local sync/build, or generate a wrapper locally if command-line Android builds are desired.
 
+## Phase 26 status
+
+Implemented in the pairing bootstrap:
+
+- durable `satellite.json` settings;
+- generated 64-character pairing secret;
+- `assistant-satellite show/pair/enable/disable/bind/revoke`;
+- token masking in status output;
+- live settings polling/hot reload;
+- active-session drop on token rotation/revoke;
+- legacy environment override compatibility;
+- one active phone at a time.
+
+Still planned in Phase 26:
+
+- fold the helper under the main `assistant satellite ...` CLI surface;
+- QR pairing so the user does not type endpoint/token manually;
+- per-device trusted-device registry;
+- connected-device/last-seen diagnostics;
+- Windows Firewall/private-network setup guidance or safe automation;
+- stronger secret-at-rest storage.
+
 ## Local verification checklist
 
 Do this on the user's own Windows/Android devices; no remote Actions/build/test run is implied by the source work.
 
 1. Put phone and PC on the same trusted LAN.
-2. Build the `assistant-satellite` binary locally and run `assistant-satellite pair`.
-3. Restart Assisstant Desktop and confirm the log says the listener is bound.
+2. Build `assistant-satellite` locally and run `assistant-satellite pair` while the desktop runtime is running.
+3. Confirm the desktop log reports the listener within roughly one second without restarting the app.
 4. Allow Windows Firewall access only for the intended trusted/private network profile.
 5. Enter `ws://<PC-LAN-IP>:8765` and the printed token on Android.
 6. Grant microphone permission.
@@ -270,5 +305,6 @@ Do this on the user's own Windows/Android devices; no remote Actions/build/test 
 12. Switch response language among `VI`, `EN`, and `Auto`.
 13. Test `en-US` recognition.
 14. Test invalid pairing token, disconnected Wi-Fi, desktop busy state, and reconnect.
-15. Run `assistant-satellite revoke`, restart desktop, and confirm the phone can no longer authenticate.
-16. Confirm local desktop microphone/Zipformer still works as fallback when built with the voice feature.
+15. Run `assistant-satellite revoke` while the phone is connected; confirm the connection is dropped within roughly one second and cannot reconnect with the old token.
+16. Run `assistant-satellite pair` again and confirm the new token works without restarting the desktop.
+17. Confirm local desktop microphone/Zipformer still works as fallback when built with the voice feature.
