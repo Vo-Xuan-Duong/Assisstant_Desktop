@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig};
 
 use crate::{
+    cancellation,
     stt::{SpeechRecognizer, SttError, Transcript},
     vad::Utterance,
 };
@@ -134,11 +135,18 @@ impl ZipformerRecognizer {
         })
     }
 
-    fn transcribe_blocking(&self, utterance: Utterance) -> Result<Transcript, SttError> {
+    fn transcribe_blocking(
+        &self,
+        utterance: Utterance,
+        cancel_generation: u64,
+    ) -> Result<Transcript, SttError> {
         if utterance.samples.is_empty() || utterance.sample_rate == 0 {
             return Err(SttError::InvalidAudio(
                 "utterance is empty or has an invalid sample rate".into(),
             ));
+        }
+        if cancellation::is_cancelled(cancel_generation) {
+            return Err(SttError::Cancelled);
         }
 
         let sample_rate = i32::try_from(utterance.sample_rate).map_err(|_| {
@@ -149,9 +157,24 @@ impl ZipformerRecognizer {
             .decode_gate
             .lock()
             .map_err(|_| SttError::Backend("Zipformer decode gate was poisoned".into()))?;
+
+        // A final decode can wait behind an already-running partial preview.
+        // Re-check after acquiring the native decode gate so cancelled work does
+        // not enter sherpa-onnx unnecessarily.
+        if cancellation::is_cancelled(cancel_generation) {
+            return Err(SttError::Cancelled);
+        }
+
         let stream = self.recognizer.create_stream();
         stream.accept_waveform(sample_rate, &utterance.samples);
         self.recognizer.decode(&stream);
+
+        // sherpa-onnx OfflineRecognizer has no safe mid-decode abort primitive.
+        // Cancellation therefore makes an already-running decode stale: discard
+        // its result and never let it become the authoritative Assistant prompt.
+        if cancellation::is_cancelled(cancel_generation) {
+            return Err(SttError::Cancelled);
+        }
 
         let text = stream
             .get_result()
@@ -174,9 +197,12 @@ impl ZipformerRecognizer {
 impl SpeechRecognizer for ZipformerRecognizer {
     async fn transcribe(&self, utterance: Utterance) -> Result<Transcript, SttError> {
         let recognizer = self.clone();
-        tokio::task::spawn_blocking(move || recognizer.transcribe_blocking(utterance))
-            .await
-            .map_err(|error| SttError::Worker(error.to_string()))?
+        let cancel_generation = cancellation::generation();
+        tokio::task::spawn_blocking(move || {
+            recognizer.transcribe_blocking(utterance, cancel_generation)
+        })
+        .await
+        .map_err(|error| SttError::Worker(error.to_string()))?
     }
 }
 
