@@ -4,7 +4,7 @@
 
 Build a Windows-first AI system assistant with a lightweight Gemini-style desktop experience while moving primary speech recognition to an Android companion device.
 
-The product architecture is now deliberately split:
+The product architecture is deliberately split:
 
 - **Android Voice Satellite**: microphone + speech recognition + text-command transport;
 - **Windows Desktop**: Assistant Core + context + Antigravity/Gemini reasoning + MCP + Windows tools + permission enforcement + spoken response.
@@ -90,6 +90,7 @@ The project will not:
 - JSON application protocol, version 1;
 - required pairing token;
 - trusted LAN for the MVP;
+- one active satellite phone connection during the current pairing phase;
 - one active satellite command at a time.
 
 ## 5. Architecture
@@ -141,7 +142,7 @@ No Android module is permitted to execute Windows actions directly. All satellit
 
 ## 6. Development history
 
-Phases 0–24 established the current desktop foundation, including:
+Phases 0–24 established the desktop foundation, including:
 
 - Rust workspace and shared contracts;
 - Antigravity long-running bridge;
@@ -158,13 +159,15 @@ Phases 0–24 established the current desktop foundation, including:
 - wake-capture isolation;
 - RMS VAD hysteresis.
 
-The local Zipformer path proved useful as an offline fallback but is not accurate enough to remain the preferred speech-input path for the desired user experience. The roadmap therefore changes at Phase 25 rather than continuing to optimize a small local recognizer indefinitely.
+The local Zipformer path proved useful as an offline fallback but is not accurate enough to remain the preferred speech-input path for the desired user experience. The roadmap therefore changed at Phase 25 rather than continuing to optimize a small local recognizer indefinitely.
+
+Phase 25 introduced the Android Voice Satellite and was squash-merged to `main` through PR #76.
 
 ## 7. Current and next phases
 
-### Phase 25 — Android Voice Satellite MVP — CURRENT
+### Phase 25 — Android Voice Satellite MVP — COMPLETED IN SOURCE
 
-Deliverables:
+Delivered:
 
 - Android Kotlin/Compose app;
 - microphone permission handling;
@@ -177,45 +180,61 @@ Deliverables:
 - authenticated WebSocket protocol v1;
 - pairing token required before the desktop LAN listener starts;
 - desktop busy rejection/single satellite turn;
-- reuse existing Quick transcript event;
-- feed text into existing Assistant Core/Antigravity/MCP path;
+- Quick transcript reuse;
+- Assistant Core/Antigravity/MCP routing;
 - desktop SAPI response;
 - response language `VI`, `EN`, `Auto`;
 - friendly/natural/concise response policy;
-- documentation and local validation checklist;
-- keep Zipformer desktop input as fallback.
+- desktop Zipformer retained as fallback.
 
-Exit criteria:
+Target-device Windows/Android validation remains a local release gate; no remote build/test claim is implied by source completion.
 
-- phone and PC on the same trusted LAN can pair;
-- Vietnamese and English voice commands produce one final Assistant Core turn;
-- Windows actions still pass through the normal MCP/permission boundary;
-- desktop speaks the reply;
-- invalid token and busy state fail cleanly;
-- local fallback voice remains intact.
+### Phase 26 — Pairing, settings, and device management — CURRENT
 
-Source implementation is prepared in this phase. Target-device Windows/Android validation remains a local gate.
+Goal: replace environment-variable-first setup with productized, revocable device management.
 
-### Phase 26 — Pairing, settings, and device management
+#### Implemented in the current pairing bootstrap
 
-Replace environment-variable-first setup with productized management.
-
-Deliverables:
-
-- durable satellite settings;
-- `assistant satellite status`;
+- durable `%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite.json` settings;
+- generated 64-character high-entropy pairing token;
+- dedicated `assistant-satellite` management helper;
+- `show` with masked token;
+- `pair` / token rotation;
 - enable/disable LAN listener;
-- generated high-entropy pairing token;
-- QR pairing flow;
-- trusted-device registry;
-- revoke device/token;
-- connection/last-seen diagnostics;
-- private-network Windows Firewall guidance/automation where safe;
-- bind-interface controls instead of broad defaults where practical.
+- revoke pairing/token;
+- listener bind-address control;
+- roughly one-second settings polling/hot reload;
+- active phone session is dropped when token/config is rotated, revoked, disabled, or rebound;
+- listener restarts after unexpected server-task completion;
+- legacy `ASSISTANT_VOICE_SATELLITE_TOKEN` / `ASSISTANT_VOICE_SATELLITE_BIND` compatibility;
+- one active trusted phone connection in this bootstrap.
 
-Exit criteria:
+Current helper surface:
 
-A normal user can pair a phone without manually creating environment variables or copying a long endpoint configuration by hand.
+```text
+assistant-satellite show
+assistant-satellite pair
+assistant-satellite pair --bind 0.0.0.0:8765
+assistant-satellite enable
+assistant-satellite disable
+assistant-satellite bind <host:port>
+assistant-satellite revoke
+```
+
+#### Remaining Phase 26 work
+
+- fold pairing commands under the canonical `assistant satellite ...` CLI surface;
+- QR pairing flow to remove manual endpoint/token entry;
+- per-device trusted-device registry;
+- connected-device / last-seen diagnostics;
+- device-specific revoke rather than only shared-token rotation;
+- Windows Firewall/private-network setup guidance or safe automation;
+- stronger secret-at-rest handling, such as Windows DPAPI and Android Keystore;
+- narrower/default bind-interface UX where practical.
+
+Phase 26 exit criteria:
+
+A normal user can pair and revoke a phone without manually creating environment variables or handling a long token/endpoint by hand, and can inspect which device is trusted/connected.
 
 ### Phase 27 — Language-aware desktop TTS
 
@@ -332,11 +351,13 @@ Windows tools remain categorized as:
 
 Satellite-specific rules:
 
-- no token -> listener disabled;
+- no active token -> listener disabled;
 - text-only command surface;
 - bounded protocol/frame sizes;
 - protocol-version validation;
+- one active phone in the current bootstrap;
 - one satellite command at a time;
+- token rotation/revoke tears down the active session;
 - satellite cannot answer Sensitive confirmation on behalf of the user in the MVP;
 - Android never receives MCP credentials or permission-broker secrets;
 - current `ws://` is trusted-LAN-only.
@@ -349,6 +370,7 @@ Android speech recognition is provided by the device/platform:
 
 - on-device recognition is used when available and selected;
 - the normal system recognizer may, depending on the device/vendor, use an online service;
+- on Google-enabled Android devices the system recognizer may use Google's speech service;
 - no dedicated paid STT API key is required by Assisstant Desktop.
 
 The desktop receives final text rather than phone microphone audio.
@@ -381,6 +403,15 @@ For each scenario:
 5. permissions are not bypassed;
 6. the reply language follows `VI`/`EN`/`Auto`;
 7. Windows speaks the response.
+
+Pairing-specific Phase 26 acceptance scenarios additionally require:
+
+1. `assistant-satellite pair` creates a fresh token without manual environment setup;
+2. a running desktop applies the pairing without restart;
+3. `disable` stops accepting phone connections;
+4. `revoke` disconnects the active phone and invalidates the old token;
+5. re-pairing with a new token works without restarting the desktop;
+6. QR/trusted-device UX is added before Phase 26 is called complete.
 
 ## 12. Definition of completion
 
