@@ -82,6 +82,7 @@ export default function QuickOverlay() {
   const [input, setInput] = useState("");
   const [response, setResponse] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
+  const [voiceTranscript, setVoiceTranscript] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
@@ -167,6 +168,7 @@ export default function QuickOverlay() {
     void listen<QuickShownPayload>("quick:shown", ({ payload }) => {
       setError(null);
       setStreamingText("");
+      setVoiceTranscript(null);
       setResponse(null);
       setCancelPending(false);
       cancelRequestedRef.current = false;
@@ -285,7 +287,7 @@ export default function QuickOverlay() {
 
   useEffect(() => {
     scheduleResize();
-  }, [assistantState, displayedResponse, error, scheduleResize]);
+  }, [assistantState, displayedResponse, error, scheduleResize, voiceTranscript]);
 
   const requestCancel = useCallback(async () => {
     if (assistantState !== "processing" || cancelPending) return;
@@ -311,6 +313,7 @@ export default function QuickOverlay() {
     busyRef.current = true;
     setBusy(true);
     setInput("");
+    setVoiceTranscript(null);
     setResponse(null);
     setStreamingText("");
     setError(null);
@@ -343,6 +346,7 @@ export default function QuickOverlay() {
 
     busyRef.current = true;
     setBusy(true);
+    setVoiceTranscript(null);
     setResponse(null);
     setStreamingText("");
     setError(null);
@@ -352,6 +356,7 @@ export default function QuickOverlay() {
 
     try {
       const result = await runVoiceTurn();
+      setVoiceTranscript(result.transcript);
       setResponse(result.response);
       if (result.tts_error) {
         setError(`TTS: ${result.tts_error}`);
@@ -418,12 +423,15 @@ export default function QuickOverlay() {
           </div>
         </header>
 
-        <div className={`quick-answer ${displayedResponse || error ? "quick-answer-visible" : ""}`} aria-live="polite">
+        <div className={`quick-answer ${displayedResponse || error || voiceTranscript ? "quick-answer-visible" : ""}`} aria-live="polite">
+          {voiceTranscript && (
+            <p className="quick-hint">Bạn nói: {voiceTranscript}</p>
+          )}
           {error ? (
             <p className="quick-error">{error}</p>
           ) : displayedResponse ? (
             <p>{displayedResponse}</p>
-          ) : (
+          ) : voiceTranscript ? null : (
             <p className="quick-hint">Alt + Space để ẩn/hiện · Enter để gửi · Shift + Enter xuống dòng</p>
           )}
         </div>
