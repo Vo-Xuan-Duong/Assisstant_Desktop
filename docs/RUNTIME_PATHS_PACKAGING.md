@@ -1,6 +1,6 @@
 # Runtime Paths & Packaging Hardening
 
-Phase 12B removes assumptions that the desktop application is launched from the repository root.
+The desktop runtime must not depend on being launched from the repository root.
 
 ## Runtime layout
 
@@ -10,7 +10,8 @@ The desktop resolves Tauri app-local-data first, then prepares:
 <app-local-data>/
 ├── context/
 ├── models/
-│   ├── whisper/
+│   ├── stt/
+│   │   └── sherpa-onnx-zipformer-vi-30M-int8-2026-02-09/
 │   └── wake/
 ├── permissions/
 ├── audit/
@@ -57,7 +58,7 @@ Resolution order:
 5. expected bundled sidecar path, even if missing
 ```
 
-Step 5 allows Readiness Diagnostics to report the exact expected packaged location.
+Step 5 allows readiness diagnostics to report the exact expected packaged location.
 
 ## Tauri sidecar bundle
 
@@ -101,23 +102,38 @@ The staging script intentionally supports native Windows hosts only. Cross-compi
 
 ## Context storage migration
 
-Before Phase 12B:
-
-```text
-.assistant/context
-```
-
-was relative to the process working directory.
-
-After Phase 12B:
+Context artifacts use:
 
 ```text
 <app-local-data>/context
 ```
 
-is injected into `ContextEngine` through `ContextConfig` at desktop setup.
+`ContextEngine` receives that directory through `ContextConfig` at desktop setup. The one-artifact replacement behavior remains unchanged: context capture does not accumulate screenshots indefinitely.
 
-The existing one-artifact replacement behavior remains unchanged: context capture does not accumulate screenshots indefinitely.
+## STT model storage
+
+The primary local STT model is stored under:
+
+```text
+<app-local-data>/models/stt/sherpa-onnx-zipformer-vi-30M-int8-2026-02-09
+```
+
+The runtime bundle requires:
+
+```text
+encoder.int8.onnx
+decoder.onnx
+joiner.int8.onnx
+tokens.txt
+```
+
+`bpe.model` is retained for preparation/context work but is not required by the current offline recognizer.
+
+The immutable resource installer remains the canonical way to populate this directory:
+
+```powershell
+assistant resources install stt_zipformer_vi
+```
 
 ## Environment overrides
 
@@ -126,10 +142,12 @@ Supported runtime overrides relevant to paths:
 ```text
 ASSISTANT_RUNTIME_DIR
 ASSISTANT_MCP_BINARY
-ASSISTANT_WHISPER_MODEL
+ASSISTANT_ZIPFORMER_MODEL_DIR
 ASSISTANT_WAKE_MODEL_DIR
 ASSISTANT_WAKE_KEYWORDS
 ```
+
+`ASSISTANT_ZIPFORMER_MODEL_DIR` must be an absolute path. The local verification harness follows the same rule so preflight output and runtime resource resolution refer to the same STT location.
 
 Overrides are intended for local development, diagnostics and recovery. Normal packaged operation should resolve the bundled MCP sidecar and standard app-local-data directories without overrides.
 
@@ -139,7 +157,8 @@ Overrides are intended for local development, diagnostics and recovery. Normal p
 - broker address/secret continue to flow only through the Antigravity process environment;
 - MCP binary path is explicit rather than shell-resolved;
 - app data is not stored next to the executable;
-- context screenshots are no longer affected by arbitrary working directories;
+- context screenshots are not affected by arbitrary working directories;
+- model overrides must be absolute, avoiding working-directory-dependent resolution;
 - missing sidecar remains fail-visible through readiness rather than causing an implicit shell fallback.
 
 ## Local verification checklist
@@ -152,7 +171,10 @@ Overrides are intended for local development, diagnostics and recovery. Normal p
 6. Generated MCP config contains an absolute sidecar command path.
 7. Antigravity runs with `<app-local-data>/runtime` as cwd.
 8. Context screenshot artifacts are written under `<app-local-data>/context`.
-9. Removing the packaged sidecar makes Windows MCP readiness Blocking with the expected path.
-10. `ASSISTANT_MCP_BINARY` can temporarily point to a developer binary without editing runtime config manually.
+9. The default Zipformer STT path is under `<app-local-data>/models/stt/...` and `verify-local.ps1` reports the same path.
+10. Removing one required Zipformer runtime file makes STT readiness optional/incomplete rather than silently treating the bundle as ready.
+11. Removing the packaged sidecar makes Windows MCP readiness Blocking with the expected path.
+12. `ASSISTANT_MCP_BINARY` can temporarily point to a developer binary without editing runtime config manually.
+13. `ASSISTANT_ZIPFORMER_MODEL_DIR` can temporarily point to an absolute developer model directory.
 
 Remote development does not execute these build/runtime checks; they are reserved for local Windows verification.
