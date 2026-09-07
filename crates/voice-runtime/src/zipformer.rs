@@ -1,4 +1,7 @@
-use std::{path::{Path, PathBuf}, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 use async_trait::async_trait;
 use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig};
@@ -83,6 +86,9 @@ impl ZipformerModelPaths {
 pub struct ZipformerRecognizer {
     recognizer: Arc<OfflineRecognizer>,
     language: Option<String>,
+    /// Offline recognition is re-used for throttled partial previews. Serialize
+    /// native decode calls so a final utterance never races a partial decode.
+    decode_gate: Arc<Mutex<()>>,
 }
 
 impl ZipformerRecognizer {
@@ -124,6 +130,7 @@ impl ZipformerRecognizer {
         Ok(Self {
             recognizer: Arc::new(recognizer),
             language: config.language,
+            decode_gate: Arc::new(Mutex::new(())),
         })
     }
 
@@ -138,6 +145,10 @@ impl ZipformerRecognizer {
             SttError::InvalidAudio("sample rate cannot be represented by sherpa-onnx".into())
         })?;
         let source_duration_seconds = utterance.duration_seconds();
+        let _decode = self
+            .decode_gate
+            .lock()
+            .map_err(|_| SttError::Backend("Zipformer decode gate was poisoned".into()))?;
         let stream = self.recognizer.create_stream();
         stream.accept_waveform(sample_rate, &utterance.samples);
         self.recognizer.decode(&stream);
