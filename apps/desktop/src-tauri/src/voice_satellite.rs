@@ -1,10 +1,10 @@
-use std::time::Duration;
+use std::{sync::LazyLock, time::Duration};
 
 use assistant_common::{AssistantState, UserRequest};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{net::{TcpListener, TcpStream}, sync::Mutex as AsyncMutex};
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 use tracing::{debug, info, warn};
 use voice_runtime::tts::TextToSpeech;
@@ -16,6 +16,8 @@ const DEFAULT_BIND: &str = "0.0.0.0:8765";
 const TOKEN_ENV: &str = "ASSISTANT_VOICE_SATELLITE_TOKEN";
 const BIND_ENV: &str = "ASSISTANT_VOICE_SATELLITE_BIND";
 const VOICE_TRANSCRIPT_EVENT: &str = "voice:transcript";
+
+static COMMAND_GATE: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
 
 #[derive(Debug, Clone)]
 struct SatelliteConfig {
@@ -173,12 +175,13 @@ async fn handle_connection(
                 let message = match parsed {
                     Ok(message) => message,
                     Err(error) => {
+                        let detail = format!("invalid voice satellite message: {error}");
                         send_json(
                             &mut socket,
                             &ServerMessage::Error {
                                 id: None,
                                 code: "invalid_message",
-                                message: &format!("invalid voice satellite message: {error}"),
+                                message: &detail,
                             },
                         )
                         .await?;
@@ -217,7 +220,7 @@ async fn handle_connection(
                     .map_err(|error| format!("WebSocket pong failed: {error}"))?;
             }
             Message::Close(_) => break,
-            Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
+            _ => {}
         }
     }
 
@@ -286,6 +289,24 @@ async fn handle_command(
         return Ok(());
     }
 
+    let _command = COMMAND_GATE.lock().await;
+    let state = app.state::<DesktopState>();
+    if state.core.state().await != AssistantState::Idle
+        && state.core.state().await != AssistantState::Error
+    {
+        send_json(
+            socket,
+            &ServerMessage::Error {
+                id: Some(id),
+                code: "assistant_busy",
+                message: "desktop assistant is busy with another turn",
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+    drop(state);
+
     crate::show_quick_window(app, "satellite");
     let _ = app.emit(
         VOICE_TRANSCRIPT_EVENT,
@@ -353,6 +374,9 @@ async fn complete_satellite_prompt(
             .recover()
             .await
             .map_err(|error| error.to_string())?;
+    }
+    if state.core.state().await != AssistantState::Idle {
+        return Err("Assistant đang bận với một tác vụ khác.".to_owned());
     }
 
     let source_window = state
