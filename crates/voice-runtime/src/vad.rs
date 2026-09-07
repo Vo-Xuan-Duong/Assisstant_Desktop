@@ -133,6 +133,25 @@ impl UtteranceSegmenter {
         VadEvent::SpeechContinues
     }
 
+    /// Returns a copy of the currently active utterance for UI-only partial
+    /// recognition. The segmenter remains authoritative and keeps accumulating
+    /// the original buffer until `UtteranceReady` is emitted.
+    pub fn active_snapshot(&self) -> Option<Utterance> {
+        if !self.active_started || self.active.is_empty() {
+            return None;
+        }
+
+        let sample_rate = self.sample_rate.unwrap_or(0);
+        if sample_rate == 0 {
+            return None;
+        }
+
+        Some(Utterance {
+            samples: self.active.clone(),
+            sample_rate,
+        })
+    }
+
     pub fn flush(&mut self) -> VadEvent {
         if self.active_started {
             self.finish()
@@ -214,6 +233,7 @@ mod tests {
     fn silence_does_not_start_utterance() {
         let mut vad = UtteranceSegmenter::default();
         assert!(matches!(vad.push(chunk(0.0, 200)), VadEvent::Idle));
+        assert!(vad.active_snapshot().is_none());
     }
 
     #[test]
@@ -222,5 +242,26 @@ mod tests {
         assert!(matches!(vad.push(chunk(0.1, 150)), VadEvent::SpeechStarted));
         let event = vad.push(chunk(0.0, 700));
         assert!(matches!(event, VadEvent::UtteranceReady(_)));
+    }
+
+    #[test]
+    fn active_snapshot_does_not_consume_segmenter_audio() {
+        let mut vad = UtteranceSegmenter::default();
+        assert!(matches!(vad.push(chunk(0.1, 150)), VadEvent::SpeechStarted));
+
+        let first = vad.active_snapshot().expect("speech should have an active snapshot");
+        assert!(first.duration_seconds() >= 0.12);
+
+        assert!(matches!(vad.push(chunk(0.1, 200)), VadEvent::SpeechContinues));
+        let second = vad.active_snapshot().expect("speech should remain active");
+        assert!(second.samples.len() > first.samples.len());
+
+        let event = vad.push(chunk(0.0, 700));
+        let final_utterance = match event {
+            VadEvent::UtteranceReady(utterance) => utterance,
+            other => panic!("expected final utterance, got {other:?}"),
+        };
+        assert!(final_utterance.samples.len() > second.samples.len());
+        assert!(vad.active_snapshot().is_none());
     }
 }

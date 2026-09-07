@@ -18,7 +18,7 @@ use antigravity_settings::{
 };
 
 #[cfg(feature = "voice-whisper")]
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::{Duration, Instant}};
 
 use antigravity_bridge::{AntigravityClient, AntigravityConfig, CliHealth};
 use assistant_common::{AssistantEvent, AssistantState, SessionId, ToolRisk, UserRequest};
@@ -40,7 +40,7 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 #[cfg(feature = "voice-whisper")]
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, watch};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use tracing_subscriber::EnvFilter;
@@ -61,6 +61,12 @@ use windows_tools::{
 };
 
 const AUTOSTART_BACKGROUND_ARG: &str = "--background";
+#[cfg(feature = "voice-whisper")]
+const VOICE_TRANSCRIPT_EVENT: &str = "voice:transcript";
+#[cfg(feature = "voice-whisper")]
+const PARTIAL_TRANSCRIPT_INTERVAL: Duration = Duration::from_millis(850);
+#[cfg(feature = "voice-whisper")]
+const PARTIAL_TRANSCRIPT_MIN_SECONDS: f32 = 0.65;
 
 #[derive(Clone)]
 struct TauriEventSink {
@@ -119,6 +125,13 @@ struct VoiceTurnResult {
     transcript: String,
     response: String,
     tts_error: Option<String>,
+}
+
+#[cfg(feature = "voice-whisper")]
+#[derive(Debug, Clone, Serialize)]
+struct VoiceTranscriptEvent {
+    text: String,
+    is_final: bool,
 }
 
 #[tauri::command]
@@ -406,12 +419,12 @@ async fn assistant_submit(text: String, state: State<'_, DesktopState>) -> Resul
 
 #[tauri::command]
 fn assistant_voice_capabilities(state: State<'_, DesktopState>) -> VoiceCapabilities {
-    let whisper = state.resources.whisper_status();
+    let stt = state.resources.stt_status();
     VoiceCapabilities {
         tts_available: true,
-        whisper_compiled: whisper.compiled,
-        model_path: whisper.files.first().map(|file| file.path.clone()),
-        model_available: whisper.state == ResourceState::Ready,
+        whisper_compiled: stt.compiled,
+        model_path: stt.files.first().map(|file| file.path.clone()),
+        model_available: stt.state == ResourceState::Ready,
     }
 }
 
@@ -466,7 +479,7 @@ async fn assistant_voice_turn(
     {
         let _ = (app, state, wake);
         Err(
-            "Bản build hiện tại chưa bật feature `voice-whisper`. Text/TTS vẫn hoạt động bình thường."
+            "Bản build hiện tại chưa bật feature voice STT. Text/TTS vẫn hoạt động bình thường."
                 .into(),
         )
     }
@@ -483,10 +496,12 @@ async fn assistant_voice_turn(
         if state.core.state().await != AssistantState::Idle {
             return Err("Assistant đang bận với một tác vụ khác.".into());
         }
-        if !state.voice.model_path.is_file() {
+
+        let stt = state.resources.stt_status();
+        if stt.state != ResourceState::Ready {
             return Err(format!(
-                "Chưa có Whisper model tại {}. Có thể override bằng ASSISTANT_WHISPER_MODEL.",
-                state.voice.model_path.display()
+                "STT tiếng Việt chưa sẵn sàng tại {}. Cài bằng `assistant resources install stt_zipformer_vi` hoặc dùng ASSISTANT_ZIPFORMER_MODEL_DIR với absolute path.",
+                stt.root_path
             ));
         }
 
@@ -504,19 +519,18 @@ async fn run_voice_turn_inner(
 ) -> Result<VoiceTurnResult, String> {
     let _turn = state.voice.turn_gate.lock().await;
 
+    // Load the recognizer before entering Listening so the first voice turn
+    // cannot invite the user to speak while the native model is still loading.
+    let recognizer = get_or_load_recognizer(state).await?;
+
     state
         .core
         .begin_listening()
         .await
         .map_err(|error| error.to_string())?;
 
-    let utterance = match capture_one_utterance(app).await {
+    let utterance = match capture_one_utterance(app, recognizer.clone()).await {
         Ok(utterance) => utterance,
-        Err(error) => return fail_listening(state, error).await,
-    };
-
-    let recognizer = match get_or_load_recognizer(state).await {
-        Ok(recognizer) => recognizer,
         Err(error) => return fail_listening(state, error).await,
     };
 
@@ -528,6 +542,16 @@ async fn run_voice_turn_inner(
         Err(error) => return fail_listening(state, error.to_string()).await,
     };
 
+    let _ = app.emit(
+        VOICE_TRANSCRIPT_EVENT,
+        VoiceTranscriptEvent {
+            text: transcript.text.clone(),
+            is_final: true,
+        },
+    );
+
+    // Only the final transcript enters Assistant Core/Antigravity. Partial
+    // previews emitted while Listening are UI-only and never create AI turns.
     let response = complete_prompt(&transcript.text, state).await?;
 
     state
@@ -575,10 +599,21 @@ async fn get_or_load_recognizer(state: &DesktopState) -> Result<WhisperRecognize
 }
 
 #[cfg(feature = "voice-whisper")]
-async fn capture_one_utterance(app: &AppHandle) -> Result<Utterance, String> {
+async fn capture_one_utterance(
+    app: &AppHandle,
+    recognizer: WhisperRecognizer,
+) -> Result<Utterance, String> {
     let mut microphone = MicrophoneStream::open_default(MicrophoneConfig::default())
         .map_err(|error| error.to_string())?;
     let mut segmenter = UtteranceSegmenter::default();
+    let (partial_tx, partial_rx) = watch::channel::<Option<Utterance>>(None);
+    let partial_task = tauri::async_runtime::spawn(run_partial_transcript_worker(
+        app.clone(),
+        recognizer,
+        partial_rx,
+    ));
+    let mut last_partial_at = Instant::now();
+    let mut emitted_partial = false;
 
     let recording = async {
         while let Some(chunk) = microphone.next_chunk().await {
@@ -588,16 +623,70 @@ async fn capture_one_utterance(app: &AppHandle) -> Result<Utterance, String> {
                 VadEvent::DiscardedShortUtterance => {
                     debug!("discarded short voice utterance");
                 }
-                VadEvent::Idle | VadEvent::SpeechStarted | VadEvent::SpeechContinues => {}
+                VadEvent::SpeechStarted | VadEvent::SpeechContinues => {
+                    let due = !emitted_partial || last_partial_at.elapsed() >= PARTIAL_TRANSCRIPT_INTERVAL;
+                    if due {
+                        if let Some(snapshot) = segmenter.active_snapshot() {
+                            if snapshot.duration_seconds() >= PARTIAL_TRANSCRIPT_MIN_SECONDS {
+                                partial_tx.send_replace(Some(snapshot));
+                                last_partial_at = Instant::now();
+                                emitted_partial = true;
+                            }
+                        }
+                    }
+                }
+                VadEvent::Idle => {}
             }
         }
 
         Err("Microphone stream đã kết thúc trước khi nhận được câu nói.".to_owned())
     };
 
-    tokio::time::timeout(Duration::from_secs(25), recording)
-        .await
-        .map_err(|_| "Không phát hiện câu nói hoàn chỉnh trong 25 giây.".to_owned())?
+    let result = match tokio::time::timeout(Duration::from_secs(25), recording).await {
+        Ok(result) => result,
+        Err(_) => Err("Không phát hiện câu nói hoàn chỉnh trong 25 giây.".to_owned()),
+    };
+
+    drop(partial_tx);
+    partial_task.abort();
+    result
+}
+
+#[cfg(feature = "voice-whisper")]
+async fn run_partial_transcript_worker(
+    app: AppHandle,
+    recognizer: WhisperRecognizer,
+    mut snapshots: watch::Receiver<Option<Utterance>>,
+) {
+    let mut last_text = String::new();
+
+    while snapshots.changed().await.is_ok() {
+        let Some(utterance) = snapshots.borrow_and_update().clone() else {
+            continue;
+        };
+
+        match recognizer.transcribe(utterance).await {
+            Ok(transcript) => {
+                let text = transcript.text.trim();
+                if text.is_empty() || text == last_text {
+                    continue;
+                }
+
+                last_text.clear();
+                last_text.push_str(text);
+                let _ = app.emit(
+                    VOICE_TRANSCRIPT_EVENT,
+                    VoiceTranscriptEvent {
+                        text: text.to_owned(),
+                        is_final: false,
+                    },
+                );
+            }
+            Err(error) => {
+                debug!(%error, "partial Zipformer transcript decode failed");
+            }
+        }
+    }
 }
 
 #[tauri::command]

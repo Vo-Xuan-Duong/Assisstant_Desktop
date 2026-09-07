@@ -154,21 +154,26 @@ CPAL / WASAPI
    |
 UtteranceSegmenter / VAD
    |
-Vietnamese Zipformer 30M INT8
-sherpa-onnx OfflineRecognizer
+   +---- active snapshots ----> throttled Zipformer decode
+   |                               |
+   |                               +--> voice:transcript (UI only)
    |
-final transcript
-   |
-complete_prompt()
-   |
-   +-- deterministic local Safe path
-   |
-   +-- Antigravity + MCP
-   |
-Windows SAPI TTS
+   +---- complete utterance ---> final Zipformer decode
+                                   |
+                              final transcript
+                                   |
+                            complete_prompt()
+                                   |
+                   +---------------+---------------+
+                   |                               |
+        deterministic local Safe path        Antigravity + MCP
+                                                   |
+                                           Windows SAPI TTS
 ```
 
-Recognition currently starts after VAD completes one utterance. Partial streaming transcripts are not implemented yet.
+The bundled Vietnamese model is an offline recognizer. During Listening, the desktop now performs bounded simulated-streaming preview decodes from VAD snapshots so Quick can show `Đang nhận dạng: ...`. These partial results never enter Assistant Core. When VAD closes the utterance, the full audio is decoded again, Quick receives `Bạn nói: ...`, and only that final transcript is submitted to the assistant.
+
+Partial snapshot submission begins after roughly 650 ms of active audio and is throttled to roughly one request every 850 ms. Native offline decode calls are serialized so partial and final recognition do not race the same sherpa-onnx recognizer. True online ASR remains a future model/runtime migration rather than being emulated at the Assistant Core boundary.
 
 STT resource id:
 
@@ -410,7 +415,7 @@ pnpm test:models
 
 ## Local validation gates
 
-Recent CLI, logging, Zipformer, wake, and UI-retirement changes were prepared source-first. Before calling the current code release-ready, verify on the target Windows machine:
+Recent CLI, logging, Zipformer, wake, Quick voice, and UI-retirement changes were prepared source-first. Before calling the current code release-ready, verify on the target Windows machine:
 
 ```powershell
 cargo build -p assisstant-desktop --bin assistant --locked
@@ -434,6 +439,9 @@ Also exercise:
 
 - `Alt + Space` on the source monitor;
 - manual Mic turn;
+- partial `Đang nhận dạng:` updates during a 2–3 second utterance;
+- final `Bạn nói:` transcript before the Assistant response completes;
+- exactly one Assistant request per voice turn despite partial transcript events;
 - wake -> exactly one voice turn;
 - Vietnamese STT quality/latency;
 - Sensitive Deny / Allow Once / timeout / queued requests;

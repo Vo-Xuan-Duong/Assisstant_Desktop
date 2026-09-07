@@ -13,6 +13,7 @@ import {
   hideQuickAssistant,
   onAssistantEvent,
   onVoiceLevel,
+  onVoiceTranscript,
   runVoiceTurn,
   submitPrompt,
 } from "./api";
@@ -83,6 +84,7 @@ export default function QuickOverlay() {
   const [response, setResponse] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
   const [voiceTranscript, setVoiceTranscript] = useState<string | null>(null);
+  const [voiceTranscriptFinal, setVoiceTranscriptFinal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
@@ -169,6 +171,7 @@ export default function QuickOverlay() {
       setError(null);
       setStreamingText("");
       setVoiceTranscript(null);
+      setVoiceTranscriptFinal(false);
       setResponse(null);
       setCancelPending(false);
       cancelRequestedRef.current = false;
@@ -232,6 +235,16 @@ export default function QuickOverlay() {
 
     void onVoiceLevel((level) => {
       setVoiceLevel(Math.max(0, Math.min(1, level.rms * 8)));
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlisten.push(fn);
+    });
+
+    void onVoiceTranscript((transcript) => {
+      const text = transcript.text.trim();
+      if (!text) return;
+      setVoiceTranscript(text);
+      setVoiceTranscriptFinal(transcript.is_final);
     }).then((fn) => {
       if (disposed) fn();
       else unlisten.push(fn);
@@ -314,6 +327,7 @@ export default function QuickOverlay() {
     setBusy(true);
     setInput("");
     setVoiceTranscript(null);
+    setVoiceTranscriptFinal(false);
     setResponse(null);
     setStreamingText("");
     setError(null);
@@ -347,6 +361,7 @@ export default function QuickOverlay() {
     busyRef.current = true;
     setBusy(true);
     setVoiceTranscript(null);
+    setVoiceTranscriptFinal(false);
     setResponse(null);
     setStreamingText("");
     setError(null);
@@ -356,7 +371,10 @@ export default function QuickOverlay() {
 
     try {
       const result = await runVoiceTurn();
+      // Final transcript events arrive before Assistant processing/TTS. Keep this
+      // assignment as a compatibility fallback if an event is ever missed.
       setVoiceTranscript(result.transcript);
+      setVoiceTranscriptFinal(true);
       setResponse(result.response);
       if (result.tts_error) {
         setError(`TTS: ${result.tts_error}`);
@@ -425,7 +443,9 @@ export default function QuickOverlay() {
 
         <div className={`quick-answer ${displayedResponse || error || voiceTranscript ? "quick-answer-visible" : ""}`} aria-live="polite">
           {voiceTranscript && (
-            <p className="quick-hint">Bạn nói: {voiceTranscript}</p>
+            <p className="quick-hint">
+              {voiceTranscriptFinal ? "Bạn nói: " : "Đang nhận dạng: "}{voiceTranscript}
+            </p>
           )}
           {error ? (
             <p className="quick-error">{error}</p>

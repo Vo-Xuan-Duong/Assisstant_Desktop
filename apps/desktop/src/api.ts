@@ -4,6 +4,7 @@ import type {
   AssistantEvent,
   AudioLevel,
   VoiceCapabilities,
+  VoiceTranscriptEvent,
   VoiceTurnResult,
 } from "./types";
 
@@ -37,4 +38,10 @@ export function onVoiceLevel(
   handler: (level: AudioLevel) => void,
 ): Promise<UnlistenFn> {
   return listen<AudioLevel>("voice:level", ({ payload }) => handler(payload));
+}
+
+export function onVoiceTranscript(
+  handler: (transcript: VoiceTranscriptEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<VoiceTranscriptEvent>("voice:transcript", ({ payload }) => handler(payload));
 }

@@ -11,20 +11,66 @@ MicrophoneStream (CPAL)
       |
 UtteranceSegmenter / VAD
       |
-  complete Utterance
-      |
-SpeechRecognizer
-      |
-Vietnamese Zipformer 30M INT8
-      |
- Transcript
-      |
-Assistant Core
+      +------------------------------+
+      |                              |
+active snapshot                complete Utterance
+      |                              |
+      v                              v
+throttled offline decode       final offline decode
+      |                              |
+voice:transcript               final Transcript
+(partial, UI-only)                   |
+      |                              v
+      +-------> Quick UI       Assistant Core
+                                  |
+                               Antigravity
 ```
 
-Microphone audio remains local. Only the final transcript enters Assistant Core/Antigravity.
+Microphone audio remains local. Only the **final** transcript enters Assistant Core/Antigravity.
 
-This migration replaces the recognizer, not the capture boundary: the current implementation still waits for the existing VAD to finish one utterance before running offline recognition. Partial/streaming transcript events are not implemented yet.
+## Partial transcript behavior
+
+The current Vietnamese model bundle is an **offline** Zipformer recognizer. It is not an `OnlineRecognizer` model, so the desktop does not pretend that the recognizer itself is natively streaming.
+
+Instead, the voice runtime now provides a bounded simulated-streaming preview:
+
+- VAD keeps the authoritative active utterance buffer;
+- `UtteranceSegmenter::active_snapshot()` copies the current active audio without consuming or modifying the final buffer;
+- once at least `650 ms` of active audio is available, the desktop may submit a snapshot for partial decoding;
+- snapshot submissions are throttled to at most once every `850 ms`;
+- a Tokio `watch` channel keeps the newest pending snapshot instead of building an unbounded decode queue;
+- repeated/empty partial text is suppressed;
+- partial results are emitted only as `voice:transcript` UI events with `is_final=false`;
+- the full VAD utterance is decoded again at end-of-speech and emitted with `is_final=true`;
+- only that final transcript is passed to `complete_prompt()`.
+
+Quick therefore shows live text such as:
+
+```text
+Đang nhận dạng: mở visual studio code
+```
+
+and converts it to:
+
+```text
+Bạn nói: mở Visual Studio Code
+```
+
+when final recognition completes.
+
+Partial decode failure is non-fatal. The normal final recognition path remains authoritative.
+
+### Native decode serialization
+
+Partial snapshots and the final utterance reuse the same `OfflineRecognizer`. `ZipformerRecognizer` therefore owns a shared decode gate so native sherpa-onnx decode calls are serialized.
+
+This avoids concurrent calls into the same offline recognizer while still keeping microphone capture asynchronous. If a partial worker is cancelled when VAD closes the utterance, any already-running blocking decode may finish internally, but it cannot publish a stale partial event after the worker is aborted. The final decode waits for the native decode gate when necessary.
+
+### What this is not
+
+This is **not true online ASR**. True token/frame streaming requires a sherpa-onnx `OnlineRecognizer` compatible model bundle and corresponding resource-manifest/installer changes.
+
+A later phase can migrate to an online Vietnamese model if accuracy, latency, licensing, and distribution constraints are acceptable. The `voice:transcript` UI contract can remain unchanged.
 
 ## Primary model
 
@@ -130,7 +176,7 @@ Inside `voice-runtime`, the historical `WhisperConfig` / `WhisperRecognizer` sym
 
 ## Current VAD
 
-The existing local utterance segmenter is unchanged:
+The baseline local utterance segmenter uses:
 
 - speech RMS threshold: `0.012`;
 - speech start trigger: `120 ms`;
@@ -139,12 +185,25 @@ The existing local utterance segmenter is unchanged:
 - minimum utterance: `250 ms`;
 - maximum utterance: `15 s`.
 
-A later STT phase can replace this baseline with Silero VAD and add streaming/partial transcript events without changing Assistant Core.
+The new active-snapshot API does not change any of these segmentation rules or consume the final utterance buffer.
+
+A later voice-quality phase can replace the RMS VAD with Silero VAD without changing Assistant Core or the `voice:transcript` frontend contract.
 
 ## Contextual biasing status
 
 The selected model is a transducer and sherpa-onnx supports per-stream hotwords with `modified_beam_search`, but this branch currently uses `greedy_search` and does **not** enable contextual hotwords yet. `bpe.model` is installed now so application/project-name biasing can be added as a separate measured change.
 
-## Verification policy
+## Local verification
 
-No GitHub Action, native build, microphone test or model download is manually dispatched as part of this repository change. Validate accuracy, latency and native DLL loading locally on the target Windows machine after merging.
+After pulling this phase on the target Windows machine, verify manually:
+
+1. start a microphone voice turn and speak for at least 2–3 seconds;
+2. confirm Quick shows one or more `Đang nhận dạng:` updates before end-of-speech;
+3. stop speaking and confirm the label becomes `Bạn nói:` with the final transcript;
+4. confirm only one Assistant request is produced for the voice turn;
+5. confirm short/noisy utterances still follow existing VAD discard behavior;
+6. speak a long sentence and confirm partial updates remain bounded rather than arriving for every microphone chunk;
+7. confirm final STT still completes if a partial decode fails or is slow;
+8. repeat wake → voice turns and confirm no stale partial text leaks into a later invocation.
+
+No GitHub Action, native build, microphone test or model download is manually dispatched as part of this remote repository change. Validate accuracy, latency and native DLL loading locally on the target Windows machine after merging.

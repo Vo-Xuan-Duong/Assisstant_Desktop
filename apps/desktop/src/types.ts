@@ -29,6 +29,11 @@ export interface VoiceTurnResult {
   tts_error?: string | null;
 }
 
+export interface VoiceTranscriptEvent {
+  text: string;
+  is_final: boolean;
+}
+
 export interface AudioLevel {
   rms: number;
   peak: number;
