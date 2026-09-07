@@ -39,7 +39,7 @@ No remote build or GitHub Actions validation is required by this phase.
 
 ## Desktop pairing
 
-The preferred bootstrap pairing path is now the desktop helper:
+Use the desktop pairing helper:
 
 ```powershell
 assistant-satellite pair
@@ -51,7 +51,7 @@ It creates a random 64-character pairing token, enables the receiver, and persis
 %LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite.json
 ```
 
-The helper prints the full token once when pairing is created. Treat it as a local credential and do not publish it in logs/screenshots.
+The helper prints the full token when a new pairing is created. Treat it as a local credential and do not publish it in logs/screenshots.
 
 Useful commands:
 
@@ -65,7 +65,7 @@ assistant-satellite bind 0.0.0.0:8765
 assistant-satellite revoke
 ```
 
-After changing the pairing configuration in this bootstrap phase, restart Assisstant Desktop so the listener reloads the file.
+When Assisstant Desktop is running, it watches `satellite.json` and normally applies pairing, enable/disable, bind, and revoke changes within about one second. Rotating/revoking the token also drops the active phone connection so the previous token cannot continue to use an authenticated session.
 
 For backwards compatibility, the desktop still accepts these environment variables and they take precedence when present:
 
@@ -74,7 +74,7 @@ ASSISTANT_VOICE_SATELLITE_TOKEN
 ASSISTANT_VOICE_SATELLITE_BIND
 ```
 
-The persistent settings file is the preferred path for new setups.
+If the legacy token environment override is set, persistent-file changes do not replace that override until the environment variable is removed and the desktop process is restarted.
 
 Find the PC's LAN IPv4 address, then enter on Android:
 
@@ -90,17 +90,16 @@ The current MVP uses unencrypted `ws://` and is intended only for a trusted LAN.
 
 1. Connect the phone and PC to the same trusted Wi-Fi/LAN.
 2. Run `assistant-satellite pair` on the PC if the satellite is not paired yet.
-3. Restart Assisstant Desktop after changing pairing settings.
-4. Enter the desktop WebSocket address on Android.
-5. Enter the pairing token.
-6. Tap **Kết nối**.
-7. Choose recognition language: **Tiếng Việt** or **English**.
-8. Choose desktop response language: **VI**, **EN**, or **Auto**.
-9. Leave **Ưu tiên nhận dạng on-device** enabled if desired.
-10. Tap **Nói với Assistant** and speak.
-11. Partial text is shown on the phone while recognition is in progress.
-12. Only the final recognized text is sent to the desktop.
-13. The desktop processes the command and speaks the answer through Windows TTS.
+3. Enter the desktop WebSocket address on Android.
+4. Enter the pairing token.
+5. Tap **Kết nối**.
+6. Choose recognition language: **Tiếng Việt** or **English**.
+7. Choose desktop response language: **VI**, **EN**, or **Auto**.
+8. Leave **Ưu tiên nhận dạng on-device** enabled if desired.
+9. Tap **Nói với Assistant** and speak.
+10. Partial text is shown on the phone while recognition is in progress.
+11. Only the final recognized text is sent to the desktop.
+12. The desktop processes the command and speaks the answer through Windows TTS.
 
 ## Recognition behavior
 
@@ -125,7 +124,7 @@ If the phone cannot connect:
 - confirm the PC and phone are on the same LAN;
 - verify the PC LAN IP;
 - run `assistant-satellite show` and confirm `enabled=true` and `paired=true`;
-- confirm Assisstant Desktop was restarted after the latest pairing change;
+- wait about one second after changing persistent pairing settings;
 - verify the pairing token matches exactly;
 - check Windows Firewall for TCP port 8765 on the trusted/private network profile;
 - do not use `127.0.0.1` or `localhost` on the phone, because those point to the phone itself.
