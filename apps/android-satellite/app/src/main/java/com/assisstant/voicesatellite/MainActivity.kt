@@ -58,6 +58,7 @@ class MainActivity : ComponentActivity() {
         loadSettings()
 
         satelliteClient = SatelliteClient(
+            context = this,
             onConnectionChanged = { ready, status ->
                 connected = ready
                 connectionStatus = status

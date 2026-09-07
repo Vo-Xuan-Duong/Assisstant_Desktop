@@ -1,8 +1,9 @@
 package com.assisstant.voicesatellite
 
+import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.Build
 import org.json.JSONObject
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -13,6 +14,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class SatelliteClient(
+    context: Context,
     private val onConnectionChanged: (Boolean, String) -> Unit,
     private val onTurnState: (String) -> Unit,
     private val onResponse: (String, String?) -> Unit,
@@ -22,6 +24,7 @@ class SatelliteClient(
     private val httpClient = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
         .build()
+    private val deviceId = loadOrCreateDeviceId(context.applicationContext)
 
     @Volatile
     private var webSocket: WebSocket? = null
@@ -49,7 +52,8 @@ class SatelliteClient(
                 val hello = JSONObject()
                     .put("type", "hello")
                     .put("token", token.trim())
-                    .put("device_name", "${Build.MANUFACTURER} ${Build.MODEL}")
+                    .put("device_id", deviceId)
+                    .put("device_name", "${Build.MANUFACTURER} ${Build.MODEL}".trim())
                     .put("protocol", 1)
                 webSocket.send(hello.toString())
             }
@@ -146,5 +150,15 @@ class SatelliteClient(
 
     private fun post(block: () -> Unit) {
         mainHandler.post(block)
+    }
+
+    private fun loadOrCreateDeviceId(context: Context): String {
+        val prefs = context.getSharedPreferences("voice_satellite_identity", Context.MODE_PRIVATE)
+        val existing = prefs.getString("device_id", null)?.trim()
+        if (!existing.isNullOrEmpty()) return existing
+
+        val created = UUID.randomUUID().toString()
+        prefs.edit().putString("device_id", created).apply()
+        return created
     }
 }
