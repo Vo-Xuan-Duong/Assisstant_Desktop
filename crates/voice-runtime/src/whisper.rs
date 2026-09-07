@@ -14,6 +14,7 @@ mod legacy {
     };
 
     use crate::{
+        cancellation,
         stt::{SpeechRecognizer, SttError, Transcript, prepare_for_whisper},
         vad::Utterance,
     };
@@ -64,7 +65,15 @@ mod legacy {
             })
         }
 
-        fn transcribe_blocking(&self, utterance: Utterance) -> Result<Transcript, SttError> {
+        fn transcribe_blocking(
+            &self,
+            utterance: Utterance,
+            cancel_generation: u64,
+        ) -> Result<Transcript, SttError> {
+            if cancellation::is_cancelled(cancel_generation) {
+                return Err(SttError::Cancelled);
+            }
+
             let source_duration_seconds = utterance.duration_seconds();
             let audio = prepare_for_whisper(&utterance)?;
             let mut state = self
@@ -87,6 +96,10 @@ mod legacy {
                 .full(params, &audio)
                 .map_err(|error| SttError::Backend(error.to_string()))?;
 
+            if cancellation::is_cancelled(cancel_generation) {
+                return Err(SttError::Cancelled);
+            }
+
             let text = state
                 .as_iter()
                 .map(|segment| segment.to_string())
@@ -107,9 +120,12 @@ mod legacy {
     impl SpeechRecognizer for WhisperRecognizer {
         async fn transcribe(&self, utterance: Utterance) -> Result<Transcript, SttError> {
             let recognizer = self.clone();
-            tokio::task::spawn_blocking(move || recognizer.transcribe_blocking(utterance))
-                .await
-                .map_err(|error| SttError::Worker(error.to_string()))?
+            let cancel_generation = cancellation::generation();
+            tokio::task::spawn_blocking(move || {
+                recognizer.transcribe_blocking(utterance, cancel_generation)
+            })
+            .await
+            .map_err(|error| SttError::Worker(error.to_string()))?
         }
     }
 }
