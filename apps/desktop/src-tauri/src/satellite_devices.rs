@@ -29,19 +29,6 @@ struct TrustedDevice {
     revoked: bool,
 }
 
-pub fn revoked_device_ids(app: &AppHandle) -> Result<Vec<String>, String> {
-    let path = registry_path(app);
-    let mut ids = load_registry(&path)?
-        .devices
-        .into_iter()
-        .filter(|device| device.revoked)
-        .map(|device| device.id)
-        .collect::<Vec<_>>();
-    ids.sort();
-    ids.dedup();
-    Ok(ids)
-}
-
 pub fn record_authenticated_device(
     app: &AppHandle,
     raw_id: &str,
@@ -74,6 +61,17 @@ pub fn record_authenticated_device(
     Ok((id, name))
 }
 
+pub fn is_device_revoked(app: &AppHandle, raw_id: &str) -> Result<bool, String> {
+    let id = normalize_device_id(raw_id)?;
+    let path = registry_path(app);
+    let registry = load_registry(&path)?;
+    Ok(registry
+        .devices
+        .iter()
+        .find(|device| device.id == id)
+        .is_some_and(|device| device.revoked))
+}
+
 fn registry_path(app: &AppHandle) -> PathBuf {
     let state = app.state::<DesktopState>();
     state
@@ -103,7 +101,16 @@ fn normalize_device_id(raw: &str) -> Result<String, String> {
 fn normalize_device_name(raw: Option<&str>) -> String {
     let name = raw.unwrap_or("Android device").trim();
     let name = if name.is_empty() { "Android device" } else { name };
-    name.chars().take(MAX_DEVICE_NAME_CHARS).collect()
+    let sanitized = name
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(MAX_DEVICE_NAME_CHARS)
+        .collect::<String>();
+    if sanitized.trim().is_empty() {
+        "Android device".to_owned()
+    } else {
+        sanitized
+    }
 }
 
 fn unix_now() -> u64 {
@@ -171,8 +178,10 @@ mod tests {
     }
 
     #[test]
-    fn device_name_is_bounded() {
-        let long = "a".repeat(MAX_DEVICE_NAME_CHARS + 20);
-        assert_eq!(normalize_device_name(Some(&long)).chars().count(), MAX_DEVICE_NAME_CHARS);
+    fn device_name_is_bounded_and_sanitized() {
+        let long = format!("phone\n{}", "a".repeat(MAX_DEVICE_NAME_CHARS + 20));
+        let normalized = normalize_device_name(Some(&long));
+        assert!(normalized.chars().count() <= MAX_DEVICE_NAME_CHARS);
+        assert!(!normalized.contains('\n'));
     }
 }
