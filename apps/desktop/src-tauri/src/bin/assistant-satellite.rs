@@ -9,6 +9,7 @@ use uuid::Uuid;
 const APP_IDENTIFIER: &str = "com.voduong.assisstantdesktop";
 const SETTINGS_FILE: &str = "satellite.json";
 const DEVICES_FILE: &str = "satellite-devices.json";
+const REVOKED_DIR: &str = "satellite-revoked";
 const DEFAULT_BIND: &str = "0.0.0.0:8765";
 const MAX_DEVICE_ID_CHARS: usize = 128;
 
@@ -66,6 +67,10 @@ fn run() -> CliResult<()> {
     let data_dir = extract_data_dir(&mut args)?;
     let settings_path = resolve_settings_path(data_dir)?;
     let devices_path = settings_path.with_file_name(DEVICES_FILE);
+    let revoked_dir = settings_path
+        .parent()
+        .ok_or_else(|| "satellite settings path has no parent".to_owned())?
+        .join(REVOKED_DIR);
     let command = args.first().map(String::as_str).unwrap_or("show");
 
     match command {
@@ -79,9 +84,13 @@ fn run() -> CliResult<()> {
         "disable" => set_enabled(&settings_path, false),
         "revoke" => revoke(&settings_path),
         "bind" => set_bind(&settings_path, &args[1..]),
-        "devices" => list_devices(&devices_path),
-        "revoke-device" => set_device_revoked(&devices_path, &args[1..], true),
-        "allow-device" => set_device_revoked(&devices_path, &args[1..], false),
+        "devices" => list_devices(&devices_path, &revoked_dir),
+        "revoke-device" => {
+            set_device_revoked(&devices_path, &revoked_dir, &args[1..], true)
+        }
+        "allow-device" => {
+            set_device_revoked(&devices_path, &revoked_dir, &args[1..], false)
+        }
         other => Err(format!("unknown satellite command `{other}`")),
     }
 }
@@ -198,7 +207,7 @@ fn set_bind(path: &Path, args: &[String]) -> CliResult<()> {
     Ok(())
 }
 
-fn list_devices(path: &Path) -> CliResult<()> {
+fn list_devices(path: &Path, revoked_dir: &Path) -> CliResult<()> {
     let mut registry = load_device_registry(path)?;
     registry.devices.sort_by(|left, right| {
         right
@@ -215,9 +224,10 @@ fn list_devices(path: &Path) -> CliResult<()> {
 
     println!("Android Voice Satellite devices");
     for device in registry.devices {
+        let revoked = device.revoked || revocation_marker(revoked_dir, &device.id).is_file();
         println!(
             "  [{}] {}  {}",
-            if device.revoked { "revoked" } else { "trusted" },
+            if revoked { "revoked" } else { "trusted" },
             device.id,
             device.name
         );
@@ -228,7 +238,12 @@ fn list_devices(path: &Path) -> CliResult<()> {
     Ok(())
 }
 
-fn set_device_revoked(path: &Path, args: &[String], revoked: bool) -> CliResult<()> {
+fn set_device_revoked(
+    path: &Path,
+    revoked_dir: &Path,
+    args: &[String],
+    revoked: bool,
+) -> CliResult<()> {
     if args.len() != 1 {
         return Err(if revoked {
             "usage: assistant-satellite revoke-device <device-id>".into()
@@ -243,17 +258,32 @@ fn set_device_revoked(path: &Path, args: &[String], revoked: bool) -> CliResult<
         .iter_mut()
         .find(|device| device.id == device_id)
         .ok_or_else(|| format!("unknown satellite device `{device_id}`"))?;
-    device.revoked = revoked;
     let name = device.name.clone();
-    save_device_registry(path, &registry)?;
+    let marker = revocation_marker(revoked_dir, &device_id);
 
     if revoked {
+        fs::create_dir_all(revoked_dir)
+            .map_err(|error| format!("cannot create {}: {error}", revoked_dir.display()))?;
+        fs::write(&marker, b"revoked\n")
+            .map_err(|error| format!("cannot write {}: {error}", marker.display()))?;
+        device.revoked = true;
+        save_device_registry(path, &registry)?;
         println!("Revoked satellite device `{device_id}` ({name}).");
         println!("An active connection from this device should be closed by the desktop within about one second.");
     } else {
+        if marker.exists() {
+            fs::remove_file(&marker)
+                .map_err(|error| format!("cannot remove {}: {error}", marker.display()))?;
+        }
+        device.revoked = false;
+        save_device_registry(path, &registry)?;
         println!("Allowed satellite device `{device_id}` ({name}) again.");
     }
     Ok(())
+}
+
+fn revocation_marker(revoked_dir: &Path, device_id: &str) -> PathBuf {
+    revoked_dir.join(format!("{device_id}.revoked"))
 }
 
 fn validate_bind(value: &str) -> CliResult<String> {
