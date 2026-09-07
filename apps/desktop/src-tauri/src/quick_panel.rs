@@ -81,11 +81,11 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         }
     });
 
-    // Cancellation is routed by the Assistant lifecycle phase. Processing keeps
-    // the existing out-of-band Antigravity child cancellation, while Speaking
-    // sends a purge request to the dedicated Windows SAPI worker. Executing and
-    // Confirming remain non-cancellable because an external side effect may
-    // already be in progress and cannot be safely rolled back from this UI.
+    // Cancellation is routed by lifecycle phase and only through subsystems
+    // that have a real interruption/stale-result primitive. Listening bumps the
+    // shared voice generation, Processing terminates Antigravity, and Speaking
+    // purges SAPI. Executing/Confirming stay non-cancellable because an external
+    // side effect may already be in progress and cannot be rolled back here.
     let cancel_app = app.clone();
     app.listen(QUICK_CANCEL_EVENT, move |_| {
         let state = cancel_app.state::<crate::DesktopState>();
@@ -95,6 +95,14 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 
         tauri::async_runtime::spawn(async move {
             match core.state().await {
+                AssistantState::Listening => {
+                    let generation = voice_runtime::cancellation::cancel_current();
+                    if let Err(error) = core.cancel_listening().await {
+                        warn!(%error, generation, "failed to return cancelled voice turn to Idle");
+                    } else {
+                        debug!(generation, "cancelled active microphone/local STT voice work");
+                    }
+                }
                 AssistantState::Speaking => {
                     if tts.cancel() {
                         debug!("requested cancellation of active Windows SAPI speech");
