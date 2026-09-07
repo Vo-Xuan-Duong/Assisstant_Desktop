@@ -1,5 +1,9 @@
+#[path = "assistant_satellite_qr.rs"]
+mod qr;
+
 use std::{
     env, fs,
+    net::{Ipv4Addr, UdpSocket},
     path::{Path, PathBuf},
 };
 
@@ -12,6 +16,7 @@ const DEVICES_FILE: &str = "satellite-devices.json";
 const REVOKED_DIR: &str = "satellite-revoked";
 const DEFAULT_BIND: &str = "0.0.0.0:8765";
 const MAX_DEVICE_ID_CHARS: usize = 128;
+const MAX_PAIRING_HOST_CHARS: usize = 64;
 
 type CliResult<T> = Result<T, String>;
 
@@ -103,15 +108,22 @@ USAGE
   assistant-satellite [--data-dir <absolute-path>] <command>
 
 COMMANDS
-  show                         Show persisted satellite configuration
-  pair [--bind <host:port>]    Create a new pairing token and enable the receiver
-  enable                       Enable the receiver using the current token
-  disable                      Disable the receiver but keep the pairing token
-  revoke                       Disable the receiver and invalidate the shared pairing token
-  bind <host:port>             Change the listener bind address
-  devices                      List known Android satellite devices
-  revoke-device <device-id>    Revoke one Android device without rotating the shared token
-  allow-device <device-id>     Re-enable a previously revoked Android device
+  show                                      Show persisted satellite configuration
+  pair [--bind <host:port>]                 Create a new pairing token and enable the receiver
+  pair --qr [--host <LAN-IP>] [--bind ...]  Create pairing and print a local terminal QR code
+  enable                                    Enable the receiver using the current token
+  disable                                   Disable the receiver but keep the pairing token
+  revoke                                    Disable the receiver and invalidate the shared pairing token
+  bind <host:port>                          Change the listener bind address
+  devices                                   List known Android satellite devices
+  revoke-device <device-id>                 Revoke one Android device without rotating the shared token
+  allow-device <device-id>                  Re-enable a previously revoked Android device
+
+QR pairing never sends the token to a web service. The QR is generated locally and
+encodes a compact `assd://p` deep link. When --host is omitted and the listener binds
+to 0.0.0.0, the helper attempts to resolve the PC's routed LAN IPv4 address. Use
+--host explicitly when the machine has multiple adapters or the detected address is
+not reachable from the phone.
 
 The running desktop watches settings/satellite.json and normally applies listener
 changes within about one second. Trusted-device revocation is checked by an active
@@ -141,7 +153,10 @@ fn show(path: &Path) -> CliResult<()> {
 
 fn pair(path: &Path, args: &[String]) -> CliResult<()> {
     let mut settings = load_settings(path)?;
+    let mut show_qr = false;
+    let mut pairing_host = None::<String>;
     let mut index = 0usize;
+
     while index < args.len() {
         match args[index].as_str() {
             "--bind" => {
@@ -151,11 +166,46 @@ fn pair(path: &Path, args: &[String]) -> CliResult<()> {
                 settings.bind = validate_bind(value)?;
                 index += 2;
             }
+            "--qr" => {
+                show_qr = true;
+                index += 1;
+            }
+            "--host" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "--host requires a LAN IPv4 address or hostname".to_owned())?;
+                pairing_host = Some(validate_pairing_host(value)?);
+                index += 2;
+            }
             other => return Err(format!("unknown pair option `{other}`")),
         }
     }
 
+    if pairing_host.is_some() && !show_qr {
+        return Err("--host is only used with `pair --qr`".into());
+    }
+
     let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let qr_output = if show_qr {
+        let (_, port) = split_bind(&settings.bind)?;
+        let host = match pairing_host {
+            Some(host) => host,
+            None => pairing_host_from_bind(&settings.bind)
+                .or_else(discover_lan_ipv4)
+                .ok_or_else(|| {
+                    "cannot determine a phone-reachable LAN address; rerun with `pair --qr --host <PC-LAN-IP>`"
+                        .to_owned()
+                })?,
+        };
+        let uri = pairing_uri(&host, port, &token)?;
+        let qr = qr::render_terminal_qr(&uri).map_err(|error| {
+            format!("cannot render pairing QR: {error}; use a shorter IPv4 host via --host")
+        })?;
+        Some((host, port, uri, qr))
+    } else {
+        None
+    };
+
     settings.enabled = true;
     settings.token = Some(token.clone());
     save_settings(path, &settings)?;
@@ -165,9 +215,98 @@ fn pair(path: &Path, args: &[String]) -> CliResult<()> {
     println!("  token  {token}");
     println!("  file   {}", path.display());
     println!("If Assisstant Desktop is running, the listener should reload this pairing automatically within about one second.");
-    println!("Enter the PC ws:// address and token in the Android app.");
-    println!("Treat the token as a local credential; do not publish it in logs/screenshots.");
+
+    if let Some((host, port, uri, qr)) = qr_output {
+        println!("  phone  ws://{host}:{port}");
+        println!("  uri    {uri}");
+        println!();
+        println!("Scan this QR with the Android camera/QR scanner. Windows Terminal or another ANSI-capable terminal is recommended:");
+        println!("{qr}");
+        println!("Scanning only imports the pairing data; the Android app still requires an explicit Connect tap.");
+    } else {
+        println!("Enter the PC ws:// address and token in the Android app, or use `assistant-satellite pair --qr` next time.");
+    }
+
+    println!("Treat the token and QR as local credentials; do not publish them in logs/screenshots.");
     Ok(())
+}
+
+fn split_bind(bind: &str) -> CliResult<(&str, u16)> {
+    let (host, port) = bind
+        .trim()
+        .rsplit_once(':')
+        .ok_or_else(|| "bind address must use host:port form".to_owned())?;
+    let port = port
+        .parse::<u16>()
+        .map_err(|_| "bind address port must be 1..65535".to_owned())?;
+    if port == 0 {
+        return Err("bind address port must be 1..65535".into());
+    }
+    Ok((host.trim(), port))
+}
+
+fn pairing_host_from_bind(bind: &str) -> Option<String> {
+    let (host, _) = split_bind(bind).ok()?;
+    if host.is_empty()
+        || host == "0.0.0.0"
+        || host == "::"
+        || host == "[::]"
+        || host.eq_ignore_ascii_case("localhost")
+        || host == "127.0.0.1"
+    {
+        return None;
+    }
+    validate_pairing_host(host).ok()
+}
+
+fn discover_lan_ipv4() -> Option<String> {
+    // UDP connect performs route selection without sending application data.
+    // It works on ordinary LAN/default-route setups even when no packet is sent.
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("192.0.2.1:9").ok()?;
+    let address = socket.local_addr().ok()?;
+    let std::net::IpAddr::V4(ip) = address.ip() else {
+        return None;
+    };
+    if ip.is_unspecified() || ip.is_loopback() {
+        return None;
+    }
+    Some(ip.to_string())
+}
+
+fn validate_pairing_host(value: &str) -> CliResult<String> {
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > MAX_PAIRING_HOST_CHARS {
+        return Err(format!(
+            "pairing host must contain 1..={MAX_PAIRING_HOST_CHARS} characters"
+        ));
+    }
+
+    if let Ok(ip) = value.parse::<Ipv4Addr>() {
+        if ip.is_unspecified() || ip.is_loopback() {
+            return Err("pairing host must be reachable from the Android phone, not loopback/unspecified".into());
+        }
+        return Ok(ip.to_string());
+    }
+
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.'))
+        || value.starts_with('.')
+        || value.ends_with('.')
+        || value.contains("..")
+    {
+        return Err("pairing hostname contains unsupported characters".into());
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
+fn pairing_uri(host: &str, port: u16, token: &str) -> CliResult<String> {
+    let host = validate_pairing_host(host)?;
+    if token.len() < 16 || !token.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err("pairing token is not a valid hexadecimal credential".into());
+    }
+    Ok(format!("assd://p?h={host}&p={port}&t={token}"))
 }
 
 fn set_enabled(path: &Path, enabled: bool) -> CliResult<()> {
@@ -291,15 +430,7 @@ fn validate_bind(value: &str) -> CliResult<String> {
     if value.is_empty() {
         return Err("bind address cannot be empty".into());
     }
-    let (_, port) = value
-        .rsplit_once(':')
-        .ok_or_else(|| "bind address must use host:port form".to_owned())?;
-    let port = port
-        .parse::<u16>()
-        .map_err(|_| "bind address port must be 1..65535".to_owned())?;
-    if port == 0 {
-        return Err("bind address port must be 1..65535".into());
-    }
+    let (_, _) = split_bind(value)?;
     Ok(value.to_owned())
 }
 
@@ -446,4 +577,25 @@ fn save_device_registry(path: &Path, registry: &DeviceRegistry) -> CliResult<()>
     fs::rename(&temp, path)
         .map_err(|error| format!("cannot promote {}: {error}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pairing_uri_is_compact_and_query_safe() {
+        let token = "0123456789abcdef".repeat(4);
+        let uri = pairing_uri("192.168.1.20", 8765, &token).expect("valid pairing URI");
+        assert_eq!(
+            uri,
+            format!("assd://p?h=192.168.1.20&p=8765&t={token}")
+        );
+    }
+
+    #[test]
+    fn pairing_host_rejects_loopback_and_query_injection() {
+        assert!(validate_pairing_host("127.0.0.1").is_err());
+        assert!(validate_pairing_host("pc.local&t=stolen").is_err());
+    }
 }
