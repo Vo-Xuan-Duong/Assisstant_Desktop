@@ -1,34 +1,36 @@
-# Voice Runtime — Phase 5A Audio I/O
+# Voice Runtime — Audio I/O
 
 ## Scope
 
-Phase 5A establishes the local microphone runtime only. It deliberately does **not** add speech-to-text, VAD, TTS, wake-word detection, or continuous assistant behavior yet.
+The audio layer is the shared CPAL/WASAPI microphone abstraction used by both foreground voice turns and long-lived wake-word detection.
 
 ```text
 Windows microphone
       |
-   WASAPI
-      |
-    CPAL
+   WASAPI / CPAL
       |
 hardware PCM format
       |
-normalize/downmix
+normalize + downmix
       |
 mono f32 AudioChunk
       |
-future VAD / STT
+      +--> voice-turn VAD / STT
+      |
+      +--> wake-word runtime
 ```
+
+The two consumers intentionally have different cancellation semantics.
 
 ## Why CPAL
 
-The desktop runtime needs one small Rust abstraction over Windows audio input without introducing Python or a separate service. On Windows, CPAL uses the native WASAPI backend.
+The desktop runtime needs one Rust abstraction over Windows audio input without introducing a Python process or separate audio service. On Windows, CPAL uses the native WASAPI backend.
 
-The project pins CPAL `0.18.2`. CPAL 0.18 creates streams paused, so the runtime explicitly calls `play()` after stream creation.
+The project pins CPAL `0.18.2`. Streams are started explicitly with `play()` after creation.
 
 ## Input configuration
 
-`MicrophoneStream::open_default` uses the default Windows input device and its default supported stream configuration.
+`MicrophoneStream` uses the default Windows input device and its default supported stream configuration.
 
 The runtime records:
 
@@ -37,11 +39,40 @@ The runtime records:
 - source channel count;
 - source sample format.
 
-It does not force 16 kHz at the hardware boundary. Resampling belongs to the STT stage because the best target rate depends on the selected recognition engine.
+It does not force 16 kHz at the hardware boundary. Recognition-specific resampling belongs to the STT layer.
+
+## Capture modes
+
+### Voice-turn capture
+
+```rust
+MicrophoneStream::open_default(config)
+```
+
+This is the normal command/voice-turn path. Opening the stream starts a fresh `voice-runtime` cancellation generation.
+
+`next_chunk()` waits on both:
+
+- the bounded CPAL audio queue;
+- the voice cancellation watcher.
+
+If Quick Stop cancels the active Listening generation, `next_chunk()` returns `None` immediately instead of waiting for another audio callback or the desktop's 25-second utterance timeout.
+
+### Wake-word capture
+
+```rust
+MicrophoneStream::open_default_uncancellable(config)
+```
+
+Wake detection is long-lived infrastructure rather than one Assistant voice turn, so its microphone stream deliberately does **not** subscribe to the foreground voice-turn cancellation generation.
+
+This prevents a Quick Stop from being interpreted by the wake runtime as an unexpected microphone end/error. Wake continues to be controlled by its own explicit `Suspend`, `Resume`, enable/disable, cooldown, reload, and shutdown commands.
+
+The desktop still suspends wake while a foreground voice turn or TTS operation owns the relevant lifecycle. The uncancellable stream boundary is defense-in-depth: foreground cancellation and wake control remain separate mechanisms.
 
 ## Supported PCM formats
 
-The default CPAL configuration may now prefer formats other than `i16`, so the runtime handles:
+The default CPAL configuration may prefer formats other than `i16`, so the runtime handles:
 
 - `f32`, `f64`;
 - signed `i8`, `i16`, `i24`, `i32`, `i64`;
@@ -51,7 +82,7 @@ DSD formats are rejected as unsupported for the speech pipeline.
 
 ## AudioChunk contract
 
-Every chunk crossing from the audio callback into the asynchronous runtime is:
+Every chunk crossing from the realtime callback into the asynchronous runtime is:
 
 ```text
 AudioChunk
@@ -62,15 +93,15 @@ AudioChunk
     └── peak
 ```
 
-Multi-channel hardware input is downmixed by averaging channels per frame.
+Multi-channel input is downmixed by averaging channels per frame.
 
-`rms` and `peak` are intentionally part of the audio contract because the later Gemini-like border UI can react to microphone energy without coupling UI code to CPAL.
+`rms` and `peak` are part of the audio contract so Quick/edge visuals can react to microphone energy without coupling UI code directly to CPAL.
 
 ## Callback behavior
 
-The CPAL callback runs on the audio backend's realtime/high-priority thread. It must not wait for the desktop async runtime.
+The CPAL callback runs on the audio backend's realtime/high-priority thread and must never wait for the desktop async runtime.
 
-The implementation therefore uses a bounded Tokio MPSC channel and `try_send`:
+The implementation uses a bounded Tokio MPSC channel and `try_send`:
 
 ```text
 CPAL callback
@@ -88,30 +119,29 @@ consumer   drop chunk
 
 `MicrophoneStream::dropped_chunks()` exposes the total number of chunks dropped due to backpressure.
 
-The first implementation still allocates a `Vec<f32>` per callback. That is acceptable for the Phase 5A integration baseline but remains a future optimization point if profiling shows callback pressure.
+The callback still allocates a `Vec<f32>` per chunk. This remains a profiling/optimization point rather than a correctness issue.
 
 ## Runtime errors
 
 Synchronous startup/control failures return `VoiceError`.
 
-Backend errors reported after the stream starts are captured in `last_error()` so the UI/voice controller can surface device disconnection or permission/backend failures without crashing the application.
+Backend errors reported after the stream starts are captured in `last_error()` so the voice/wake controller can surface device disconnection or permission/backend failures without crashing the application.
+
+Voice-turn cancellation is not reported as a device error. A cancellable stream simply ends its asynchronous delivery for the cancelled generation.
 
 ## Lifecycle
 
 `MicrophoneStream` supports:
 
-- open + immediate start;
+- cancellable foreground open via `open_default()`;
+- uncancellable infrastructure open via `open_default_uncancellable()`;
 - `pause()`;
 - `resume()`;
 - async `next_chunk()`;
 - drop-based stream shutdown.
 
-The desktop application is **not connected to this stream in Phase 5A**. Phase 5B adds VAD/STT first, then Phase 5C connects the complete voice turn lifecycle to Tauri.
-
-## Build policy
-
-Whisper is intentionally not a default dependency of this phase. Native Whisper bindings bring a C/C++/CMake/Clang toolchain into the build, so they will be feature-gated in Phase 5B rather than making every Tauri build compile the recognition backend.
+Wake runtime uses only the uncancellable open path. Foreground desktop voice capture uses the cancellable open path.
 
 ## Verification policy
 
-No GitHub Actions or runtime tests are executed as part of repository development. The microphone path is statically reviewed against CPAL 0.18.2 APIs and is intended to be verified locally on the Windows development machine.
+No GitHub Actions, builds, native microphone tests, or runtime tests are executed by the remote development process. Verify both capture modes on the target Windows machine, especially Stop-during-Listening and wake resume after a cancelled voice turn.
