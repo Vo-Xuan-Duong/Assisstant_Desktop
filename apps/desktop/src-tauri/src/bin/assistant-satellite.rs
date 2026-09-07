@@ -76,8 +76,9 @@ COMMANDS
   revoke                       Disable the receiver and invalidate the pairing token
   bind <host:port>             Change the listener bind address
 
-The desktop runtime reads settings/satellite.json on startup.
-After changing pairing settings, restart Assisstant Desktop for this bootstrap phase.
+The running desktop watches settings/satellite.json and normally applies changes
+within about one second. A legacy ASSISTANT_VOICE_SATELLITE_TOKEN environment
+override takes precedence over this file until that environment override is removed.
 
 ENVIRONMENT
   ASSISTANT_APP_DATA            Override the application data root
@@ -93,7 +94,7 @@ fn show(path: &Path) -> CliResult<()> {
     println!("  paired   {}", settings.token.is_some());
     println!("  token    {}", masked_token(settings.token.as_deref()));
     println!("  file     {}", path.display());
-    println!("  apply    restart desktop runtime after changes");
+    println!("  apply    automatic while desktop runtime is running (~1 second)");
     Ok(())
 }
 
@@ -122,7 +123,8 @@ fn pair(path: &Path, args: &[String]) -> CliResult<()> {
     println!("  bind   {}", settings.bind);
     println!("  token  {token}");
     println!("  file   {}", path.display());
-    println!("Restart Assisstant Desktop, then enter the desktop ws:// address and token in the Android app.");
+    println!("If Assisstant Desktop is running, the listener should reload this pairing automatically within about one second.");
+    println!("Enter the PC ws:// address and token in the Android app.");
     println!("Treat the token as a local credential; do not publish it in logs/screenshots.");
     Ok(())
 }
@@ -134,7 +136,10 @@ fn set_enabled(path: &Path, enabled: bool) -> CliResult<()> {
     }
     settings.enabled = enabled;
     save_settings(path, &settings)?;
-    println!("Satellite receiver {}. Restart desktop runtime to apply.", if enabled { "enabled" } else { "disabled" });
+    println!(
+        "Satellite receiver {}. Running desktop instances normally apply this within about one second.",
+        if enabled { "enabled" } else { "disabled" }
+    );
     Ok(())
 }
 
@@ -143,7 +148,7 @@ fn revoke(path: &Path) -> CliResult<()> {
     settings.enabled = false;
     settings.token = None;
     save_settings(path, &settings)?;
-    println!("Satellite pairing revoked. Restart desktop runtime to apply.");
+    println!("Satellite pairing revoked. A running desktop normally closes the active satellite session within about one second.");
     Ok(())
 }
 
@@ -154,7 +159,10 @@ fn set_bind(path: &Path, args: &[String]) -> CliResult<()> {
     let mut settings = load_settings(path)?;
     settings.bind = validate_bind(&args[0])?;
     save_settings(path, &settings)?;
-    println!("Satellite bind address set to {}. Restart desktop runtime to apply.", settings.bind);
+    println!(
+        "Satellite bind address set to {}. Running desktop instances normally reload it within about one second.",
+        settings.bind
+    );
     Ok(())
 }
 
