@@ -15,8 +15,14 @@ class PairingSecretStore(context: Context) {
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun loadToken(): Result<String?> = runCatching {
-        val ivEncoded = prefs.getString(KEY_IV, null) ?: return@runCatching null
-        val ciphertextEncoded = prefs.getString(KEY_CIPHERTEXT, null) ?: return@runCatching null
+        val ivEncoded = prefs.getString(KEY_IV, null)
+        val ciphertextEncoded = prefs.getString(KEY_CIPHERTEXT, null)
+        if (ivEncoded == null && ciphertextEncoded == null) {
+            return@runCatching null
+        }
+        require(!ivEncoded.isNullOrBlank() && !ciphertextEncoded.isNullOrBlank()) {
+            "Stored pairing credential is incomplete."
+        }
 
         val iv = Base64.decode(ivEncoded, Base64.NO_WRAP)
         val ciphertext = Base64.decode(ciphertextEncoded, Base64.NO_WRAP)
@@ -57,6 +63,12 @@ class PairingSecretStore(context: Context) {
         val existing = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
         if (existing != null) return existing
 
+        return runCatching { generateKey(AES_PRIMARY_BITS) }
+            .recoverCatching { generateKey(AES_FALLBACK_BITS) }
+            .getOrThrow()
+    }
+
+    private fun generateKey(keySizeBits: Int): SecretKey {
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE_PROVIDER)
         val spec = KeyGenParameterSpec.Builder(
             KEY_ALIAS,
@@ -64,7 +76,7 @@ class PairingSecretStore(context: Context) {
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setKeySize(256)
+            .setKeySize(keySizeBits)
             .setRandomizedEncryptionRequired(true)
             .build()
         generator.init(spec)
@@ -77,6 +89,8 @@ class PairingSecretStore(context: Context) {
         private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val GCM_TAG_BITS = 128
+        private const val AES_PRIMARY_BITS = 256
+        private const val AES_FALLBACK_BITS = 128
         private const val KEY_IV = "pairing_iv"
         private const val KEY_CIPHERTEXT = "pairing_ciphertext"
     }
