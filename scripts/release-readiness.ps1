@@ -10,7 +10,9 @@ $ErrorActionPreference = "Stop"
 function Resolve-AssistantExecutable {
     param([Parameter(Mandatory = $true)][string]$Value)
 
-    if ([System.IO.Path]::IsPathRooted($Value) -or $Value.Contains([System.IO.Path]::DirectorySeparatorChar)) {
+    $containsSeparator = $Value.Contains([System.IO.Path]::DirectorySeparatorChar) -or
+        $Value.Contains([System.IO.Path]::AltDirectorySeparatorChar)
+    if ([System.IO.Path]::IsPathRooted($Value) -or $containsSeparator) {
         $candidate = [System.IO.Path]::GetFullPath($Value)
         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
             throw "Assistant executable not found: $candidate"
@@ -36,20 +38,16 @@ function Invoke-ReadOnlyCheck {
         [bool]$Required = $true
     )
 
-    $previousExitCode = $global:LASTEXITCODE
     $output = ""
     $exitCode = 1
     try {
         $captured = & $script:assistantExe @Arguments 2>&1
-        $exitCode = if ($null -eq $global:LASTEXITCODE) { 0 } else { [int]$global:LASTEXITCODE }
+        $exitCode = [int]$LASTEXITCODE
         $output = ($captured | Out-String).Trim()
     }
     catch {
         $exitCode = 1
         $output = $_.Exception.Message
-    }
-    finally {
-        $global:LASTEXITCODE = $previousExitCode
     }
 
     $passed = $exitCode -eq 0
