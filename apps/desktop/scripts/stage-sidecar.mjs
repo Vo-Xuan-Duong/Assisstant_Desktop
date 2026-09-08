@@ -37,7 +37,7 @@ execFileSync("cargo", cargoArgs, {
   stdio: "inherit",
 });
 
-const assistantArgs = [
+const assistantCoreArgs = [
   "build",
   "-p",
   "assisstant-desktop",
@@ -45,8 +45,22 @@ const assistantArgs = [
   "assistant",
   "--locked",
 ];
-if (requestedProfile === "release") assistantArgs.push("--release");
-execFileSync("cargo", assistantArgs, {
+if (requestedProfile === "release") assistantCoreArgs.push("--release");
+execFileSync("cargo", assistantCoreArgs, {
+  cwd: repoRoot,
+  stdio: "inherit",
+});
+
+const assistantRouterArgs = [
+  "build",
+  "-p",
+  "assisstant-desktop",
+  "--bin",
+  "assistant-root",
+  "--locked",
+];
+if (requestedProfile === "release") assistantRouterArgs.push("--release");
+execFileSync("cargo", assistantRouterArgs, {
   cwd: repoRoot,
   stdio: "inherit",
 });
@@ -78,9 +92,13 @@ const source = path.join(targetDir, requestedProfile, "assistant-mcp.exe");
 if (!existsSync(source)) {
   throw new Error(`Expected sidecar binary was not produced: ${source}`);
 }
-const assistantSource = path.join(targetDir, requestedProfile, "assistant.exe");
-if (!existsSync(assistantSource)) {
-  throw new Error(`Expected management CLI was not produced: ${assistantSource}`);
+const assistantCoreSource = path.join(targetDir, requestedProfile, "assistant.exe");
+if (!existsSync(assistantCoreSource)) {
+  throw new Error(`Expected management CLI was not produced: ${assistantCoreSource}`);
+}
+const assistantRouterSource = path.join(targetDir, requestedProfile, "assistant-root.exe");
+if (!existsSync(assistantRouterSource)) {
+  throw new Error(`Expected canonical assistant router was not produced: ${assistantRouterSource}`);
 }
 const satelliteSource = path.join(targetDir, requestedProfile, "assistant-satellite.exe");
 if (!existsSync(satelliteSource)) {
@@ -98,7 +116,12 @@ const assistantDestination = path.join(
   binariesDir,
   `assistant-${targetTriple}.exe`,
 );
-copyFileSync(assistantSource, assistantDestination);
+copyFileSync(assistantRouterSource, assistantDestination);
+const assistantCoreDestination = path.join(
+  binariesDir,
+  `assistant-core-${targetTriple}.exe`,
+);
+copyFileSync(assistantCoreSource, assistantCoreDestination);
 const satelliteDestination = path.join(
   binariesDir,
   `assistant-satellite-${targetTriple}.exe`,
@@ -121,5 +144,6 @@ for (const name of runtimeDlls) {
 }
 
 console.log(`Staged assistant-mcp sidecar: ${destination}`);
-console.log(`Staged assistant management CLI: ${assistantDestination}`);
+console.log(`Staged canonical assistant CLI: ${assistantDestination}`);
+console.log(`Staged assistant core management CLI: ${assistantCoreDestination}`);
 console.log(`Staged satellite management helper: ${satelliteDestination}`);
