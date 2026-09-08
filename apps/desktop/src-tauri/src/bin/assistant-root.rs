@@ -8,6 +8,7 @@ use std::{
 
 const CORE_OVERRIDE_ENV: &str = "ASSISTANT_CORE_CLI";
 const SATELLITE_OVERRIDE_ENV: &str = "ASSISTANT_SATELLITE_CLI";
+const SATELLITE_REMOTE_OVERRIDE_ENV: &str = "ASSISTANT_SATELLITE_REMOTE_CLI";
 const TTS_OVERRIDE_ENV: &str = "ASSISTANT_TTS_CLI";
 
 fn main() {
@@ -26,9 +27,23 @@ fn run() -> Result<ExitStatus, String> {
     let command = command_index.and_then(|index| args.get(index));
 
     if command.is_some_and(|value| value == OsStr::new("satellite")) {
+        let index = command_index.expect("satellite command index must exist");
+        if args.get(index + 1).is_some_and(|value| value == OsStr::new("remote")) {
+            let mut forwarded = args;
+            forwarded.remove(index + 1);
+            forwarded.remove(index);
+            return run_cli(
+                resolve_cli(
+                    SATELLITE_REMOTE_OVERRIDE_ENV,
+                    "assistant-satellite-remote",
+                )?,
+                &forwarded,
+                "satellite remote CLI",
+            );
+        }
         return run_namespaced_cli(
             args,
-            command_index.expect("satellite command index must exist"),
+            index,
             SATELLITE_OVERRIDE_ENV,
             "assistant-satellite",
             "satellite CLI",
@@ -87,6 +102,10 @@ fn print_extension_help_hint() {
   satellite firewall show                  Inspect the named Windows Firewall rule
   satellite firewall install               Install Private+LocalSubnet TCP rule
   satellite firewall remove                Remove only the Assistant satellite firewall rule
+  satellite remote tailscale show          Show managed tailnet-only remote transport
+  satellite remote tailscale enable        Bind backend to loopback and enable Tailscale Serve TCP
+  satellite remote tailscale pair --qr     Pair Android using the PC's Tailscale IPv4
+  satellite remote tailscale disable       Disable managed Serve and restore previous bind
   satellite help                           Show the complete satellite command surface
 
   tts voices [--json]                      List installed Windows SAPI voices
