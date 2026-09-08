@@ -2,9 +2,9 @@
 
 Windows-first AI system assistant powered by **Google Antigravity CLI + Gemini + MCP + Rust/Tauri**, with an **Android Voice Satellite** as the preferred speech-input surface.
 
-Assisstant Desktop is designed as a background system assistant rather than a conventional chatbot window. The Windows app owns reasoning, context, permissions, tools, UI, and spoken responses. The Android companion app owns microphone capture and speech recognition, then sends only the final recognized text to the desktop.
+Assisstant Desktop is designed as a background system assistant rather than a conventional chatbot window. Windows owns reasoning, context, permissions, tools, UI, and spoken responses. Android owns microphone capture and speech recognition and sends only the final recognized text to the desktop.
 
-## Current architecture
+## Architecture
 
 ```text
                     Android Voice Satellite
@@ -44,48 +44,48 @@ Assisstant Desktop is designed as a background system assistant rather than a co
 +------------------------------------------------------------+
 
 Fallback voice input:
-
 Windows microphone -> CPAL/WASAPI -> VAD -> Zipformer -> Assistant Core
 ```
 
 ## Current status
 
-- **Target:** Windows first, with Android companion input.
+- **Target:** Windows first with Android companion voice input.
 - **Background host:** Tauri 2 + Rust.
-- **Interaction UI:** React QuickOverlay + four click-through edge surfaces.
-- **Sensitive confirmation UI:** dedicated hidden-by-default permission surface.
-- **Management:** `assistant.exe` CLI / terminal dashboard plus `assistant-satellite` pairing helper.
+- **Interaction UI:** React Quick Overlay + click-through edge surfaces.
+- **Sensitive confirmation:** desktop-owned permission surface.
 - **AI backend:** Google Antigravity CLI in headless `stream-json` mode.
 - **Tool protocol:** MCP over stdio.
 - **Windows integration:** Win32 / COM / UI Automation / CoreAudio.
-- **Preferred voice input:** Android Voice Satellite using Android `SpeechRecognizer`.
-- **Android recognition:** `vi-VN` / `en-US`, on-device when available, system recognizer fallback.
-- **Satellite transport:** authenticated RFC 6455 WebSocket over a trusted LAN.
-- **Satellite pairing:** durable local settings, generated 64-character token, enable/disable/bind/revoke, live reload.
+- **Preferred voice input:** Android `SpeechRecognizer`.
+- **Recognition languages:** `vi-VN` and `en-US`.
+- **On-device speech:** preferred when Android reports support; otherwise system recognizer fallback.
+- **Satellite transport:** authenticated RFC 6455 WebSocket on a trusted/private LAN.
+- **Pairing:** persistent settings + local QR/deep-link flow + trusted devices + per-device revoke.
+- **Android token storage:** Android Keystore AES-GCM protection at rest.
 - **Desktop fallback STT:** sherpa-onnx Vietnamese Zipformer 30M INT8.
-- **Desktop TTS:** Windows SAPI.
-- **Response language:** Vietnamese, English, or Auto.
-- **Response style:** friendly, natural, concise; simple commands normally receive one short confirmation.
-- **Desktop wake word:** sherpa-onnx remains available for the local fallback path.
+- **Desktop TTS:** Windows SAPI with locale-aware Vietnamese/English language selection.
+- **Response language:** `VI`, `EN`, `Auto`.
+- **Response style:** friendly, natural, concise.
+- **Desktop wake:** sherpa-onnx wake runtime remains available for the fallback path.
 - **Installer:** NSIS current-user package.
-- **Safety default:** unknown, blocked, stale, malformed, or unconfirmed Sensitive actions fail closed.
+- **Safety:** unknown, blocked, stale, malformed, or unconfirmed Sensitive actions fail closed.
 
-The desktop runtime, Antigravity/MCP path, Quick UI, permission path, local voice fallback, Android Voice Satellite, and the first persistent pairing layer are implemented source-first. Target Windows/Android runtime validation is still required before a public release.
+Source implementation is ahead of target-device validation. Windows/Android runtime validation is still required before public-release readiness is claimed.
 
-## Why voice recognition moved to Android
+## Why speech recognition moved to Android
 
-The existing local Zipformer recognizer is small and efficient, but its Vietnamese recognition quality is not sufficient to remain the preferred voice-input path for the desired assistant experience.
+The local Vietnamese Zipformer recognizer is small and efficient, but its recognition quality is not sufficient to remain the preferred input path for the desired assistant experience.
 
-Instead of continuing to spend desktop CPU on a small local ASR model, the project now treats the phone as a **voice terminal**:
+The project therefore treats Android as a **voice terminal**:
 
 ```text
-Phone: microphone + speech-to-text
-Desktop: reasoning + tools + response + TTS
+Phone   = microphone + speech-to-text
+Desktop = reasoning + tools + response + TTS
 ```
 
-This keeps the desktop architecture intact while allowing Android to use the speech-recognition stack already available on the device. No dedicated paid STT API is required by the project.
+This avoids running a larger ASR model on the laptop and allows Android to use the speech-recognition stack already present on the phone. No dedicated paid STT API is required.
 
-The Android system recognizer is device/vendor-dependent and may use an online recognition service. On Google-enabled Android devices the normal system recognizer can be backed by Google's speech-recognition service. When Android reports an on-device recognizer, the companion app can prefer that path.
+The system recognizer is vendor-dependent. On Google-enabled Android devices it may be backed by Google's speech-recognition service and may require Internet. When Android exposes an on-device recognizer, the companion app can prefer that path.
 
 ## Android Voice Satellite
 
@@ -95,105 +95,173 @@ Source:
 apps/android-satellite/
 ```
 
-The current MVP provides:
+Current capabilities:
 
-- Kotlin + Jetpack Compose UI;
+- Kotlin + Jetpack Compose;
+- Android 8.0+;
 - push-to-talk;
-- microphone permission handling;
-- Vietnamese `vi-VN` recognition;
-- English `en-US` recognition;
-- Android on-device recognizer when supported;
-- fallback to the normal system recognizer;
-- partial transcript shown on the phone only;
-- exactly one final text command sent to the desktop;
-- pairing token authentication;
+- `vi-VN` / `en-US` recognition;
+- Android on-device recognizer when available;
+- system recognizer fallback;
+- partial transcript kept phone-side;
+- one final text command submitted to Windows;
+- local QR/deep-link pairing;
+- stable installation `device_id`;
+- trusted/revoked device management;
+- pairing token encrypted at rest using Android Keystore + AES-GCM;
 - desktop processing/speaking status;
-- response language selector: `VI`, `EN`, `Auto`;
-- desktop response text display;
-- no phone-side tool execution or TTS.
+- `VI`, `EN`, `Auto` response selector;
+- no Android-side Windows tool execution;
+- no Android-side TTS.
 
-`SpeechRecognizer` is intentionally not kept running continuously. Always-on phone wake/hardware activation is a later phase.
+`SpeechRecognizer` is deliberately not used as an always-listening loop. Low-power wake/hardware activation is a later phase.
 
-### Desktop satellite setup
+## Pair a phone
 
-The LAN receiver is **disabled by default**. Create a pairing from the desktop:
+The desktop LAN listener is disabled until pairing is configured.
+
+### Recommended: local QR
+
+Run:
 
 ```powershell
-assistant-satellite pair
+assistant satellite pair --qr
 ```
 
-This creates and persists:
+If the PC has multiple network adapters or the detected address is not reachable from the phone:
+
+```powershell
+assistant satellite pair --qr --host 192.168.1.20
+```
+
+The QR is generated **locally inside the terminal**. The token is not uploaded to a QR website/service.
+
+The QR contains a compact deep link:
 
 ```text
-%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite.json
+assd://p?h=<host>&p=<port>&t=<token>
 ```
 
-with a generated 64-character pairing token. The full token is printed when pairing is created; `assistant-satellite show` displays only a masked version.
+Android validates the imported host, port, and token. Scanning the QR only imports pairing data; it **does not automatically connect**. The user must still tap **Kết nối**.
 
-Useful commands:
+### Manual fallback
 
 ```powershell
-assistant-satellite show
-assistant-satellite pair
-assistant-satellite pair --bind 0.0.0.0:8765
-assistant-satellite enable
-assistant-satellite disable
-assistant-satellite bind 0.0.0.0:8765
-assistant-satellite revoke
+assistant satellite pair
 ```
 
-A running desktop watches the pairing file and normally applies changes within about one second. Token rotation/revoke also drops the active phone connection so an old authenticated session cannot continue.
-
-Configure the Android app with:
+Then enter the printed token and:
 
 ```text
 ws://<PC-LAN-IP>:8765
 ```
 
-and the token printed by `assistant-satellite pair`.
+in the Android app.
 
-Legacy development environment overrides remain supported:
+Persistent desktop settings live under:
 
 ```text
-ASSISTANT_VOICE_SATELLITE_TOKEN
-ASSISTANT_VOICE_SATELLITE_BIND
+%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\
 ```
 
-When the legacy token environment variable is present it takes precedence over the persistent pairing file for that desktop process.
+The listener normally hot-reloads pairing/config changes in about one second.
 
-The current transport is unencrypted `ws://`, so it is for a **trusted/private LAN only**. Do not expose port `8765` directly to the public Internet. QR pairing, per-device trust, stronger secret storage, and WSS/private-overlay networking remain later work.
+## Satellite management
 
-See [`docs/VOICE_SATELLITE.md`](docs/VOICE_SATELLITE.md) for protocol and security details.
+Use the canonical CLI:
+
+```powershell
+assistant satellite show
+assistant satellite pair
+assistant satellite pair --qr
+assistant satellite pair --qr --host <PC-LAN-IP>
+assistant satellite enable
+assistant satellite disable
+assistant satellite bind 0.0.0.0:8765
+assistant satellite revoke
+assistant satellite devices
+assistant satellite revoke-device <device-id>
+assistant satellite allow-device <device-id>
+```
+
+`assistant-satellite ...` remains as a compatibility helper, but new documentation and workflows should use `assistant satellite ...`.
+
+Windows packaging stages:
+
+```text
+assistant.exe             canonical CLI router
+assistant-core.exe        existing desktop management CLI
+assistant-satellite.exe   satellite management implementation
+assistant-mcp.exe         Windows MCP sidecar
+```
+
+## Trusted-device model
+
+After the shared bootstrap token is verified, Windows records the Android installation identity in:
+
+```text
+satellite-devices.json
+```
+
+Per-device revocation uses independent marker files so a concurrent `last_seen` registry write cannot undo a revoke.
+
+Examples:
+
+```powershell
+assistant satellite devices
+assistant satellite revoke-device <device-id>
+assistant satellite allow-device <device-id>
+```
+
+A connected revoked device is rechecked by the desktop and disconnected without rotating the shared token for other devices.
+
+## Pairing-token storage on Android
+
+New pairing tokens are not intentionally persisted as plaintext in the normal Android preferences file.
+
+The app:
+
+1. creates an AES key through `AndroidKeyStore`;
+2. prefers AES-256 and falls back to AES-128 where required;
+3. encrypts the token with `AES/GCM/NoPadding`;
+4. stores only IV + ciphertext in private preferences;
+5. migrates old plaintext tokens conservatively;
+6. deletes legacy plaintext only after encrypted persistence succeeds.
+
+If the Keystore secret becomes unreadable after restore/reset/invalidation, the app reports the problem and the phone can be paired again by QR.
 
 ## Spoken responses
 
-The response is generated and spoken on the Windows desktop.
-
-Modes:
+The response is generated and spoken on Windows.
 
 ```text
-VI    -> always reply in Vietnamese
-EN    -> always reply in English
-Auto  -> reply in the language used by the user
+VI    -> response text in Vietnamese
+EN    -> response text in English
+Auto  -> response text in the user's language
 ```
-
-Voice-originated prompts also include a concise response policy so ordinary commands sound natural rather than like verbose CLI output.
 
 Examples:
 
 ```text
-User: "Mở Visual Studio Code"
-Assistant: "Được, mình đã mở Visual Studio Code."
+User: Mở Visual Studio Code
+Assistant: Được, mình đã mở Visual Studio Code.
 
-User: "Open Visual Studio Code"
-Assistant: "Sure, I’ve opened Visual Studio Code."
+User: Open Visual Studio Code
+Assistant: Sure, I’ve opened Visual Studio Code.
 ```
 
-The current implementation still uses the configured/default Windows SAPI voice instance. Automatic selection of installed Vietnamese vs English SAPI voices is planned in the next TTS phase; `VI`/`EN`/`Auto` currently controls generated response text first.
+`voice-runtime` now has language-aware SAPI support:
+
+```text
+Vietnamese -> SAPI LANGID 42A (vi-VN)
+English    -> SAPI LANGID 409 (en-US)
+```
+
+Response text is escaped before being placed into SAPI XML. If no installed SAPI voice matches the requested language, SAPI keeps the current/default voice instead of failing solely because that locale voice is missing.
+
+The current default `speak()` path automatically detects Vietnamese from Vietnamese-specific characters/diacritics. An explicit `speak_with_language()` API is available; directly threading the satellite's `VI / EN / Auto` hint to that API is remaining Phase 27 work.
 
 ## Desktop fallback voice pipeline
-
-Desktop-local STT is retained for offline/fallback use:
 
 ```text
 Microphone
@@ -213,54 +281,42 @@ Antigravity / MCP
 Windows SAPI TTS
 ```
 
-The model is sherpa-onnx Vietnamese Zipformer 30M INT8 and remains an `OfflineRecognizer`; its partial UI updates are simulated by bounded snapshot decodes. Only final text enters Assistant Core.
+The fallback model is sherpa-onnx Vietnamese Zipformer 30M INT8 and remains an `OfflineRecognizer`. Partial UI updates are simulated through bounded snapshot decodes. Only final text enters Assistant Core.
 
-STT resource id:
+Resource id:
 
 ```text
 stt_zipformer_vi
 ```
 
-Install while the desktop runtime is running:
+Install locally while the desktop runtime is running:
 
 ```powershell
 assistant resources install stt_zipformer_vi
 ```
 
-The current Vietnamese Zipformer model has separate upstream license terms (**CC-BY-NC-ND-4.0**) and should not be assumed suitable for commercial redistribution.
+The fallback Vietnamese Zipformer model has separate upstream license terms (**CC-BY-NC-ND-4.0**) and should not be assumed suitable for commercial redistribution.
 
 ## User experience
 
 Primary voice path:
 
 ```text
-Phone
-  |
-Push-to-talk
-  |
-Android speech recognition
-  |
-final text
-  |
-Desktop Quick Overlay
-  |
-Assistant Core / Antigravity / MCP
-  |
-Windows action
-  |
-Desktop spoken response
+Phone -> push-to-talk -> Android STT -> final text
+      -> Quick / Assistant Core -> Antigravity / MCP
+      -> Windows action -> desktop spoken response
 ```
 
 Desktop interaction remains available through:
 
 ```text
 Alt + Space
-Text input
-Desktop microphone fallback
-Desktop wake path
+text input
+desktop microphone fallback
+desktop wake path
 ```
 
-Sensitive request:
+Sensitive action:
 
 ```text
 Assistant / MCP
@@ -269,91 +325,29 @@ Sensitive tool
       |
 Permission broker
       |
-compact desktop confirmation
+desktop confirmation
       |
 Allow once / Deny
 ```
 
-The Android satellite cannot approve Sensitive actions or bypass the desktop permission boundary.
+The phone cannot approve Sensitive actions or bypass the desktop permission boundary.
 
 ## Workspace
 
 ```text
 apps/android-satellite       Android speech-input companion
-apps/desktop/src-tauri       background Tauri/Rust host + assistant.exe + assistant-satellite
-apps/desktop                 Quick, edge, permission React surfaces
+apps/desktop                 React Quick/edge/permission surfaces
+apps/desktop/src-tauri       Tauri/Rust background host + CLI adapters
 crates/common                shared contracts
-crates/assistant-core        state machine and request lifecycle
+crates/assistant-core        state machine/request lifecycle
 crates/antigravity-bridge    long-running Antigravity session
 crates/context-engine        on-demand desktop context
 crates/permission-broker     authenticated local confirmation broker
-crates/permission-engine     risk and permission policy
-crates/voice-runtime         desktop mic/VAD/STT/TTS/wake fallback runtime
+crates/permission-engine     risk/permission policy
+crates/voice-runtime         desktop mic/VAD/STT/TTS/wake runtime
 crates/windows-tools         native Windows operations
-crates/windows-mcp           MCP server and permission gateway
+crates/windows-mcp           MCP server + permission gateway
 ```
-
-## Assistant lifecycle
-
-Assistant Core owns:
-
-```text
-Idle
-Listening
-Processing
-Executing
-Confirming
-Speaking
-Error
-```
-
-The core uses a single-flight request gate. Permission confirmation is a real lifecycle state. Satellite commands also use a dedicated single-command gate. The pairing bootstrap currently admits one active satellite phone connection at a time so revocation and token rotation have a simple, deterministic session boundary.
-
-## Satellite security boundary
-
-The phone is deliberately low-authority.
-
-It may submit only bounded text commands. It receives response/state messages, but it does not receive:
-
-- MCP credentials;
-- direct Win32 access;
-- raw shell access;
-- permission-broker secrets;
-- Antigravity credentials;
-- desktop management IPC secrets.
-
-Current receiver rules include:
-
-- no active pairing token -> no listener;
-- generated high-entropy pairing token;
-- persistent enable/disable/bind/revoke settings;
-- hot reload of persistent pairing settings;
-- active-session drop on token rotation/revoke;
-- first-message authentication timeout;
-- protocol version validation;
-- masked client WebSocket frames;
-- bounded WebSocket payload size;
-- one active satellite phone connection in the current pairing phase;
-- one satellite command at a time;
-- busy rejection during another Assistant turn;
-- existing Sensitive confirmation remains authoritative.
-
-The current token is a local credential stored in application data and Android app preferences. DPAPI/Android Keystore-backed storage and per-device credentials are planned hardening work.
-
-## Deterministic local Safe fast-path
-
-The desktop text/local voice path includes a small read-only deterministic set:
-
-```text
-audio_get_volume
-apps_list
-window_get_active
-system_get_info
-```
-
-Mutating or ambiguous requests continue through Antigravity + MCP + permission handling.
-
-The satellite adapter currently sends satellite commands through the normal Assistant Core/Antigravity path so the friendly `VI`/`EN`/`Auto` response policy is consistently applied. Fast-path unification for satellite turns can follow once response synthesis is separated cleanly from tool routing.
 
 ## Permission model
 
@@ -375,7 +369,7 @@ Running without a subcommand opens the terminal dashboard:
 assistant
 ```
 
-Useful commands include:
+Common commands:
 
 ```powershell
 assistant status [--json]
@@ -407,26 +401,12 @@ assistant permissions set <tool> <allow|ask|deny>
 assistant permissions clear <tool>
 assistant logs
 assistant logs --follow
+assistant satellite help
 ```
-
-Satellite pairing currently has a dedicated helper:
-
-```powershell
-assistant-satellite show
-assistant-satellite pair
-assistant-satellite enable
-assistant-satellite disable
-assistant-satellite bind 0.0.0.0:8765
-assistant-satellite revoke
-```
-
-Folding these commands under `assistant satellite ...`, adding QR pairing, and adding trusted-device/last-seen diagnostics remain Phase 26 follow-up work.
 
 ## Development
 
-### Windows
-
-Prerequisites:
+### Windows prerequisites
 
 - Node.js `^20.19.0 || >=22.12.0`;
 - pnpm 10;
@@ -435,7 +415,7 @@ Prerequisites:
 - CMake;
 - Antigravity CLI.
 
-Install:
+Install dependencies:
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -462,67 +442,88 @@ Open:
 apps/android-satellite/
 ```
 
-in Android Studio, sync Gradle, and install the app on the target phone.
+in Android Studio, sync Gradle, and install on the target phone.
 
-The current source-first Android phase does not include the Gradle wrapper JAR/binary. Generate a local wrapper if command-line Android builds are needed.
+The source-first Android project does not commit the Gradle wrapper JAR/binary. Generate a wrapper locally if command-line Android builds are required.
 
 See [`apps/android-satellite/README.md`](apps/android-satellite/README.md).
 
 ## Local validation gates
 
-No remote GitHub Actions/build/test/model-download/installer run is implied by this migration. Validate on the target Windows PC and Android phone.
+Do not treat source completion as target-device verification. Per project policy, remote GitHub Actions/build/test/model-download/installer execution is not required for these phases.
 
-Satellite checks:
+Validate locally on Windows + Android:
 
-- phone and PC are on the same trusted LAN;
-- `assistant-satellite pair` creates a token/settings file;
-- running desktop hot-reloads the new pairing without restart;
-- Android pairs with the correct token;
-- invalid token is rejected;
-- microphone permission flow works;
-- `vi-VN` recognizes a command and sends exactly one final transcript;
-- `en-US` recognizes an English command;
-- partial recognition stays phone-side;
-- Quick shows the final satellite transcript;
-- normal MCP/permission path executes the Windows action;
+- `assistant satellite pair --qr` renders a scannable QR;
+- Android imports but does not auto-connect;
+- explicit Connect authenticates;
+- `assistant satellite devices` shows the phone;
+- per-device revoke disconnects/rejects that device;
+- Android pairing survives restart through Keystore-backed storage;
+- `vi-VN` and `en-US` recognition work on the target phone;
+- partial speech remains phone-side;
+- one final transcript creates one Assistant turn;
+- MCP/permission rules remain authoritative;
 - desktop speaks the response;
-- `VI`, `EN`, and `Auto` response modes behave as expected;
-- busy state is rejected cleanly;
-- disconnect/reconnect works;
-- `assistant-satellite disable` stops the listener through hot reload;
-- `assistant-satellite revoke` disconnects an active phone and rejects the old token;
-- re-pairing with a fresh token works without desktop restart;
-- Windows Firewall is limited to the intended private/trusted profile;
-- local Zipformer microphone path remains usable as fallback.
+- `VI`, `EN`, `Auto` response behavior is correct;
+- a suitable installed SAPI voice is used for Vietnamese/English when available;
+- missing locale voice falls back safely;
+- busy/disconnect/reconnect paths behave correctly;
+- local Zipformer remains usable as fallback;
+- NSIS packaging contains `assistant`, `assistant-core`, `assistant-satellite`, and `assistant-mcp` sidecars.
 
-Existing desktop checks should still cover hotkey, Quick/edge UI, permission Allow/Deny/timeout, Antigravity login/session reset, startup behavior, Windows tools, logs, and NSIS packaging.
+## Security notes
+
+Current satellite rules include:
+
+- no valid pairing config -> no listener;
+- authentication required as first application message;
+- protocol-version validation;
+- bounded WebSocket frames;
+- one active satellite command at a time;
+- Assistant busy rejection;
+- per-device revocation;
+- Android Keystore protection for the phone-side token;
+- no Android MCP/Win32/shell credentials;
+- desktop Sensitive confirmation remains authoritative.
+
+The current Windows bootstrap token is still persisted in the satellite settings layer and **Windows DPAPI hardening remains planned**.
+
+The current transport is unencrypted `ws://` and is intended for a **trusted/private LAN only**. Do not expose port `8765` directly to the public Internet. Secure remote use belongs to the later WSS/private-overlay phase.
+
+Legacy development environment overrides remain supported:
+
+```text
+ASSISTANT_VOICE_SATELLITE_TOKEN
+ASSISTANT_VOICE_SATELLITE_BIND
+```
 
 ## Roadmap
 
-The current roadmap is maintained in [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
+The authoritative roadmap is [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
 
-Phase 26 pairing work currently has durable settings, token generation, enable/disable/bind/revoke, and hot reload. Remaining pairing work is QR setup, integration into the main `assistant` CLI, trusted-device/last-seen diagnostics, firewall UX, and stronger secret-at-rest handling.
+Near-term work:
 
-Following phases are:
-
-1. locale-aware SAPI voice selection for Vietnamese/English;
-2. phone wake/quick/hardware activation without continuous SpeechRecognizer looping;
-3. voice quality/retry/duplicate-command resilience;
-4. secure remote satellite transport (WSS/private overlay such as Tailscale);
-5. later full-duplex/barge-in conversational UX.
+1. complete Phase 26 hardening: Windows DPAPI, firewall/private-network UX, richer device diagnostics;
+2. finish Phase 27: explicit `VI / EN / Auto` TTS hint wiring and optional installed-voice preferences;
+3. Phase 28: phone wake/Quick Settings/hardware activation without continuous `SpeechRecognizer` looping;
+4. Phase 29: recognition/reconnect/duplicate-command resilience;
+5. Phase 30: secure remote satellite through WSS or a private overlay such as Tailscale;
+6. Phase 31: conversational/full-duplex/barge-in UX.
 
 ## Key documentation
 
 - [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)
 - [`docs/VOICE_SATELLITE.md`](docs/VOICE_SATELLITE.md)
+- [`docs/PHASE26_QR_PAIRING.md`](docs/PHASE26_QR_PAIRING.md)
+- [`docs/PHASE26_TRUSTED_DEVICES.md`](docs/PHASE26_TRUSTED_DEVICES.md)
+- [`docs/PHASE26_CANONICAL_CLI.md`](docs/PHASE26_CANONICAL_CLI.md)
+- [`docs/PHASE27_LANGUAGE_AWARE_TTS.md`](docs/PHASE27_LANGUAGE_AWARE_TTS.md)
 - [`apps/android-satellite/README.md`](apps/android-satellite/README.md)
 - [`docs/CLI_MANAGEMENT.md`](docs/CLI_MANAGEMENT.md)
-- [`docs/EDGE_UI.md`](docs/EDGE_UI.md)
 - [`docs/VOICE_STT.md`](docs/VOICE_STT.md)
 - [`docs/VOICE_DESKTOP.md`](docs/VOICE_DESKTOP.md)
 - [`docs/WAKE_RUNTIME.md`](docs/WAKE_RUNTIME.md)
-- [`docs/RUNTIME_RESOURCES.md`](docs/RUNTIME_RESOURCES.md)
-- [`docs/RUNTIME_READINESS.md`](docs/RUNTIME_READINESS.md)
 - [`docs/PERMISSION_GATEWAY.md`](docs/PERMISSION_GATEWAY.md)
 - [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)
 
