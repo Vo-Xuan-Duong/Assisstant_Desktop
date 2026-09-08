@@ -170,6 +170,8 @@ class SatelliteClient(
     fun close() {
         ready = false
         activeCommandId = null
+        connectedUrl = null
+        connectedToken = null
         webSocket?.close(1000, "satellite closing")
         webSocket = null
     }
