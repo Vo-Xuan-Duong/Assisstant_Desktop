@@ -198,28 +198,28 @@ class SpeechController(
         val candidates = results
             ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             .orEmpty()
-            .map { candidate -> candidate.trim() }
-            .filter { candidate -> candidate.isNotEmpty() }
-            .distinct()
+            .mapIndexed { index, candidate -> index to candidate.trim() }
+            .filter { (_, candidate) -> candidate.isNotEmpty() }
+            .distinctBy { (_, candidate) -> candidate }
             .take(MAX_RESULT_CANDIDATES)
 
-        val best = candidates.firstOrNull().orEmpty()
-        if (best.isEmpty()) {
+        val best = candidates.firstOrNull()
+        if (best == null) {
             onError("Không nhận được nội dung giọng nói cuối cùng. Hãy thử lại.")
             return
         }
 
         val confidence = results
             ?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
-            ?.getOrNull(0)
+            ?.getOrNull(best.first)
             ?.takeIf { score -> score in 0.0f..1.0f }
         val elapsedMs = (SystemClock.elapsedRealtime() - requestStartedAtMs).coerceAtLeast(0L)
 
-        onPartialText(best)
+        onPartialText(best.second)
         onFinalResult(
             SpeechRecognitionResult(
-                text = best,
-                alternatives = candidates.drop(1),
+                text = best.second,
+                alternatives = candidates.drop(1).map { (_, candidate) -> candidate },
                 confidence = confidence,
                 elapsedMs = elapsedMs,
                 usedOnDeviceRecognizer = usingOnDevice,
