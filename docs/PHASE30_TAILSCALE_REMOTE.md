@@ -49,6 +49,8 @@ tailscale serve --bg --tcp=8765 tcp://127.0.0.1:8765
 
 The desktop satellite backend is moved to loopback before Serve is enabled. This avoids leaving the raw listener directly reachable on normal LAN interfaces while remote mode is managed.
 
+On Windows, Tailscale documents running Serve commands from an Administrator terminal where required; the Assistant helper itself does not self-elevate.
+
 ## Canonical commands
 
 ```powershell
@@ -65,11 +67,11 @@ assistant satellite remote tailscale disable
 1. refuses to proceed while the legacy `ASSISTANT_VOICE_SATELLITE_TOKEN` environment override is active;
 2. verifies that `tailscale ip -4` returns a connected Tailscale IPv4 address;
 3. requires an existing valid Assistant satellite pairing token;
-4. records the current satellite bind in `settings/satellite-tailscale.json`;
-5. moves the backend to `127.0.0.1:<port>`;
+4. records the current satellite bind **and enabled state** in `settings/satellite-tailscale.json`;
+5. moves/enables the backend on `127.0.0.1:<port>`;
 6. starts persistent tailnet-only raw TCP Serve with `--bg`;
-7. rolls the backend bind back if Serve setup fails;
-8. rolls Serve/bind back if managed-state persistence fails.
+7. rolls the backend settings back if Serve setup fails;
+8. rolls Serve/settings back if managed-state persistence fails.
 
 Re-running enable is idempotent only while the managed backend state still matches. If the user manually changes the bind while remote state exists, the helper fails closed and asks for `disable` before reconfiguration so it cannot leave a stale Serve endpoint behind.
 
@@ -94,7 +96,9 @@ Android still imports the QR without automatically connecting. The user explicit
 2. disables only the Serve TCP port created by this integration using the same `--tcp=<port>` selector plus `off`;
 3. does **not** use `tailscale serve reset`, so unrelated Serve configuration is left intact;
 4. restores the previous satellite bind only if the current bind still matches the managed loopback endpoint;
-5. leaves a manually changed bind untouched rather than overwriting it.
+5. restores the previous enabled state if the listener was still enabled by remote mode;
+6. if the user explicitly disabled the satellite while remote mode was active, keeps it disabled;
+7. leaves a manually changed bind untouched rather than overwriting it.
 
 ## State file
 
@@ -110,6 +114,7 @@ Example:
 {
   "version": 1,
   "previous_bind": "0.0.0.0:8765",
+  "previous_enabled": true,
   "port": 8765
 }
 ```
@@ -162,5 +167,5 @@ Validate locally:
 7. Turn off local Wi-Fi on the phone (use mobile data) while Tailscale remains connected.
 8. Verify a voice command reaches the desktop and is still permission-gated.
 9. Revoke the device on Windows and verify it cannot reconnect remotely.
-10. Run `assistant satellite remote tailscale disable` and confirm the prior bind is restored.
+10. Run `assistant satellite remote tailscale disable` and confirm the prior bind/enabled state is restored as expected.
 11. Verify unrelated Tailscale Serve configuration, if any, remains intact.
