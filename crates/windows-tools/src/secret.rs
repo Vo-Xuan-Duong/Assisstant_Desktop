@@ -12,6 +12,8 @@ use windows::{
     core::PCWSTR,
 };
 
+pub const DPAPI_TEXT_PREFIX: &str = "dpapi:";
+
 #[derive(Debug, Error)]
 pub enum SecretError {
     #[error("secret payload is too large for Windows DPAPI")]
@@ -20,6 +22,10 @@ pub enum SecretError {
     Dpapi(String),
     #[error("Windows DPAPI returned an invalid output buffer")]
     InvalidOutput,
+    #[error("DPAPI text envelope has invalid hexadecimal data")]
+    InvalidEncoding,
+    #[error("decrypted DPAPI text is not valid UTF-8")]
+    InvalidUtf8,
 }
 
 pub type SecretResult<T> = Result<T, SecretError>;
@@ -36,6 +42,27 @@ pub fn protect_for_current_user(plaintext: &[u8]) -> SecretResult<Vec<u8>> {
 /// Decrypt a blob previously produced by `protect_for_current_user`.
 pub fn unprotect_for_current_user(ciphertext: &[u8]) -> SecretResult<Vec<u8>> {
     transform(ciphertext, false)
+}
+
+/// Persist a UTF-8 secret as a recognizable DPAPI envelope without pulling a
+/// separate base64/hex crate into callers.
+pub fn protect_text_for_current_user(plaintext: &str) -> SecretResult<String> {
+    let ciphertext = protect_for_current_user(plaintext.as_bytes())?;
+    Ok(format!("{DPAPI_TEXT_PREFIX}{}", hex_encode(&ciphertext)))
+}
+
+/// Decrypt a `dpapi:<hex>` text envelope.
+pub fn unprotect_text_for_current_user(envelope: &str) -> SecretResult<String> {
+    let encoded = envelope
+        .strip_prefix(DPAPI_TEXT_PREFIX)
+        .ok_or(SecretError::InvalidEncoding)?;
+    let ciphertext = hex_decode(encoded)?;
+    let plaintext = unprotect_for_current_user(&ciphertext)?;
+    String::from_utf8(plaintext).map_err(|_| SecretError::InvalidUtf8)
+}
+
+pub fn is_dpapi_text(envelope: &str) -> bool {
+    envelope.starts_with(DPAPI_TEXT_PREFIX)
 }
 
 fn transform(input: &[u8], protect: bool) -> SecretResult<Vec<u8>> {
@@ -100,17 +127,58 @@ fn copy_and_free(blob: CRYPT_INTEGER_BLOB) -> SecretResult<Vec<u8>> {
     Ok(bytes)
 }
 
+fn hex_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        output.push(TABLE[(byte >> 4) as usize] as char);
+        output.push(TABLE[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+fn hex_decode(value: &str) -> SecretResult<Vec<u8>> {
+    if value.len() % 2 != 0 {
+        return Err(SecretError::InvalidEncoding);
+    }
+    let mut output = Vec::with_capacity(value.len() / 2);
+    for pair in value.as_bytes().chunks_exact(2) {
+        let high = hex_nibble(pair[0]).ok_or(SecretError::InvalidEncoding)?;
+        let low = hex_nibble(pair[1]).ok_or(SecretError::InvalidEncoding)?;
+        output.push((high << 4) | low);
+    }
+    Ok(output)
+}
+
+fn hex_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hex_round_trip_is_strict() {
+        let bytes = b"\x00\x01\xfe\xff";
+        assert_eq!(hex_decode(&hex_encode(bytes)).unwrap(), bytes);
+        assert!(hex_decode("abc").is_err());
+        assert!(hex_decode("zz").is_err());
+    }
 
     // This test is intentionally Windows-only at runtime and is not run remotely
     // by project policy. It provides a local validation target for the API shape.
     #[test]
     fn dpapi_round_trip_current_user() {
-        let protected = protect_for_current_user(b"assistant-secret").unwrap();
-        assert_ne!(protected, b"assistant-secret");
-        let clear = unprotect_for_current_user(&protected).unwrap();
-        assert_eq!(clear, b"assistant-secret");
+        let protected = protect_text_for_current_user("assistant-secret").unwrap();
+        assert!(protected.starts_with(DPAPI_TEXT_PREFIX));
+        assert!(!protected.contains("assistant-secret"));
+        let clear = unprotect_text_for_current_user(&protected).unwrap();
+        assert_eq!(clear, "assistant-secret");
     }
 }
