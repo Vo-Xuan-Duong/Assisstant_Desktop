@@ -63,6 +63,8 @@ EXAMPLES
 
 The numeric index is only a convenience for the current `voices` output. The
 persisted setting always stores the stable SAPI token id, never the list index.
+The runtime preference file is a small versioned `tts.conf`; `--json` affects
+CLI output only and does not change the persisted format.
 "#
     );
 }
@@ -254,7 +256,7 @@ fn resolve_settings_path(data_dir: Option<PathBuf>) -> CliResult<PathBuf> {
             .ok_or_else(|| "LOCALAPPDATA is unavailable".to_owned())?
             .join(APP_IDENTIFIER),
     };
-    Ok(root.join("settings").join("tts.json"))
+    Ok(root.join("settings").join("tts.conf"))
 }
 
 #[cfg(test)]
