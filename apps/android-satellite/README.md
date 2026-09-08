@@ -36,10 +36,10 @@ This source-first phase does not commit the Gradle wrapper JAR/binary. Generate 
 On the Windows PC:
 
 ```powershell
-assistant-satellite pair --qr
+assistant satellite pair --qr
 ```
 
-The helper:
+The command:
 
 1. creates a fresh random 64-character pairing token;
 2. enables/hot-reloads the desktop listener;
@@ -52,13 +52,13 @@ No QR web service is used and the token is not uploaded anywhere.
 If Windows selected the wrong adapter/IP, specify it explicitly:
 
 ```powershell
-assistant-satellite pair --qr --host 192.168.1.20
+assistant satellite pair --qr --host 192.168.1.20
 ```
 
 You may combine it with a listener bind override:
 
 ```powershell
-assistant-satellite pair --qr --host 192.168.1.20 --bind 0.0.0.0:8765
+assistant satellite pair --qr --host 192.168.1.20 --bind 0.0.0.0:8765
 ```
 
 Scan the QR with the phone camera/QR scanner. Android opens the Voice Satellite app through the registered `assd://p` deep link and imports:
@@ -69,14 +69,14 @@ Scan the QR with the phone camera/QR scanner. Android opens the Voice Satellite 
 
 **Scanning does not automatically connect.** The app displays the imported address and requires an explicit **Kết nối** tap. This prevents an arbitrary QR from immediately causing a network connection.
 
-Windows Terminal or another ANSI-capable terminal is recommended for the terminal-rendered QR. The helper also prints the pairing URI as a fallback.
+Windows Terminal or another ANSI-capable terminal is recommended for the terminal-rendered QR. The command also prints the pairing URI as a fallback.
 
 ## Manual pairing fallback
 
 You can still use:
 
 ```powershell
-assistant-satellite pair
+assistant satellite pair
 ```
 
 Then enter:
@@ -98,18 +98,20 @@ The Windows runtime watches this file and normally applies changes within about 
 Useful commands:
 
 ```powershell
-assistant-satellite show
-assistant-satellite pair
-assistant-satellite pair --qr
-assistant-satellite pair --qr --host <PC-LAN-IP>
-assistant-satellite enable
-assistant-satellite disable
-assistant-satellite bind 0.0.0.0:8765
-assistant-satellite revoke
-assistant-satellite devices
-assistant-satellite revoke-device <device-id>
-assistant-satellite allow-device <device-id>
+assistant satellite show
+assistant satellite pair
+assistant satellite pair --qr
+assistant satellite pair --qr --host <PC-LAN-IP>
+assistant satellite enable
+assistant satellite disable
+assistant satellite bind 0.0.0.0:8765
+assistant satellite revoke
+assistant satellite devices
+assistant satellite revoke-device <device-id>
+assistant satellite allow-device <device-id>
 ```
+
+`assistant-satellite ...` remains available as a compatibility helper, but `assistant satellite ...` is the canonical user-facing command surface.
 
 ## Trusted-device identity
 
@@ -124,7 +126,7 @@ After the token is verified, Windows records the device in:
 Run:
 
 ```powershell
-assistant-satellite devices
+assistant satellite devices
 ```
 
 to see registered devices and their first/last-seen Unix timestamps.
@@ -132,7 +134,7 @@ to see registered devices and their first/last-seen Unix timestamps.
 To block only one phone:
 
 ```powershell
-assistant-satellite revoke-device <device-id>
+assistant satellite revoke-device <device-id>
 ```
 
 A connected revoked phone should be disconnected by Windows within roughly one second and cannot reconnect even if it still knows the current shared token.
@@ -140,7 +142,7 @@ A connected revoked phone should be disconnected by Windows within roughly one s
 To allow it again:
 
 ```powershell
-assistant-satellite allow-device <device-id>
+assistant satellite allow-device <device-id>
 ```
 
 Reinstalling/clearing app storage can create a new installation identity. The current QR transports the shared bootstrap token; device-specific QR credentials and Keystore/DPAPI hardening remain follow-up work.
@@ -148,7 +150,7 @@ Reinstalling/clearing app storage can create a new installation identity. The cu
 ## Using the app
 
 1. Put the phone and PC on the same trusted Wi-Fi/LAN.
-2. Prefer `assistant-satellite pair --qr` on Windows.
+2. Prefer `assistant satellite pair --qr` on Windows.
 3. Scan the QR and confirm the imported desktop address.
 4. Tap **Kết nối**.
 5. Choose **Tiếng Việt** or **English** recognition.
