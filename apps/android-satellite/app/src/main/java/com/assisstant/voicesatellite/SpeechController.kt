@@ -6,20 +6,30 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+
+data class SpeechRecognitionResult(
+    val text: String,
+    val alternatives: List<String>,
+    val confidence: Float?,
+    val elapsedMs: Long,
+    val usedOnDeviceRecognizer: Boolean,
+)
 
 class SpeechController(
     private val context: Context,
     private val onListeningChanged: (Boolean) -> Unit,
     private val onPartialText: (String) -> Unit,
-    private val onFinalText: (String) -> Unit,
+    private val onFinalResult: (SpeechRecognitionResult) -> Unit,
     private val onStatus: (String) -> Unit,
     private val onError: (String) -> Unit,
 ) : RecognitionListener {
     companion object {
         private const val RETRY_DELAY_MS = 350L
+        private const val MAX_RESULT_CANDIDATES = 3
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -30,6 +40,7 @@ class SpeechController(
     private var fallbackAttempted = false
     private var busyRetryAttempted = false
     private var intentionallyCancelled = false
+    private var requestStartedAtMs = 0L
 
     fun start(languageTag: String, preferOnDevice: Boolean) {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
@@ -42,6 +53,7 @@ class SpeechController(
         fallbackAttempted = false
         busyRetryAttempted = false
         intentionallyCancelled = false
+        requestStartedAtMs = SystemClock.elapsedRealtime()
 
         val shouldUseOnDevice = preferOnDevice &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
@@ -78,7 +90,7 @@ class SpeechController(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, MAX_RESULT_CANDIDATES)
             if (onDevice) {
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             }
@@ -183,17 +195,36 @@ class SpeechController(
 
     override fun onResults(results: Bundle?) {
         onListeningChanged(false)
-        val best = results
+        val candidates = results
             ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-            ?.firstOrNull()
-            ?.trim()
             .orEmpty()
-        if (best.isNotEmpty()) {
-            onPartialText(best)
-            onFinalText(best)
-        } else {
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .take(MAX_RESULT_CANDIDATES)
+
+        val best = candidates.firstOrNull().orEmpty()
+        if (best.isEmpty()) {
             onError("Không nhận được nội dung giọng nói cuối cùng. Hãy thử lại.")
+            return
         }
+
+        val confidence = results
+            ?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
+            ?.getOrNull(0)
+            ?.takeIf { score -> score in 0.0f..1.0f }
+        val elapsedMs = (SystemClock.elapsedRealtime() - requestStartedAtMs).coerceAtLeast(0L)
+
+        onPartialText(best)
+        onFinalResult(
+            SpeechRecognitionResult(
+                text = best,
+                alternatives = candidates.drop(1),
+                confidence = confidence,
+                elapsedMs = elapsedMs,
+                usedOnDeviceRecognizer = usingOnDevice,
+            )
+        )
     }
 
     override fun onPartialResults(partialResults: Bundle?) {
