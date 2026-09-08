@@ -5,10 +5,14 @@ use std::{
     env, fs,
     net::{Ipv4Addr, UdpSocket},
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use windows_tools::secret::{
+    is_dpapi_text, protect_text_for_current_user, unprotect_text_for_current_user,
+};
 
 const APP_IDENTIFIER: &str = "com.voduong.assisstantdesktop";
 const SETTINGS_FILE: &str = "satellite.json";
@@ -17,6 +21,7 @@ const REVOKED_DIR: &str = "satellite-revoked";
 const DEFAULT_BIND: &str = "0.0.0.0:8765";
 const MAX_DEVICE_ID_CHARS: usize = 128;
 const MAX_PAIRING_HOST_CHARS: usize = 64;
+const FIREWALL_RULE_NAME: &str = "Assisstant Desktop Voice Satellite";
 
 type CliResult<T> = Result<T, String>;
 
@@ -84,6 +89,7 @@ fn run() -> CliResult<()> {
             Ok(())
         }
         "show" | "status" => show(&settings_path),
+        "doctor" | "diagnose" => doctor(&settings_path, &devices_path, &revoked_dir),
         "pair" => pair(&settings_path, &args[1..]),
         "enable" => set_enabled(&settings_path, true),
         "disable" => set_enabled(&settings_path, false),
@@ -96,6 +102,7 @@ fn run() -> CliResult<()> {
         "allow-device" => {
             set_device_revoked(&devices_path, &revoked_dir, &args[1..], false)
         }
+        "firewall" => firewall_command(&settings_path, &args[1..]),
         other => Err(format!("unknown satellite command `{other}`")),
     }
 }
@@ -109,6 +116,7 @@ USAGE
 
 COMMANDS
   show                                      Show persisted satellite configuration
+  doctor                                    Diagnose pairing, bind, trust and credential storage
   pair [--bind <host:port>]                 Create a new pairing token and enable the receiver
   pair --qr [--host <LAN-IP>] [--bind ...]  Create pairing and print a local terminal QR code
   enable                                    Enable the receiver using the current token
@@ -118,6 +126,9 @@ COMMANDS
   devices                                   List known Android satellite devices
   revoke-device <device-id>                 Revoke one Android device without rotating the shared token
   allow-device <device-id>                  Re-enable a previously revoked Android device
+  firewall show                             Show the named Windows Firewall rule
+  firewall install                          Install/update a Private+LocalSubnet TCP rule for the configured port
+  firewall remove                           Remove only the Assistant satellite firewall rule
 
 QR pairing never sends the token to a web service. The QR is generated locally and
 encodes a compact `assd://p` deep link. When --host is omitted and the listener binds
@@ -125,9 +136,18 @@ to 0.0.0.0, the helper attempts to resolve the PC's routed LAN IPv4 address. Use
 --host explicitly when the machine has multiple adapters or the detected address is
 not reachable from the phone.
 
+New/updated satellite settings protect the pairing token with Windows DPAPI in the
+current-user scope. A legacy plaintext token remains readable for upgrade and is
+migrated the next time the helper writes satellite.json.
+
 The running desktop watches settings/satellite.json and normally applies listener
 changes within about one second. Trusted-device revocation is checked by an active
 phone session about once per second as well.
+
+Firewall install/remove never elevates itself. Run those explicit commands from an
+Administrator terminal when Windows requires elevation. The installed rule is
+restricted to the Private profile and LocalSubnet; do not expose port 8765 to the
+public Internet.
 
 A legacy ASSISTANT_VOICE_SATELLITE_TOKEN environment override takes precedence over
 satellite.json until that environment override is removed. Per-device revocation
@@ -140,14 +160,56 @@ ENVIRONMENT
 }
 
 fn show(path: &Path) -> CliResult<()> {
+    let storage = credential_storage(path)?;
     let settings = load_settings(path)?;
     println!("Satellite Voice");
     println!("  enabled  {}", settings.enabled);
     println!("  bind     {}", settings.bind);
     println!("  paired   {}", settings.token.is_some());
     println!("  token    {}", masked_token(settings.token.as_deref()));
+    println!("  storage  {storage}");
     println!("  file     {}", path.display());
     println!("  apply    automatic while desktop runtime is running (~1 second)");
+    Ok(())
+}
+
+fn doctor(path: &Path, devices_path: &Path, revoked_dir: &Path) -> CliResult<()> {
+    let storage = credential_storage(path)?;
+    let settings = load_settings(path)?;
+    let registry = load_device_registry(devices_path)?;
+    let trusted = registry
+        .devices
+        .iter()
+        .filter(|device| {
+            !device.revoked && !revocation_marker(revoked_dir, &device.id).is_file()
+        })
+        .count();
+    let revoked = registry.devices.len().saturating_sub(trusted);
+    let (host, port) = split_bind(&settings.bind)?;
+    let wildcard = matches!(host, "0.0.0.0" | "::" | "[::]") || host.is_empty();
+
+    println!("Android Voice Satellite diagnostics");
+    println!("  settings             {}", path.display());
+    println!("  enabled              {}", settings.enabled);
+    println!("  paired               {}", settings.token.is_some());
+    println!("  credential_storage   {storage}");
+    println!("  bind                 {}", settings.bind);
+    println!("  port                 {port}");
+    println!("  trusted_devices      {trusted}");
+    println!("  revoked_devices      {revoked}");
+    println!("  wildcard_listener    {wildcard}");
+
+    if storage == "legacy-plaintext" {
+        println!("  warning              pairing token is still plaintext; run `assistant satellite enable` (or another mutating command) to migrate it to current-user DPAPI");
+    }
+    if wildcard {
+        println!("  network              listener can accept traffic on multiple interfaces; keep the firewall Private+LocalSubnet-only");
+    }
+    if env::var_os("ASSISTANT_VOICE_SATELLITE_TOKEN").is_some() {
+        println!("  override             ASSISTANT_VOICE_SATELLITE_TOKEN is set and takes precedence over persisted pairing");
+    }
+    println!("  firewall             inspect with `assistant satellite firewall show`");
+    println!("  remote_access        use a private overlay such as Tailscale; never port-forward this listener directly to the Internet");
     Ok(())
 }
 
@@ -213,6 +275,7 @@ fn pair(path: &Path, args: &[String]) -> CliResult<()> {
     println!("Android Voice Satellite paired configuration created.");
     println!("  bind   {}", settings.bind);
     println!("  token  {token}");
+    println!("  store  Windows DPAPI (current user)");
     println!("  file   {}", path.display());
     println!("If Assisstant Desktop is running, the listener should reload this pairing automatically within about one second.");
 
@@ -344,6 +407,107 @@ fn set_bind(path: &Path, args: &[String]) -> CliResult<()> {
         settings.bind
     );
     Ok(())
+}
+
+fn firewall_command(settings_path: &Path, args: &[String]) -> CliResult<()> {
+    let command = args.first().map(String::as_str).unwrap_or("show");
+    match command {
+        "show" | "status" => run_netsh(&[
+            "advfirewall",
+            "firewall",
+            "show",
+            "rule",
+            &format!("name={FIREWALL_RULE_NAME}"),
+            "verbose",
+        ]),
+        "install" => {
+            if args.len() != 1 {
+                return Err("usage: assistant satellite firewall install".into());
+            }
+            let settings = load_settings(settings_path)?;
+            let (_, port) = split_bind(&settings.bind)?;
+
+            // Delete only our own named rule before creating the desired rule.
+            // A missing previous rule is harmless, so its exit status is ignored.
+            let _ = Command::new("netsh")
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "delete",
+                    "rule",
+                    &format!("name={FIREWALL_RULE_NAME}"),
+                ])
+                .output();
+
+            run_netsh(&[
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                &format!("name={FIREWALL_RULE_NAME}"),
+                "dir=in",
+                "action=allow",
+                "protocol=TCP",
+                &format!("localport={port}"),
+                "profile=private",
+                "remoteip=localsubnet",
+                "enable=yes",
+            ])?;
+            println!("Installed Windows Firewall rule for TCP {port}, Private profile, LocalSubnet only.");
+            Ok(())
+        }
+        "remove" => {
+            if args.len() != 1 {
+                return Err("usage: assistant satellite firewall remove".into());
+            }
+            run_netsh(&[
+                "advfirewall",
+                "firewall",
+                "delete",
+                "rule",
+                &format!("name={FIREWALL_RULE_NAME}"),
+            ])
+        }
+        other => Err(format!(
+            "unknown firewall command `{other}`; use show, install, or remove"
+        )),
+    }
+}
+
+fn run_netsh(args: &[&str]) -> CliResult<()> {
+    #[cfg(windows)]
+    {
+        let output = Command::new("netsh")
+            .args(args)
+            .output()
+            .map_err(|error| format!("cannot launch netsh: {error}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stdout.trim().is_empty() {
+            print!("{stdout}");
+            if !stdout.ends_with('\n') {
+                println!();
+            }
+        }
+        if !output.status.success() {
+            return Err(format!(
+                "netsh failed with {}{}",
+                output.status,
+                if stderr.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", stderr.trim())
+                }
+            ));
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = args;
+        Err("Windows Firewall management is only available on Windows".into())
+    }
 }
 
 fn list_devices(path: &Path, revoked_dir: &Path) -> CliResult<()> {
@@ -523,8 +687,40 @@ fn load_settings(path: &Path) -> CliResult<SatelliteSettings> {
     }
     let bytes = fs::read(path)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|error| format!("cannot parse {}: {error}", path.display()))
+    let mut settings: SatelliteSettings = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
+    if let Some(value) = settings.token.take() {
+        let value = value.trim();
+        let token = if is_dpapi_text(value) {
+            unprotect_text_for_current_user(value).map_err(|error| {
+                format!(
+                    "cannot decrypt satellite pairing token in {} for the current Windows user: {error}",
+                    path.display()
+                )
+            })?
+        } else {
+            value.to_owned()
+        };
+        if !token.is_empty() {
+            settings.token = Some(token);
+        }
+    }
+    Ok(settings)
+}
+
+fn credential_storage(path: &Path) -> CliResult<&'static str> {
+    if !path.exists() {
+        return Ok("not-configured");
+    }
+    let bytes = fs::read(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let settings: SatelliteSettings = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
+    match settings.token.as_deref().map(str::trim) {
+        None | Some("") => Ok("not-configured"),
+        Some(value) if is_dpapi_text(value) => Ok("dpapi-current-user"),
+        Some(_) => Ok("legacy-plaintext"),
+    }
 }
 
 fn save_settings(path: &Path, settings: &SatelliteSettings) -> CliResult<()> {
@@ -534,8 +730,17 @@ fn save_settings(path: &Path, settings: &SatelliteSettings) -> CliResult<()> {
     fs::create_dir_all(parent)
         .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
 
+    let mut persisted = settings.clone();
+    if let Some(token) = settings.token.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        persisted.token = Some(protect_text_for_current_user(token).map_err(|error| {
+            format!("cannot protect satellite pairing token with Windows DPAPI: {error}")
+        })?);
+    } else {
+        persisted.token = None;
+    }
+
     let temp = path.with_extension(format!("json.tmp-{}", std::process::id()));
-    let bytes = serde_json::to_vec_pretty(settings)
+    let bytes = serde_json::to_vec_pretty(&persisted)
         .map_err(|error| format!("cannot serialize satellite settings: {error}"))?;
     fs::write(&temp, bytes)
         .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
