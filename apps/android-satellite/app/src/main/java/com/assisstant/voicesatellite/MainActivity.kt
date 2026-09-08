@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
     private var connected by mutableStateOf(false)
     private var connectionStatus by mutableStateOf("Chưa kết nối")
     private var listening by mutableStateOf(false)
+    private var assistantTurnState by mutableStateOf("idle")
     private var partialText by mutableStateOf("")
     private var lastResponse by mutableStateOf("")
     private var statusMessage by mutableStateOf("")
@@ -66,15 +67,22 @@ class MainActivity : ComponentActivity() {
             onConnectionChanged = { ready, status ->
                 connected = ready
                 connectionStatus = status
+                if (!ready) {
+                    assistantTurnState = "idle"
+                }
             },
             onTurnState = { state ->
+                assistantTurnState = if (state == "cancelled") "idle" else state
                 statusMessage = when (state) {
                     "processing" -> "Desktop đang xử lý lệnh…"
                     "speaking" -> "Desktop đang trả lời…"
+                    "cancelled" -> "Đã dừng Assistant."
+                    "idle" -> "Sẵn sàng"
                     else -> state
                 }
             },
             onResponse = { text, ttsError ->
+                assistantTurnState = "idle"
                 lastResponse = text
                 statusMessage = if (ttsError == null) {
                     "Hoàn tất"
@@ -94,6 +102,7 @@ class MainActivity : ComponentActivity() {
                 if (!satelliteClient.sendCommand(finalText, responseLanguage)) {
                     statusMessage = "Chưa kết nối với desktop hoặc kết nối chưa sẵn sàng."
                 } else {
+                    assistantTurnState = "processing"
                     statusMessage = "Đã gửi lệnh cho desktop."
                 }
             },
@@ -183,6 +192,7 @@ class MainActivity : ComponentActivity() {
                     onClick = {
                         satelliteClient.close()
                         connected = false
+                        assistantTurnState = "idle"
                         connectionStatus = "Đã ngắt kết nối"
                     },
                     enabled = connected,
@@ -250,7 +260,7 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(58.dp),
-                enabled = connected,
+                enabled = connected && assistantTurnState == "idle",
                 onClick = {
                     if (listening) {
                         speechController.stop()
@@ -262,6 +272,21 @@ class MainActivity : ComponentActivity() {
                 },
             ) {
                 Text(if (listening) "Dừng nghe" else "Nói với Assistant")
+            }
+
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = connected && assistantTurnState in setOf("processing", "speaking"),
+                onClick = {
+                    speechController.cancel()
+                    if (satelliteClient.sendCancel()) {
+                        statusMessage = "Đang yêu cầu desktop dừng…"
+                    } else {
+                        statusMessage = "Không thể gửi yêu cầu dừng cho desktop."
+                    }
+                },
+            ) {
+                Text("Dừng Assistant")
             }
 
             if (partialText.isNotBlank()) {
@@ -290,6 +315,7 @@ class MainActivity : ComponentActivity() {
                     satelliteClient.close()
                 }
                 connected = false
+                assistantTurnState = "idle"
                 connectionStatus = "Đã nhập pairing từ QR"
                 desktopAddress = pairing.desktopAddress
                 pairingToken = pairing.token
@@ -304,6 +330,10 @@ class MainActivity : ComponentActivity() {
     private fun startSpeechRecognition() {
         if (!satelliteClient.isReady()) {
             statusMessage = "Hãy kết nối với desktop trước."
+            return
+        }
+        if (assistantTurnState != "idle") {
+            statusMessage = "Assistant đang xử lý tác vụ khác. Hãy dừng hoặc chờ hoàn tất."
             return
         }
         saveSettings()
