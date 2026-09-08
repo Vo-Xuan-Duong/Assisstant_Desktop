@@ -79,6 +79,10 @@ export default function SatelliteDiagnostics() {
   };
 
   const satellite = report?.satellite;
+  const effectivelyPaired = Boolean(satellite?.paired || satellite?.environment_token_override);
+  const credentialLabel = satellite?.environment_token_override
+    ? "environment-override"
+    : satellite?.credential_storage;
 
   return (
     <div className={`satellite-diagnostics ${open ? "is-open" : ""}`}>
@@ -114,9 +118,9 @@ export default function SatelliteDiagnostics() {
             <>
               <div className="satellite-diagnostics-grid">
                 <div><span>Listener</span><strong>{satellite.enabled ? "Enabled" : "Disabled"}</strong></div>
-                <div><span>Pairing</span><strong>{satellite.paired ? "Paired" : "Unpaired"}</strong></div>
+                <div><span>Pairing</span><strong>{effectivelyPaired ? (satellite.environment_token_override ? "Paired (env)" : "Paired") : "Unpaired"}</strong></div>
                 <div><span>Bind</span><code>{satellite.bind}</code></div>
-                <div><span>Credential</span><strong>{satellite.credential_storage}</strong></div>
+                <div><span>Credential</span><strong>{credentialLabel}</strong></div>
                 <div><span>Remote</span><strong>{satellite.remote_managed ? `Tailscale :${satellite.remote_port ?? "?"}` : "LAN/local"}</strong></div>
                 <div><span>Devices</span><strong>{satellite.trusted_devices} trusted · {satellite.revoked_devices} revoked</strong></div>
               </div>
