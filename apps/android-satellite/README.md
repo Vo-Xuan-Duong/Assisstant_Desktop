@@ -12,9 +12,13 @@ It listens through Android `SpeechRecognizer`, shows partial recognition locally
 - Android on-device recognizer when available;
 - system `SpeechRecognizer` fallback;
 - push-to-talk;
+- Quick Settings **Assistant Voice** tile for fast activation;
+- manual interrupt-to-talk while desktop is Processing/Speaking;
+- automatic WebSocket reconnect with bounded exponential backoff;
+- one bounded recognizer-busy retry and on-device → system recognizer fallback;
 - authenticated WebSocket connection over trusted LAN;
 - QR/deep-link pairing without manually typing the endpoint/token;
-- pairing token protected with an Android Keystore AES-256-GCM key;
+- pairing token protected with an Android Keystore AES-GCM key;
 - stable per-installation `device_id`;
 - desktop trusted-device registry and per-device revoke;
 - response modes `VI`, `EN`, `Auto`;
@@ -152,7 +156,7 @@ Reinstalling/clearing app storage can create a new installation identity. The cu
 
 New and imported pairing tokens are no longer intentionally persisted as plaintext in the normal `voice_satellite` preferences file.
 
-The app creates an AES-256 key in the `AndroidKeyStore` provider and encrypts the token with `AES/GCM/NoPadding`. Only the IV and ciphertext are stored in the private `voice_satellite_secrets` preferences file; the AES key remains managed by Android Keystore.
+The app creates an AES key in the `AndroidKeyStore` provider and encrypts the token with `AES/GCM/NoPadding`. AES-256 is preferred and the implementation can fall back to AES-128 on a Keystore that rejects a 256-bit key. Only the IV and ciphertext are stored in the private `voice_satellite_secrets` preferences file; the AES key remains managed by Android Keystore.
 
 Existing installs are migrated conservatively:
 
@@ -177,13 +181,58 @@ The token still exists in process memory while the app is connected or showing t
 10. Only the final text is submitted to Windows.
 11. Windows processes the command through Assistant Core/Antigravity/MCP/permissions and speaks the answer through desktop TTS.
 
+If the desktop is already Processing or Speaking, the main button becomes **Nói ngắt Assistant**. It uses the authenticated cancellation control channel first and starts a new recognition turn only after the desktop confirms cancellation. Executing/Confirming remain intentionally non-cancellable.
+
+## Quick Settings activation
+
+After installing the app, add the **Assistant Voice** tile from Android's Quick Settings tile editor.
+
+Tapping it:
+
+1. opens `MainActivity` through the platform-supported tile launch API;
+2. never bypasses microphone permission;
+3. reconnects to the saved paired desktop when needed;
+4. if the desktop is Processing/Speaking, requests the same safe cancellation used by **Nói ngắt Assistant**;
+5. starts speech recognition only when the desktop is ready.
+
+On Android 14+ the tile uses the required `PendingIntent` launch API; Android 8–13 use the older Intent overload. The user must grant microphone permission in the app at least once before one-tap tile activation can start listening.
+
+## Connection resilience
+
+A transient WebSocket loss does not require manually tapping **Kết nối** again. The Android client reconnects with bounded exponential backoff:
+
+```text
+1s → 2s → 4s → 8s → 15s max
+```
+
+Each connection attempt has a generation id so callbacks from an older socket cannot overwrite the state of a newer connection.
+
+Authentication failures and device revocation are terminal for automatic reconnect: the app stops retrying and asks the user to pair/allow the device again.
+
+Commands are **not automatically resent** after a transport failure. This is deliberate because a Windows action may already have executed even if the response was lost. Desktop command-id replay protection remains the duplicate-execution safety boundary.
+
 ## Speech-recognition behavior
 
 When on-device recognition is preferred, the app uses Android's on-device recognizer only when the platform reports it available. Otherwise it falls back to the normal system recognizer.
 
+If an on-device recognizer becomes busy, disconnects, or reports a server/engine failure, the app performs one bounded fallback to the normal system recognizer. A busy recognizer can also be recreated and retried once. The app does not create an unlimited recognition retry loop.
+
 The normal recognizer is vendor-dependent. On phones using Google services it may be backed by Google's speech-recognition service and may require Internet. No dedicated paid STT API key is required by this project.
 
-`SpeechRecognizer` is not kept running continuously; always-on wake/hardware activation is a later phase.
+`SpeechRecognizer` is not kept running continuously. Quick Settings is the current fast activation path; an optional local wake word can be added later without turning `SpeechRecognizer` into a 24/7 loop.
+
+## Barge-in scope
+
+Current barge-in is **explicit/manual**:
+
+```text
+Tap Nói ngắt Assistant / Quick Settings activation
+  → cancel Processing or Speaking
+  → wait for desktop cancellation acknowledgement
+  → start a fresh Android SpeechRecognizer turn
+```
+
+This is intentionally different from automatic acoustic full-duplex barge-in. Listening for user speech while desktop audio is playing reliably requires acoustic echo cancellation/reference audio handling; that future AEC/full-duplex work is not claimed complete here.
 
 ## Security notes
 
