@@ -79,6 +79,20 @@ execFileSync("cargo", satelliteArgs, {
   stdio: "inherit",
 });
 
+const ttsArgs = [
+  "build",
+  "-p",
+  "assisstant-desktop",
+  "--bin",
+  "assistant-tts",
+  "--locked",
+];
+if (requestedProfile === "release") ttsArgs.push("--release");
+execFileSync("cargo", ttsArgs, {
+  cwd: repoRoot,
+  stdio: "inherit",
+});
+
 // Sherpa stays in DLLs to isolate its bundled protobuf from SentencePiece's.
 const voiceArgs = ["build", "-p", "voice-runtime", "--features", "wake-sherpa", "--locked"];
 if (requestedProfile === "release") voiceArgs.push("--release");
@@ -104,6 +118,10 @@ const satelliteSource = path.join(targetDir, requestedProfile, "assistant-satell
 if (!existsSync(satelliteSource)) {
   throw new Error(`Expected satellite management helper was not produced: ${satelliteSource}`);
 }
+const ttsSource = path.join(targetDir, requestedProfile, "assistant-tts.exe");
+if (!existsSync(ttsSource)) {
+  throw new Error(`Expected TTS management helper was not produced: ${ttsSource}`);
+}
 
 const binariesDir = path.join(tauriDir, "binaries");
 mkdirSync(binariesDir, { recursive: true });
@@ -127,6 +145,11 @@ const satelliteDestination = path.join(
   `assistant-satellite-${targetTriple}.exe`,
 );
 copyFileSync(satelliteSource, satelliteDestination);
+const ttsDestination = path.join(
+  binariesDir,
+  `assistant-tts-${targetTriple}.exe`,
+);
+copyFileSync(ttsSource, ttsDestination);
 
 const runtimeDir = path.join(targetDir, requestedProfile);
 const runtimeDlls = readdirSync(runtimeDir).filter((name) =>
@@ -147,3 +170,4 @@ console.log(`Staged assistant-mcp sidecar: ${destination}`);
 console.log(`Staged canonical assistant CLI: ${assistantDestination}`);
 console.log(`Staged assistant core management CLI: ${assistantCoreDestination}`);
 console.log(`Staged satellite management helper: ${satelliteDestination}`);
+console.log(`Staged TTS management helper: ${ttsDestination}`);
