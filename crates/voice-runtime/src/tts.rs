@@ -9,7 +9,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use thiserror::Error;
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -31,7 +31,8 @@ const SAPI_LANG_VI_VN: &str = "42A";
 const APP_IDENTIFIER: &str = "com.voduong.assisstantdesktop";
 const TTS_SETTINGS_ENV: &str = "ASSISTANT_TTS_SETTINGS_PATH";
 const APP_DATA_ENV: &str = "ASSISTANT_APP_DATA";
-const TTS_SETTINGS_FILE: &str = "tts.json";
+const TTS_SETTINGS_FILE: &str = "tts.conf";
+const TTS_SETTINGS_VERSION: &str = "1";
 
 #[derive(Debug, Error)]
 pub enum TtsError {
@@ -77,7 +78,7 @@ impl Default for TtsConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct TtsVoicePreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vietnamese_voice_id: Option<String>,
@@ -125,8 +126,8 @@ pub fn default_voice_preferences_path() -> Option<PathBuf> {
 }
 
 pub fn load_voice_preferences(path: &Path) -> Result<TtsVoicePreferences, TtsError> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(TtsVoicePreferences::default());
         }
@@ -137,12 +138,71 @@ pub fn load_voice_preferences(path: &Path) -> Result<TtsVoicePreferences, TtsErr
             )));
         }
     };
-    serde_json::from_slice(&bytes).map_err(|error| {
-        TtsError::Backend(format!(
-            "cannot parse TTS settings {}: {error}",
+
+    let mut preferences = TtsVoicePreferences::default();
+    let mut saw_version = false;
+    let mut saw_vi = false;
+    let mut saw_en = false;
+    for (index, raw_line) in text.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(TtsError::Backend(format!(
+                "invalid TTS settings {} line {}: expected key=value",
+                path.display(),
+                index + 1
+            )));
+        };
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "version" => {
+                if saw_version || value != TTS_SETTINGS_VERSION {
+                    return Err(TtsError::Backend(format!(
+                        "unsupported or duplicate TTS settings version in {}",
+                        path.display()
+                    )));
+                }
+                saw_version = true;
+            }
+            "vietnamese_voice_id" => {
+                if saw_vi {
+                    return Err(TtsError::Backend(format!(
+                        "duplicate vietnamese_voice_id in {}",
+                        path.display()
+                    )));
+                }
+                saw_vi = true;
+                preferences.vietnamese_voice_id = normalize_saved_voice_id(value, path)?;
+            }
+            "english_voice_id" => {
+                if saw_en {
+                    return Err(TtsError::Backend(format!(
+                        "duplicate english_voice_id in {}",
+                        path.display()
+                    )));
+                }
+                saw_en = true;
+                preferences.english_voice_id = normalize_saved_voice_id(value, path)?;
+            }
+            other => {
+                return Err(TtsError::Backend(format!(
+                    "unknown TTS settings key `{other}` in {}",
+                    path.display()
+                )));
+            }
+        }
+    }
+
+    if !saw_version {
+        return Err(TtsError::Backend(format!(
+            "TTS settings {} are missing version=1",
             path.display()
-        ))
-    })
+        )));
+    }
+    Ok(preferences)
 }
 
 pub fn save_voice_preferences(
@@ -157,14 +217,58 @@ pub fn save_voice_preferences(
             ))
         })?;
     }
-    let bytes = serde_json::to_vec_pretty(preferences)
-        .map_err(|error| TtsError::Backend(format!("cannot encode TTS settings: {error}")))?;
-    fs::write(path, bytes).map_err(|error| {
+
+    let vi = validate_voice_id_for_save(preferences.vietnamese_voice_id.as_deref())?;
+    let en = validate_voice_id_for_save(preferences.english_voice_id.as_deref())?;
+    let payload = format!(
+        "version={TTS_SETTINGS_VERSION}\nvietnamese_voice_id={vi}\nenglish_voice_id={en}\n"
+    );
+    let temporary = path.with_extension("conf.tmp");
+    fs::write(&temporary, payload).map_err(|error| {
         TtsError::Backend(format!(
-            "cannot write TTS settings {}: {error}",
+            "cannot write temporary TTS settings {}: {error}",
+            temporary.display()
+        ))
+    })?;
+    if path.exists() {
+        fs::remove_file(path).map_err(|error| {
+            let _ = fs::remove_file(&temporary);
+            TtsError::Backend(format!(
+                "cannot replace TTS settings {}: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    fs::rename(&temporary, path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        TtsError::Backend(format!(
+            "cannot commit TTS settings {}: {error}",
             path.display()
         ))
     })
+}
+
+fn normalize_saved_voice_id(value: &str, path: &Path) -> Result<Option<String>, TtsError> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.chars().any(|ch| ch.is_control()) {
+        return Err(TtsError::Backend(format!(
+            "TTS voice id in {} contains control characters",
+            path.display()
+        )));
+    }
+    Ok(Some(value.to_owned()))
+}
+
+fn validate_voice_id_for_save(value: Option<&str>) -> Result<&str, TtsError> {
+    let value = value.map(str::trim).unwrap_or("");
+    if value.chars().any(|ch| ch.is_control()) {
+        return Err(TtsError::Backend(
+            "TTS voice token id contains control characters".into(),
+        ));
+    }
+    Ok(value)
 }
 
 pub fn enumerate_windows_sapi_voices() -> Result<Vec<SapiVoiceInfo>, TtsError> {
@@ -660,5 +764,20 @@ mod tests {
         assert_eq!(preferences.preferred_id(TtsLanguage::Vietnamese), Some("vi-id"));
         assert_eq!(preferences.preferred_id(TtsLanguage::English), Some("en-id"));
         assert_eq!(preferences.preferred_id(TtsLanguage::Auto), None);
+    }
+
+    #[test]
+    fn settings_parser_is_strict_and_versioned() {
+        let unique = format!("assistant-tts-test-{}", std::process::id());
+        let path = std::env::temp_dir().join(unique).with_extension("conf");
+        fs::write(
+            &path,
+            "version=1\nvietnamese_voice_id=vi-id\nenglish_voice_id=en-id\n",
+        )
+        .unwrap();
+        let loaded = load_voice_preferences(&path).unwrap();
+        assert_eq!(loaded.vietnamese_voice_id.as_deref(), Some("vi-id"));
+        assert_eq!(loaded.english_voice_id.as_deref(), Some("en-id"));
+        let _ = fs::remove_file(path);
     }
 }
