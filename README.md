@@ -60,6 +60,8 @@ Implemented in source:
 - Quick Settings `Assistant Voice` tile;
 - bounded WebSocket reconnect backoff;
 - bounded SpeechRecognizer fallback/retry;
+- read-only Android STT engine/confidence/alternatives/latency diagnostics;
+- completed desktop-turn timing through AI/tool/TTS response completion;
 - `VI`, `EN`, `Auto` response-language propagation;
 - selectable installed Windows SAPI voices for Vietnamese and English;
 - locale/default SAPI fallback;
@@ -108,6 +110,7 @@ Current behavior:
 - reconnect backoff `1s -> 2s -> 4s -> 8s -> 15s max`;
 - no automatic replay of a command after transport failure;
 - bounded on-device -> system recognizer fallback;
+- optional confidence/alternatives/engine/timing diagnostics without changing submitted command text;
 - optional **Hội thoại liên tục** turn-taking mode.
 
 `SpeechRecognizer` is **not** kept running continuously as an always-listening loop.
@@ -272,6 +275,27 @@ The Android app needs no Tailscale SDK: install the normal Tailscale Android cli
 
 See [`docs/PHASE30_TAILSCALE_REMOTE.md`](docs/PHASE30_TAILSCALE_REMOTE.md).
 
+## Voice diagnostics
+
+Android displays read-only recognition metadata for real-device tuning:
+
+```text
+STT: on-device · 842 ms · confidence 91%
+Phương án khác: Mở Visual Studio Cốt · Mở VS Code
+```
+
+The first Android recognition candidate remains the exact command sent to Windows. Additional candidates are display-only, and confidence is shown only when the recognizer supplies a valid value. No confidence threshold or alternative automatically changes the command.
+
+The response view also records the completed desktop turn from successful command submission until the desktop response arrives after AI/tool/TTS processing:
+
+```text
+Desktop turn: 2380 ms (AI/tool/TTS đến khi response hoàn tất)
+```
+
+This is not a pure network RTT measurement.
+
+See [`docs/PHASE29B_VOICE_DIAGNOSTICS.md`](docs/PHASE29B_VOICE_DIAGNOSTICS.md).
+
 ## Spoken responses
 
 Android sends the desired response mode:
@@ -339,6 +363,8 @@ The switch alone does not activate the microphone; a session starts from a user-
 Conversation mode stops instead of looping indefinitely when there is silence/`NO_MATCH`, a terminal recognizer error, TTS failure, permission loss, desktop disconnect, or an invalid next-turn state.
 
 Android exposes **Kết thúc hội thoại** to cancel Android listening/pending follow-up. This does not cancel a Windows action just because the user does not want another turn; **Dừng Assistant** remains the explicit desktop cancellation control.
+
+Automatic follow-up windows reuse current in-memory preferences and do not rewrite Android settings/Keystore on every conversational turn.
 
 See [`docs/PHASE31_CONVERSATIONAL_VOICE.md`](docs/PHASE31_CONVERSATIONAL_VOICE.md).
 
@@ -458,6 +484,8 @@ Do not equate source completion with device verification. Validate locally:
 - trusted-device revoke works while connected;
 - firewall rule is exactly Private + LocalSubnet;
 - `vi-VN` / `en-US` recognition works on the target phone;
+- STT engine/confidence/alternatives/timing diagnostics match what the target recognizer returns;
+- alternatives never cause additional commands;
 - selected Vietnamese/English SAPI voices work on the target Windows installation;
 - Stop/interrupt-to-talk works across Processing/Speaking;
 - reconnect does not replay an already-submitted Windows action;
@@ -473,12 +501,12 @@ Per project policy, repository implementation does not run remote GitHub Actions
 
 ## Remaining roadmap
 
-The core functional MVP is implemented in source through **Phase 31A**. Remaining work is primarily validation, product polish, and optional higher-complexity capabilities:
+The core functional MVP is implemented in source through **Phase 31A**, with Phase 29B diagnostics added for target-device tuning. Remaining work is primarily validation, product polish, and optional higher-complexity capabilities:
 
 - local Windows/Android/Tailscale acceptance testing;
-- richer device/latency/recognizer diagnostics in product UI;
+- richer connected-device diagnostics in desktop product UI;
 - optional notification/headset/hardware activation surfaces;
-- optional confidence/alternative-result and app-name normalization UX;
+- optional domain/app-name normalization after real recognition data demonstrates a need;
 - **Phase 31B** automatic acoustic full duplex only after a real AEC/reference-audio architecture exists.
 
 Automatic acoustic barge-in will not be enabled by pretending RMS VAD can distinguish user speech from the desktop speaker.
@@ -492,5 +520,6 @@ Authoritative roadmap: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
 - [`docs/PHASE26_WINDOWS_HARDENING.md`](docs/PHASE26_WINDOWS_HARDENING.md)
 - [`docs/PHASE27C_SAPI_VOICE_PREFERENCES.md`](docs/PHASE27C_SAPI_VOICE_PREFERENCES.md)
 - [`docs/PHASE28_29_ANDROID_ACTIVATION_RESILIENCE.md`](docs/PHASE28_29_ANDROID_ACTIVATION_RESILIENCE.md)
+- [`docs/PHASE29B_VOICE_DIAGNOSTICS.md`](docs/PHASE29B_VOICE_DIAGNOSTICS.md)
 - [`docs/PHASE30_TAILSCALE_REMOTE.md`](docs/PHASE30_TAILSCALE_REMOTE.md)
 - [`docs/PHASE31_CONVERSATIONAL_VOICE.md`](docs/PHASE31_CONVERSATIONAL_VOICE.md)
