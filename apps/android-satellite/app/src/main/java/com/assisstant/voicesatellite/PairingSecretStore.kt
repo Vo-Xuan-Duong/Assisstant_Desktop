@@ -11,8 +11,8 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 class PairingSecretStore(context: Context) {
-    private val appContext = context.applicationContext
-    private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs = context.applicationContext
+        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun loadToken(): Result<String?> = runCatching {
         val ivEncoded = prefs.getString(KEY_IV, null) ?: return@runCatching null
@@ -31,7 +31,7 @@ class PairingSecretStore(context: Context) {
     fun saveToken(rawToken: String): Result<Unit> = runCatching {
         val token = rawToken.trim()
         if (token.isEmpty()) {
-            clear()
+            check(clearPersistedSecret()) { "Android could not persist pairing-secret removal." }
             return@runCatching
         }
 
@@ -40,18 +40,17 @@ class PairingSecretStore(context: Context) {
         val ciphertext = cipher.doFinal(token.toByteArray(Charsets.UTF_8))
         val iv = cipher.iv ?: error("Android Keystore did not provide an AES-GCM IV.")
 
-        prefs.edit()
+        val persisted = prefs.edit()
             .putString(KEY_IV, Base64.encodeToString(iv, Base64.NO_WRAP))
             .putString(KEY_CIPHERTEXT, Base64.encodeToString(ciphertext, Base64.NO_WRAP))
-            .apply()
+            .commit()
+        check(persisted) { "Android could not persist the encrypted pairing credential." }
     }
 
-    fun clear() {
-        prefs.edit()
-            .remove(KEY_IV)
-            .remove(KEY_CIPHERTEXT)
-            .apply()
-    }
+    private fun clearPersistedSecret(): Boolean = prefs.edit()
+        .remove(KEY_IV)
+        .remove(KEY_CIPHERTEXT)
+        .commit()
 
     private fun getOrCreateKey(): SecretKey {
         val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
