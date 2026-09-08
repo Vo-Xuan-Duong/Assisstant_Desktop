@@ -72,11 +72,11 @@ class MainActivity : ComponentActivity() {
                 }
             },
             onTurnState = { state ->
-                assistantTurnState = state
+                assistantTurnState = if (state == "cancelled") "idle" else state
                 statusMessage = when (state) {
                     "processing" -> "Desktop đang xử lý lệnh…"
                     "speaking" -> "Desktop đang trả lời…"
-                    "cancelled" -> "Đã yêu cầu dừng Assistant."
+                    "cancelled" -> "Đã dừng Assistant."
                     "idle" -> "Sẵn sàng"
                     else -> state
                 }
