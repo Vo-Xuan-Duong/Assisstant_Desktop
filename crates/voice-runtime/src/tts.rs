@@ -1,4 +1,6 @@
 use std::{
+    env, fs,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         mpsc::{self, Receiver, Sender, TryRecvError},
@@ -7,13 +9,15 @@ use std::{
 };
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::oneshot;
+use tracing::warn;
 use windows::{
     Win32::{
         Media::Speech::{
-            ISpeechVoice, SVSFIsXML, SVSFPurgeBeforeSpeak, SVSFlagsAsync, SpVoice,
-            SpeechVoiceSpeakFlags,
+            ISpeechObjectToken, ISpeechVoice, SVSFIsXML, SVSFPurgeBeforeSpeak, SVSFlagsAsync,
+            SpVoice, SpeechVoiceSpeakFlags,
         },
         System::Com::{
             CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
@@ -24,6 +28,10 @@ use windows::{
 
 const SAPI_LANG_EN_US: &str = "409";
 const SAPI_LANG_VI_VN: &str = "42A";
+const APP_IDENTIFIER: &str = "com.voduong.assisstantdesktop";
+const TTS_SETTINGS_ENV: &str = "ASSISTANT_TTS_SETTINGS_PATH";
+const APP_DATA_ENV: &str = "ASSISTANT_APP_DATA";
+const TTS_SETTINGS_FILE: &str = "tts.json";
 
 #[derive(Debug, Error)]
 pub enum TtsError {
@@ -69,6 +77,148 @@ impl Default for TtsConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TtsVoicePreferences {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vietnamese_voice_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub english_voice_id: Option<String>,
+}
+
+impl TtsVoicePreferences {
+    fn preferred_id(&self, language: TtsLanguage) -> Option<&str> {
+        match language {
+            TtsLanguage::Vietnamese => self.vietnamese_voice_id.as_deref(),
+            TtsLanguage::English => self.english_voice_id.as_deref(),
+            TtsLanguage::Auto => None,
+        }
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SapiVoiceInfo {
+    pub id: String,
+    pub name: String,
+    pub language: Option<String>,
+}
+
+pub fn default_voice_preferences_path() -> Option<PathBuf> {
+    if let Some(path) = env::var_os(TTS_SETTINGS_ENV).map(PathBuf::from) {
+        if path.is_absolute() {
+            return Some(path);
+        }
+    }
+
+    if let Some(root) = env::var_os(APP_DATA_ENV).map(PathBuf::from) {
+        if root.is_absolute() {
+            return Some(root.join("settings").join(TTS_SETTINGS_FILE));
+        }
+    }
+
+    env::var_os("LOCALAPPDATA").map(PathBuf::from).map(|root| {
+        root.join(APP_IDENTIFIER)
+            .join("settings")
+            .join(TTS_SETTINGS_FILE)
+    })
+}
+
+pub fn load_voice_preferences(path: &Path) -> Result<TtsVoicePreferences, TtsError> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(TtsVoicePreferences::default());
+        }
+        Err(error) => {
+            return Err(TtsError::Backend(format!(
+                "cannot read TTS settings {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    serde_json::from_slice(&bytes).map_err(|error| {
+        TtsError::Backend(format!(
+            "cannot parse TTS settings {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+pub fn save_voice_preferences(
+    path: &Path,
+    preferences: &TtsVoicePreferences,
+) -> Result<(), TtsError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            TtsError::Backend(format!(
+                "cannot create TTS settings directory {}: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    let bytes = serde_json::to_vec_pretty(preferences)
+        .map_err(|error| TtsError::Backend(format!("cannot encode TTS settings: {error}")))?;
+    fs::write(path, bytes).map_err(|error| {
+        TtsError::Backend(format!(
+            "cannot write TTS settings {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+pub fn enumerate_windows_sapi_voices() -> Result<Vec<SapiVoiceInfo>, TtsError> {
+    let initialize = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    if initialize.is_err() {
+        return Err(TtsError::Backend(
+            WindowsError::from_hresult(initialize).to_string(),
+        ));
+    }
+    let _com = ComGuard;
+
+    let voice: ISpeechVoice = unsafe { CoCreateInstance(&SpVoice, None, CLSCTX_ALL) }
+        .map_err(|error| TtsError::Backend(error.to_string()))?;
+    enumerate_voice_tokens(&voice)
+}
+
+fn enumerate_voice_tokens(voice: &ISpeechVoice) -> Result<Vec<SapiVoiceInfo>, TtsError> {
+    let empty = BSTR::from("");
+    let voices = unsafe { voice.GetVoices(&empty, &empty) }
+        .map_err(|error| TtsError::Backend(error.to_string()))?;
+    let count = unsafe { voices.Count() }
+        .map_err(|error| TtsError::Backend(error.to_string()))?
+        .max(0);
+    let language_attribute = BSTR::from("Language");
+    let mut result = Vec::with_capacity(count as usize);
+
+    for index in 0..count {
+        let token = match unsafe { voices.Item(index) } {
+            Ok(token) => token,
+            Err(error) => {
+                warn!(index, %error, "failed to inspect one installed SAPI voice token");
+                continue;
+            }
+        };
+        let id = match unsafe { token.Id() } {
+            Ok(value) => value.to_string(),
+            Err(error) => {
+                warn!(index, %error, "installed SAPI voice token has no readable id");
+                continue;
+            }
+        };
+        let name = unsafe { token.GetDescription(0) }
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| id.clone());
+        let language = unsafe { token.GetAttribute(&language_attribute) }
+            .ok()
+            .map(|value| value.to_string())
+            .filter(|value| !value.trim().is_empty());
+        result.push(SapiVoiceInfo { id, name, language });
+    }
+
+    Ok(result)
+}
+
 #[async_trait]
 pub trait TextToSpeech: Send + Sync {
     async fn speak(&self, text: &str) -> Result<(), TtsError>;
@@ -93,6 +243,7 @@ pub trait TextToSpeech: Send + Sync {
 #[derive(Clone)]
 pub struct WindowsSapiTts {
     runtime: Arc<SapiRuntime>,
+    preferences_path: Option<PathBuf>,
 }
 
 impl Default for WindowsSapiTts {
@@ -103,8 +254,13 @@ impl Default for WindowsSapiTts {
 
 impl WindowsSapiTts {
     pub fn new(config: TtsConfig) -> Self {
+        Self::new_with_preferences_path(config, default_voice_preferences_path())
+    }
+
+    pub fn new_with_preferences_path(config: TtsConfig, preferences_path: Option<PathBuf>) -> Self {
         Self {
             runtime: Arc::new(SapiRuntime::spawn(config)),
+            preferences_path,
         }
     }
 
@@ -116,8 +272,19 @@ impl WindowsSapiTts {
         if text.trim().is_empty() {
             return Err(TtsError::EmptyText);
         }
+        let resolved_language = resolve_language(language, text);
+        let preferences = match self.preferences_path.as_deref() {
+            Some(path) => match load_voice_preferences(path) {
+                Ok(preferences) => preferences,
+                Err(error) => {
+                    warn!(%error, "ignoring invalid TTS voice preferences for this utterance");
+                    TtsVoicePreferences::default()
+                }
+            },
+            None => TtsVoicePreferences::default(),
+        };
         self.runtime
-            .speak(text.to_owned(), resolve_language(language, text))
+            .speak(text.to_owned(), resolved_language, preferences)
             .await
     }
 
@@ -152,6 +319,7 @@ enum SapiCommand {
     Speak {
         text: String,
         language: TtsLanguage,
+        preferences: TtsVoicePreferences,
         result: oneshot::Sender<Result<(), TtsError>>,
     },
     Cancel,
@@ -173,7 +341,12 @@ impl SapiRuntime {
         }
     }
 
-    async fn speak(&self, text: String, language: TtsLanguage) -> Result<(), TtsError> {
+    async fn speak(
+        &self,
+        text: String,
+        language: TtsLanguage,
+        preferences: TtsVoicePreferences,
+    ) -> Result<(), TtsError> {
         let commands = self.commands.as_ref().ok_or_else(|| {
             TtsError::Worker("Windows SAPI worker thread could not be started".into())
         })?;
@@ -182,6 +355,7 @@ impl SapiRuntime {
             .send(SapiCommand::Speak {
                 text,
                 language,
+                preferences,
                 result: result_tx,
             })
             .map_err(|_| TtsError::Worker("Windows SAPI worker is unavailable".into()))?;
@@ -213,6 +387,7 @@ fn sapi_worker(config: TtsConfig, receiver: Receiver<SapiCommand>) {
             return;
         }
     };
+    let default_voice = unsafe { voice.Voice() }.ok();
 
     let setup = unsafe {
         voice
@@ -229,8 +404,10 @@ fn sapi_worker(config: TtsConfig, receiver: Receiver<SapiCommand>) {
             SapiCommand::Speak {
                 text,
                 language,
+                preferences,
                 result,
             } => {
+                apply_preferred_voice(&voice, default_voice.as_ref(), language, &preferences);
                 if !run_speech(&voice, &receiver, text, language, result) {
                     break;
                 }
@@ -241,6 +418,66 @@ fn sapi_worker(config: TtsConfig, receiver: Receiver<SapiCommand>) {
             }
         }
     }
+}
+
+fn apply_preferred_voice(
+    voice: &ISpeechVoice,
+    default_voice: Option<&ISpeechObjectToken>,
+    language: TtsLanguage,
+    preferences: &TtsVoicePreferences,
+) {
+    let Some(preferred_id) = preferences.preferred_id(language) else {
+        if let Some(default_voice) = default_voice {
+            let _ = unsafe { voice.putref_Voice(default_voice) };
+        }
+        return;
+    };
+
+    match find_voice_token(voice, preferred_id) {
+        Ok(Some(token)) => {
+            if let Err(error) = unsafe { voice.putref_Voice(&token) } {
+                warn!(%error, %preferred_id, "failed to activate preferred SAPI voice; using locale fallback");
+                if let Some(default_voice) = default_voice {
+                    let _ = unsafe { voice.putref_Voice(default_voice) };
+                }
+            }
+        }
+        Ok(None) => {
+            warn!(%preferred_id, "preferred SAPI voice is no longer installed; using locale fallback");
+            if let Some(default_voice) = default_voice {
+                let _ = unsafe { voice.putref_Voice(default_voice) };
+            }
+        }
+        Err(error) => {
+            warn!(%error, %preferred_id, "could not enumerate SAPI voices; using locale fallback");
+            if let Some(default_voice) = default_voice {
+                let _ = unsafe { voice.putref_Voice(default_voice) };
+            }
+        }
+    }
+}
+
+fn find_voice_token(
+    voice: &ISpeechVoice,
+    preferred_id: &str,
+) -> Result<Option<ISpeechObjectToken>, TtsError> {
+    let empty = BSTR::from("");
+    let voices = unsafe { voice.GetVoices(&empty, &empty) }
+        .map_err(|error| TtsError::Backend(error.to_string()))?;
+    let count = unsafe { voices.Count() }
+        .map_err(|error| TtsError::Backend(error.to_string()))?
+        .max(0);
+    for index in 0..count {
+        let token = unsafe { voices.Item(index) }
+            .map_err(|error| TtsError::Backend(error.to_string()))?;
+        let id = unsafe { token.Id() }
+            .map_err(|error| TtsError::Backend(error.to_string()))?
+            .to_string();
+        if id == preferred_id {
+            return Ok(Some(token));
+        }
+    }
+    Ok(None)
 }
 
 fn run_speech(
@@ -412,5 +649,16 @@ mod tests {
             escape_sapi_xml("A & B < C > D \"x\" 'y'"),
             "A &amp; B &lt; C &gt; D &quot;x&quot; &apos;y&apos;"
         );
+    }
+
+    #[test]
+    fn preference_lookup_is_language_specific() {
+        let preferences = TtsVoicePreferences {
+            vietnamese_voice_id: Some("vi-id".into()),
+            english_voice_id: Some("en-id".into()),
+        };
+        assert_eq!(preferences.preferred_id(TtsLanguage::Vietnamese), Some("vi-id"));
+        assert_eq!(preferences.preferred_id(TtsLanguage::English), Some("en-id"));
+        assert_eq!(preferences.preferred_id(TtsLanguage::Auto), None);
     }
 }
