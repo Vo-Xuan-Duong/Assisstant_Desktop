@@ -21,21 +21,22 @@ The stable SAPI token `Id` is persisted. Display names and list indexes are only
 Before every utterance, `WindowsSapiTts` loads:
 
 ```text
-%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\tts.json
+%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\tts.conf
 ```
 
-(or `ASSISTANT_APP_DATA/settings/tts.json`, or explicit `ASSISTANT_TTS_SETTINGS_PATH`).
+(or `ASSISTANT_APP_DATA/settings/tts.conf`, or explicit `ASSISTANT_TTS_SETTINGS_PATH`).
 
 This makes preference changes effective on the next spoken response without a runtime restart or management IPC mutation.
 
-Example schema:
+Persisted format:
 
-```json
-{
-  "vietnamese_voice_id": "<stable SAPI token id>",
-  "english_voice_id": "<stable SAPI token id>"
-}
+```text
+version=1
+vietnamese_voice_id=<stable SAPI token id>
+english_voice_id=<stable SAPI token id>
 ```
+
+The format is intentionally small and dependency-free so `voice-runtime` does not add a new direct package dependency or force a `Cargo.lock` update. CLI `--json` output is still JSON because the desktop CLI already depends on `serde_json`.
 
 ## CLI
 
@@ -63,11 +64,11 @@ For each utterance:
 3. if the token disappeared or cannot be selected, restore the initial/default SAPI voice;
 4. still wrap the utterance in SAPI `<lang>` markup so locale-based selection can choose an installed matching voice.
 
-A malformed/missing `tts.json` does not make speech fail closed; the runtime logs a warning and uses the existing locale/default behavior for that utterance.
+A malformed/missing `tts.conf` does not make speech fail closed; the runtime logs a warning and uses the existing locale/default behavior for that utterance.
 
 ## Packaging
 
-The Windows bundle now contains `assistant-tts` next to the canonical router. `assistant.exe` routes only the `tts` namespace to that helper, just as the `satellite` namespace routes to `assistant-satellite`.
+The Windows bundle contains `assistant-tts` next to the canonical router. `assistant.exe` routes only the `tts` namespace to that helper, just as the `satellite` namespace routes to `assistant-satellite`.
 
 ## Local validation gate
 
