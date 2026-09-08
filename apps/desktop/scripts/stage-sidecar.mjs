@@ -79,6 +79,20 @@ execFileSync("cargo", satelliteArgs, {
   stdio: "inherit",
 });
 
+const satelliteRemoteArgs = [
+  "build",
+  "-p",
+  "assisstant-desktop",
+  "--bin",
+  "assistant-satellite-remote",
+  "--locked",
+];
+if (requestedProfile === "release") satelliteRemoteArgs.push("--release");
+execFileSync("cargo", satelliteRemoteArgs, {
+  cwd: repoRoot,
+  stdio: "inherit",
+});
+
 const ttsArgs = [
   "build",
   "-p",
@@ -118,6 +132,10 @@ const satelliteSource = path.join(targetDir, requestedProfile, "assistant-satell
 if (!existsSync(satelliteSource)) {
   throw new Error(`Expected satellite management helper was not produced: ${satelliteSource}`);
 }
+const satelliteRemoteSource = path.join(targetDir, requestedProfile, "assistant-satellite-remote.exe");
+if (!existsSync(satelliteRemoteSource)) {
+  throw new Error(`Expected remote satellite helper was not produced: ${satelliteRemoteSource}`);
+}
 const ttsSource = path.join(targetDir, requestedProfile, "assistant-tts.exe");
 if (!existsSync(ttsSource)) {
   throw new Error(`Expected TTS management helper was not produced: ${ttsSource}`);
@@ -145,6 +163,11 @@ const satelliteDestination = path.join(
   `assistant-satellite-${targetTriple}.exe`,
 );
 copyFileSync(satelliteSource, satelliteDestination);
+const satelliteRemoteDestination = path.join(
+  binariesDir,
+  `assistant-satellite-remote-${targetTriple}.exe`,
+);
+copyFileSync(satelliteRemoteSource, satelliteRemoteDestination);
 const ttsDestination = path.join(
   binariesDir,
   `assistant-tts-${targetTriple}.exe`,
@@ -170,4 +193,5 @@ console.log(`Staged assistant-mcp sidecar: ${destination}`);
 console.log(`Staged canonical assistant CLI: ${assistantDestination}`);
 console.log(`Staged assistant core management CLI: ${assistantCoreDestination}`);
 console.log(`Staged satellite management helper: ${satelliteDestination}`);
+console.log(`Staged remote satellite helper: ${satelliteRemoteDestination}`);
 console.log(`Staged TTS management helper: ${ttsDestination}`);
