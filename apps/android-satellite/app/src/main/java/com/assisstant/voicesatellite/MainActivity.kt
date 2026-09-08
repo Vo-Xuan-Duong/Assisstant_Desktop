@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -40,17 +42,20 @@ import androidx.compose.ui.unit.dp
 class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_START_VOICE = "com.assisstant.voicesatellite.START_VOICE"
+        private const val CONVERSATION_FOLLOW_UP_DELAY_MS = 450L
     }
 
     private lateinit var satelliteClient: SatelliteClient
     private lateinit var speechController: SpeechController
     private lateinit var pairingSecretStore: PairingSecretStore
+    private val conversationHandler = Handler(Looper.getMainLooper())
 
     private var desktopAddress by mutableStateOf("ws://192.168.1.20:8765")
     private var pairingToken by mutableStateOf("")
     private var recognitionLanguage by mutableStateOf("vi-VN")
     private var responseLanguage by mutableStateOf("vi")
     private var preferOnDevice by mutableStateOf(true)
+    private var conversationModeEnabled by mutableStateOf(false)
 
     private var connected by mutableStateOf(false)
     private var connectionStatus by mutableStateOf("Chưa kết nối")
@@ -60,6 +65,7 @@ class MainActivity : ComponentActivity() {
     private var lastResponse by mutableStateOf("")
     private var statusMessage by mutableStateOf("")
     private var pendingVoiceActivation = false
+    private var conversationActive by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,6 +81,14 @@ class MainActivity : ComponentActivity() {
                 connectionStatus = status
                 if (!ready) {
                     assistantTurnState = "idle"
+                    stopConversationSession(
+                        cancelRecognizer = true,
+                        message = if (conversationActive) {
+                            "Hội thoại đã dừng vì mất kết nối desktop."
+                        } else {
+                            null
+                        },
+                    )
                 } else if (pendingVoiceActivation) {
                     handlePendingVoiceActivation()
                 }
@@ -95,13 +109,24 @@ class MainActivity : ComponentActivity() {
             onResponse = { text, ttsError ->
                 assistantTurnState = "idle"
                 lastResponse = text
-                statusMessage = if (ttsError == null) {
-                    "Hoàn tất"
+                if (ttsError == null) {
+                    if (conversationActive && conversationModeEnabled) {
+                        statusMessage = "Desktop đã trả lời. Chuẩn bị nghe lượt tiếp theo…"
+                        scheduleConversationFollowUp()
+                    } else {
+                        statusMessage = "Hoàn tất"
+                    }
                 } else {
-                    "Đã xử lý, nhưng desktop TTS gặp lỗi: $ttsError"
+                    stopConversationSession(cancelRecognizer = false)
+                    statusMessage = "Đã xử lý, nhưng desktop TTS gặp lỗi: $ttsError"
                 }
             },
-            onError = { message -> statusMessage = message },
+            onError = { message ->
+                if (conversationActive) {
+                    stopConversationSession(cancelRecognizer = true)
+                }
+                statusMessage = message
+            },
         )
 
         speechController = SpeechController(
@@ -111,13 +136,22 @@ class MainActivity : ComponentActivity() {
             onFinalText = { finalText ->
                 partialText = finalText
                 if (!satelliteClient.sendCommand(finalText, responseLanguage)) {
+                    stopConversationSession(cancelRecognizer = false)
                     statusMessage = "Chưa kết nối với desktop hoặc kết nối chưa sẵn sàng."
                 } else {
                     assistantTurnState = "processing"
                     statusMessage = "Đã gửi lệnh cho desktop."
                 }
             },
-            onError = { message -> statusMessage = message },
+            onStatus = { message -> statusMessage = message },
+            onError = { message ->
+                if (conversationActive) {
+                    stopConversationSession(cancelRecognizer = false)
+                    statusMessage = "$message Hội thoại đã dừng."
+                } else {
+                    statusMessage = message
+                }
+            },
         )
 
         setContent {
@@ -142,6 +176,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        conversationHandler.removeCallbacksAndMessages(null)
         speechController.destroy()
         satelliteClient.shutdown()
         super.onDestroy()
@@ -157,6 +192,7 @@ class MainActivity : ComponentActivity() {
                 startSpeechRecognition()
             } else {
                 pendingVoiceActivation = false
+                stopConversationSession(cancelRecognizer = false)
                 statusMessage = "Cần quyền microphone để nhận lệnh giọng nói."
             }
         }
@@ -210,6 +246,7 @@ class MainActivity : ComponentActivity() {
                 OutlinedButton(
                     onClick = {
                         pendingVoiceActivation = false
+                        stopConversationSession(cancelRecognizer = true)
                         satelliteClient.close()
                         connected = false
                         assistantTurnState = "idle"
@@ -275,6 +312,51 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Hội thoại liên tục")
+                    Text(
+                        "Sau khi desktop nói xong, điện thoại tự mở một lượt nghe tiếp theo. Không nghe khi desktop đang phát TTS.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(
+                    checked = conversationModeEnabled,
+                    onCheckedChange = { enabled ->
+                        conversationModeEnabled = enabled
+                        if (!enabled && conversationActive) {
+                            stopConversationSession(
+                                cancelRecognizer = true,
+                                message = "Đã tắt chế độ hội thoại.",
+                            )
+                        }
+                        saveSettings()
+                    },
+                )
+            }
+
+            if (conversationActive) {
+                Text(
+                    "Phiên hội thoại đang hoạt động. Im lặng đến timeout hoặc lỗi nhận dạng sẽ kết thúc phiên thay vì tự lặp vô hạn.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        stopConversationSession(
+                            cancelRecognizer = true,
+                            message = "Đã kết thúc hội thoại.",
+                        )
+                    },
+                ) {
+                    Text("Kết thúc hội thoại")
+                }
+            }
+
             Spacer(Modifier.height(4.dp))
             Button(
                 modifier = Modifier
@@ -308,7 +390,7 @@ class MainActivity : ComponentActivity() {
                 enabled = connected && assistantTurnState in setOf("processing", "speaking"),
                 onClick = {
                     pendingVoiceActivation = false
-                    speechController.cancel()
+                    stopConversationSession(cancelRecognizer = true)
                     if (satelliteClient.sendCancel()) {
                         statusMessage = "Đang yêu cầu desktop dừng…"
                     } else {
@@ -350,6 +432,12 @@ class MainActivity : ComponentActivity() {
                     satelliteClient.close()
                 }
                 pendingVoiceActivation = false
+                if (::speechController.isInitialized) {
+                    stopConversationSession(cancelRecognizer = true)
+                } else {
+                    conversationActive = false
+                    conversationHandler.removeCallbacksAndMessages(null)
+                }
                 connected = false
                 assistantTurnState = "idle"
                 connectionStatus = "Đã nhập pairing từ QR"
@@ -412,17 +500,21 @@ class MainActivity : ComponentActivity() {
             return
         }
         pendingVoiceActivation = true
+        conversationHandler.removeCallbacksAndMessages(null)
         speechController.cancel()
         if (satelliteClient.sendCancel()) {
             statusMessage = "Đang dừng Assistant để nghe lệnh mới…"
         } else {
             pendingVoiceActivation = false
+            stopConversationSession(cancelRecognizer = false)
             statusMessage = "Không thể gửi yêu cầu dừng cho desktop."
         }
     }
 
-    private fun startSpeechRecognition() {
+    private fun startSpeechRecognition(clearLastResponse: Boolean = true) {
+        conversationHandler.removeCallbacksAndMessages(null)
         if (!satelliteClient.isReady()) {
+            stopConversationSession(cancelRecognizer = false)
             statusMessage = "Hãy kết nối với desktop trước."
             return
         }
@@ -430,14 +522,75 @@ class MainActivity : ComponentActivity() {
             statusMessage = "Assistant đang xử lý tác vụ khác. Hãy dừng hoặc chờ hoàn tất."
             return
         }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            stopConversationSession(cancelRecognizer = false)
+            statusMessage = "Cần quyền microphone để nhận lệnh giọng nói."
+            return
+        }
+
+        if (conversationModeEnabled) {
+            conversationActive = true
+        }
         saveSettings()
-        lastResponse = ""
-        statusMessage = if (preferOnDevice) {
+        if (clearLastResponse) {
+            lastResponse = ""
+        }
+        statusMessage = if (conversationActive) {
+            "Đang nghe lượt hội thoại…"
+        } else if (preferOnDevice) {
             "Đang mở bộ nhận dạng giọng nói…"
         } else {
             "Đang nghe…"
         }
         speechController.start(recognitionLanguage, preferOnDevice)
+    }
+
+    private fun scheduleConversationFollowUp() {
+        conversationHandler.removeCallbacksAndMessages(null)
+        if (!conversationActive || !conversationModeEnabled) return
+
+        conversationHandler.postDelayed({
+            if (!conversationActive || !conversationModeEnabled) return@postDelayed
+            if (!satelliteClient.isReady()) {
+                stopConversationSession(
+                    cancelRecognizer = false,
+                    message = "Hội thoại đã dừng vì desktop không còn kết nối.",
+                )
+                return@postDelayed
+            }
+            if (assistantTurnState != "idle" || listening) {
+                stopConversationSession(
+                    cancelRecognizer = false,
+                    message = "Hội thoại đã dừng vì Assistant chưa sẵn sàng cho lượt tiếp theo.",
+                )
+                return@postDelayed
+            }
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                stopConversationSession(
+                    cancelRecognizer = false,
+                    message = "Hội thoại đã dừng vì ứng dụng không còn quyền microphone.",
+                )
+                return@postDelayed
+            }
+
+            partialText = ""
+            statusMessage = "Đang nghe lượt tiếp theo…"
+            startSpeechRecognition(clearLastResponse = false)
+        }, CONVERSATION_FOLLOW_UP_DELAY_MS)
+    }
+
+    private fun stopConversationSession(
+        cancelRecognizer: Boolean,
+        message: String? = null,
+    ) {
+        conversationHandler.removeCallbacksAndMessages(null)
+        conversationActive = false
+        if (cancelRecognizer && ::speechController.isInitialized) {
+            speechController.cancel()
+        }
+        if (message != null) {
+            statusMessage = message
+        }
     }
 
     private fun loadSettings() {
@@ -446,6 +599,7 @@ class MainActivity : ComponentActivity() {
         recognitionLanguage = prefs.getString("recognition_language", "vi-VN") ?: "vi-VN"
         responseLanguage = prefs.getString("response_language", "vi") ?: "vi"
         preferOnDevice = prefs.getBoolean("prefer_on_device", true)
+        conversationModeEnabled = prefs.getBoolean("conversation_mode", false)
 
         val legacyToken = prefs.getString("pairing_token", null)?.trim().orEmpty()
         val secureToken = pairingSecretStore.loadToken()
@@ -480,6 +634,7 @@ class MainActivity : ComponentActivity() {
             .putString("recognition_language", recognitionLanguage)
             .putString("response_language", responseLanguage)
             .putBoolean("prefer_on_device", preferOnDevice)
+            .putBoolean("conversation_mode", conversationModeEnabled)
             .apply()
 
         pairingSecretStore.saveToken(pairingToken)
