@@ -22,26 +22,49 @@ fn main() {
 fn run() -> Result<ExitStatus, String> {
     let args = env::args_os().skip(1).collect::<Vec<_>>();
     let command_index = first_command_index(&args)?;
+    let command = command_index.and_then(|index| args.get(index));
 
-    if command_index
-        .and_then(|index| args.get(index))
-        .is_some_and(|value| value == OsStr::new("satellite"))
-    {
+    if command.is_some_and(|value| value == OsStr::new("satellite")) {
         let index = command_index.expect("satellite command index must exist");
         let mut forwarded = args;
         forwarded.remove(index);
-        let helper = resolve_cli(SATELLITE_OVERRIDE_ENV, "assistant-satellite")?;
-        return Command::new(&helper)
-            .args(&forwarded)
-            .status()
-            .map_err(|error| format!("cannot launch satellite CLI {}: {error}", helper.display()));
+        return run_cli(
+            resolve_cli(SATELLITE_OVERRIDE_ENV, "assistant-satellite")?,
+            &forwarded,
+            "satellite CLI",
+        );
     }
 
     let core = resolve_cli(CORE_OVERRIDE_ENV, "assistant-core")?;
-    Command::new(&core)
-        .args(&args)
+    let status = run_cli(core, &args, "management CLI")?;
+    if status.success()
+        && command.is_some_and(|value| {
+            value == OsStr::new("help") || value == OsStr::new("--help") || value == OsStr::new("-h")
+        })
+    {
+        print_satellite_help_hint();
+    }
+    Ok(status)
+}
+
+fn run_cli(path: PathBuf, args: &[OsString], label: &str) -> Result<ExitStatus, String> {
+    Command::new(&path)
+        .args(args)
         .status()
-        .map_err(|error| format!("cannot launch management CLI {}: {error}", core.display()))
+        .map_err(|error| format!("cannot launch {label} {}: {error}", path.display()))
+}
+
+fn print_satellite_help_hint() {
+    println!(
+        r#"
+  satellite show                           Show Android voice satellite configuration
+  satellite pair --qr [--host <LAN-IP>]    Pair a phone with a local terminal QR
+  satellite devices                        List trusted/revoked Android devices
+  satellite revoke-device <device-id>      Revoke one Android device
+  satellite allow-device <device-id>       Allow a previously revoked device
+  satellite help                           Show the complete satellite command surface
+"#
+    );
 }
 
 fn first_command_index(args: &[OsString]) -> Result<Option<usize>, String> {
