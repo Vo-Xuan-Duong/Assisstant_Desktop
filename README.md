@@ -65,6 +65,7 @@ Implemented in source:
 - locale/default SAPI fallback;
 - Windows Firewall diagnostics/Private+LocalSubnet rule helper;
 - Tailscale Serve based tailnet-only remote satellite transport;
+- safe conversational follow-up mode that only reopens the microphone after desktop TTS finishes;
 - sherpa-onnx Vietnamese Zipformer retained as desktop fallback STT;
 - existing desktop wake-word runtime retained for the fallback path.
 
@@ -74,14 +75,14 @@ Source implementation is intentionally ahead of target-device verification. Wind
 
 The small local Vietnamese Zipformer is useful as a fallback but does not provide the desired primary recognition quality on the target laptop.
 
-The preferred model is therefore:
+The preferred model is:
 
 ```text
 Phone   = microphone + speech-to-text
 Desktop = reasoning + tools + response + TTS
 ```
 
-No dedicated paid speech-recognition API is required by this architecture. Android can use an on-device recognizer where available; otherwise it uses the system recognition service. On Google-enabled phones that system service may be backed by Google Speech Services and may require Internet.
+No dedicated paid speech-recognition API is required. Android can use an on-device recognizer where available; otherwise it uses the system recognition service. On Google-enabled phones that system service may be backed by Google Speech Services and may require Internet.
 
 ## Android Voice Satellite
 
@@ -106,7 +107,8 @@ Current behavior:
 - Quick Settings activation;
 - reconnect backoff `1s -> 2s -> 4s -> 8s -> 15s max`;
 - no automatic replay of a command after transport failure;
-- bounded on-device -> system recognizer fallback.
+- bounded on-device -> system recognizer fallback;
+- optional **Hội thoại liên tục** turn-taking mode.
 
 `SpeechRecognizer` is **not** kept running continuously as an always-listening loop.
 
@@ -262,7 +264,7 @@ assistant satellite remote tailscale pair --qr
 assistant satellite remote tailscale disable
 ```
 
-`enable` moves the desktop backend to loopback and configures persistent raw TCP Tailscale Serve. `pair --qr` uses the PC's Tailscale IPv4. `disable` removes only the Assistant-managed Serve port and restores the previous bind when it is still safe to do so.
+`enable` moves the desktop backend to loopback and configures persistent raw TCP Tailscale Serve. `pair --qr` uses the PC's Tailscale IPv4. `disable` removes only the Assistant-managed Serve port and restores previous local bind/enabled state when it is still safe to do so.
 
 The integration never runs `tailscale funnel` and never uses `tailscale serve reset`, so it neither creates public exposure nor clears unrelated Serve configuration.
 
@@ -317,9 +319,47 @@ Executing   -> intentionally non-cancellable
 Confirming  -> intentionally non-cancellable
 ```
 
-This preserves the fail-closed boundary when a consequential Windows side effect may already have begun.
+Manual interrupt-to-talk is implemented. The phone sends a separate authenticated control request and starts a fresh recognition turn only after the desktop accepts cancellation.
 
-Manual interrupt-to-talk is implemented. Automatic acoustic full-duplex/AEC is not yet treated as complete.
+## Conversational follow-up mode
+
+Enable **Hội thoại liên tục** on Android to continue speaking without manually tapping after every desktop response.
+
+```text
+Android listens
+  -> final transcript
+  -> desktop Assistant turn
+  -> desktop TTS completes
+  -> 450 ms guard delay
+  -> one new Android recognition window
+```
+
+The switch alone does not activate the microphone; a session starts from a user-initiated voice turn. Follow-up turns reuse the same desktop Assistant session/context.
+
+Conversation mode stops instead of looping indefinitely when there is silence/`NO_MATCH`, a terminal recognizer error, TTS failure, permission loss, desktop disconnect, or an invalid next-turn state.
+
+Android exposes **Kết thúc hội thoại** to cancel Android listening/pending follow-up. This does not cancel a Windows action just because the user does not want another turn; **Dừng Assistant** remains the explicit desktop cancellation control.
+
+See [`docs/PHASE31_CONVERSATIONAL_VOICE.md`](docs/PHASE31_CONVERSATIONAL_VOICE.md).
+
+## Why automatic acoustic full duplex is still not claimed
+
+The current preferred audio topology is:
+
+```text
+Windows speaker -> room air -> Android microphone
+```
+
+If Android listens during desktop TTS, it can hear and transcribe the Assistant itself. The phone currently has no synchronized far-end reference audio from the Windows speaker/TTS path, so there is no reliable reference-aware echo cancellation path.
+
+Therefore the project does **not** keep SpeechRecognizer active while desktop TTS is speaking and does not treat RMS/VAD thresholds as a substitute for AEC.
+
+A future full-duplex implementation would need a real reference-aware media topology, such as moving capture/playback into one AEC-capable endpoint or a WebRTC-like audio path carrying an echo reference.
+
+Until then:
+
+- normal conversation -> wait for TTS completion, then auto-listen;
+- mid-response interruption -> explicit **Nói ngắt Assistant** / Quick Settings cancellation.
 
 ## Desktop fallback voice
 
@@ -421,22 +461,27 @@ Do not equate source completion with device verification. Validate locally:
 - selected Vietnamese/English SAPI voices work on the target Windows installation;
 - Stop/interrupt-to-talk works across Processing/Speaking;
 - reconnect does not replay an already-submitted Windows action;
-- Tailscale remote works over mobile data with the LAN unavailable;
-- Tailscale disable restores the previous bind and leaves unrelated Serve configuration intact;
+- Tailscale remote works over mobile data with LAN unavailable;
+- Tailscale disable restores previous local state and leaves unrelated Serve configuration intact;
+- conversation mode waits until desktop TTS has finished before reopening the microphone;
+- conversation follow-up retains expected Assistant context;
+- silence/`NO_MATCH` ends conversation mode rather than retrying forever;
+- **Kết thúc hội thoại** prevents pending auto-listen;
 - fallback Zipformer/wake still work.
 
 Per project policy, repository implementation does not run remote GitHub Actions, native builds/tests, installers, microphones, Tailscale mutations, or model downloads.
 
 ## Remaining roadmap
 
-The major remaining voice-system work is **Phase 31 conversational/full-duplex UX**:
+The core functional MVP is implemented in source through **Phase 31A**. Remaining work is primarily validation, product polish, and optional higher-complexity capabilities:
 
-- richer conversational follow-up handling;
-- optional automatic acoustic barge-in;
-- AEC/noise suppression if a microphone must remain active while desktop speakers are playing;
-- additional product UI for voice/remote diagnostics.
+- local Windows/Android/Tailscale acceptance testing;
+- richer device/latency/recognizer diagnostics in product UI;
+- optional notification/headset/hardware activation surfaces;
+- optional confidence/alternative-result and app-name normalization UX;
+- **Phase 31B** automatic acoustic full duplex only after a real AEC/reference-audio architecture exists.
 
-Automatic acoustic barge-in will not be enabled by pretending RMS VAD can distinguish the user's speech from the desktop speaker. Until a real AEC-capable path is validated, Quick Settings/manual interrupt-to-talk remains the safe default.
+Automatic acoustic barge-in will not be enabled by pretending RMS VAD can distinguish user speech from the desktop speaker.
 
 Authoritative roadmap: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
 
@@ -448,3 +493,4 @@ Authoritative roadmap: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
 - [`docs/PHASE27C_SAPI_VOICE_PREFERENCES.md`](docs/PHASE27C_SAPI_VOICE_PREFERENCES.md)
 - [`docs/PHASE28_29_ANDROID_ACTIVATION_RESILIENCE.md`](docs/PHASE28_29_ANDROID_ACTIVATION_RESILIENCE.md)
 - [`docs/PHASE30_TAILSCALE_REMOTE.md`](docs/PHASE30_TAILSCALE_REMOTE.md)
+- [`docs/PHASE31_CONVERSATIONAL_VOICE.md`](docs/PHASE31_CONVERSATIONAL_VOICE.md)
