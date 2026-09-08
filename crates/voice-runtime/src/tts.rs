@@ -12,7 +12,8 @@ use tokio::sync::oneshot;
 use windows::{
     Win32::{
         Media::Speech::{
-            ISpeechVoice, SpVoice, SVSFPurgeBeforeSpeak, SVSFlagsAsync, SpeechVoiceSpeakFlags,
+            ISpeechVoice, SVSFIsXML, SVSFPurgeBeforeSpeak, SVSFlagsAsync, SpVoice,
+            SpeechVoiceSpeakFlags,
         },
         System::Com::{
             CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
@@ -20,6 +21,9 @@ use windows::{
     },
     core::{BSTR, Error as WindowsError},
 };
+
+const SAPI_LANG_EN_US: &str = "409";
+const SAPI_LANG_VI_VN: &str = "42A";
 
 #[derive(Debug, Error)]
 pub enum TtsError {
@@ -33,6 +37,19 @@ pub enum TtsError {
     Backend(String),
     #[error("text-to-speech worker failed: {0}")]
     Worker(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TtsLanguage {
+    Auto,
+    Vietnamese,
+    English,
+}
+
+impl Default for TtsLanguage {
+    fn default() -> Self {
+        Self::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -55,6 +72,16 @@ impl Default for TtsConfig {
 #[async_trait]
 pub trait TextToSpeech: Send + Sync {
     async fn speak(&self, text: &str) -> Result<(), TtsError>;
+
+    /// Speaks with an explicit response-language hint when the backend supports it.
+    /// The default keeps backwards compatibility for non-language-aware backends.
+    async fn speak_with_language(
+        &self,
+        text: &str,
+        _language: TtsLanguage,
+    ) -> Result<(), TtsError> {
+        self.speak(text).await
+    }
 
     /// Requests cancellation of the currently active speech operation.
     /// Implementations return false when no cancellation command can be sent.
@@ -81,6 +108,19 @@ impl WindowsSapiTts {
         }
     }
 
+    pub async fn speak_with_language(
+        &self,
+        text: &str,
+        language: TtsLanguage,
+    ) -> Result<(), TtsError> {
+        if text.trim().is_empty() {
+            return Err(TtsError::EmptyText);
+        }
+        self.runtime
+            .speak(text.to_owned(), resolve_language(language, text))
+            .await
+    }
+
     /// Sends an out-of-band purge request to the dedicated SAPI worker.
     /// The worker owns the COM voice for its full lifetime, so cancellation does
     /// not depend on aborting a Tokio `spawn_blocking` task.
@@ -92,10 +132,15 @@ impl WindowsSapiTts {
 #[async_trait]
 impl TextToSpeech for WindowsSapiTts {
     async fn speak(&self, text: &str) -> Result<(), TtsError> {
-        if text.trim().is_empty() {
-            return Err(TtsError::EmptyText);
-        }
-        self.runtime.speak(text.to_owned()).await
+        WindowsSapiTts::speak_with_language(self, text, TtsLanguage::Auto).await
+    }
+
+    async fn speak_with_language(
+        &self,
+        text: &str,
+        language: TtsLanguage,
+    ) -> Result<(), TtsError> {
+        WindowsSapiTts::speak_with_language(self, text, language).await
     }
 
     fn cancel(&self) -> bool {
@@ -106,6 +151,7 @@ impl TextToSpeech for WindowsSapiTts {
 enum SapiCommand {
     Speak {
         text: String,
+        language: TtsLanguage,
         result: oneshot::Sender<Result<(), TtsError>>,
     },
     Cancel,
@@ -127,7 +173,7 @@ impl SapiRuntime {
         }
     }
 
-    async fn speak(&self, text: String) -> Result<(), TtsError> {
+    async fn speak(&self, text: String, language: TtsLanguage) -> Result<(), TtsError> {
         let commands = self.commands.as_ref().ok_or_else(|| {
             TtsError::Worker("Windows SAPI worker thread could not be started".into())
         })?;
@@ -135,6 +181,7 @@ impl SapiRuntime {
         commands
             .send(SapiCommand::Speak {
                 text,
+                language,
                 result: result_tx,
             })
             .map_err(|_| TtsError::Worker("Windows SAPI worker is unavailable".into()))?;
@@ -179,8 +226,12 @@ fn sapi_worker(config: TtsConfig, receiver: Receiver<SapiCommand>) {
 
     while let Ok(command) = receiver.recv() {
         match command {
-            SapiCommand::Speak { text, result } => {
-                if !run_speech(&voice, &receiver, text, result) {
+            SapiCommand::Speak {
+                text,
+                language,
+                result,
+            } => {
+                if !run_speech(&voice, &receiver, text, language, result) {
                     break;
                 }
             }
@@ -196,10 +247,14 @@ fn run_speech(
     voice: &ISpeechVoice,
     receiver: &Receiver<SapiCommand>,
     text: String,
+    language: TtsLanguage,
     result: oneshot::Sender<Result<(), TtsError>>,
 ) -> bool {
-    let text = BSTR::from(text);
-    let speak_flags = SpeechVoiceSpeakFlags(SVSFlagsAsync.0 | SVSFPurgeBeforeSpeak.0);
+    let markup = language_markup(&text, language);
+    let text = BSTR::from(markup);
+    let speak_flags = SpeechVoiceSpeakFlags(
+        SVSFlagsAsync.0 | SVSFPurgeBeforeSpeak.0 | SVSFIsXML.0,
+    );
     if let Err(error) = unsafe { voice.Speak(&text, speak_flags) } {
         let _ = result.send(Err(TtsError::Backend(error.to_string())));
         return true;
@@ -243,6 +298,51 @@ fn run_speech(
     }
 }
 
+fn resolve_language(language: TtsLanguage, text: &str) -> TtsLanguage {
+    match language {
+        TtsLanguage::Auto if looks_vietnamese(text) => TtsLanguage::Vietnamese,
+        TtsLanguage::Auto => TtsLanguage::English,
+        language => language,
+    }
+}
+
+fn language_markup(text: &str, language: TtsLanguage) -> String {
+    let lang_id = match resolve_language(language, text) {
+        TtsLanguage::Vietnamese => SAPI_LANG_VI_VN,
+        TtsLanguage::English | TtsLanguage::Auto => SAPI_LANG_EN_US,
+    };
+    format!(
+        "<lang langid=\"{lang_id}\">{}</lang>",
+        escape_sapi_xml(text)
+    )
+}
+
+fn escape_sapi_xml(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn looks_vietnamese(text: &str) -> bool {
+    const VIETNAMESE_MARKERS: &str = concat!(
+        "ăâđêôơưĂÂĐÊÔƠƯ",
+        "áàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệ",
+        "íìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữự",
+        "ýỳỷỹỵÁÀẢÃẠẤẦẨẪẬẮẰẲẴẶÉÈẺẼẸẾỀỂỄỆ",
+        "ÍÌỈĨỊÓÒỎÕỌỐỒỔỖỘỚỜỞỠỢÚÙỦŨỤỨỪỬỮỰÝỲỶỸỴ"
+    );
+    text.chars().any(|ch| VIETNAMESE_MARKERS.contains(ch))
+}
+
 fn purge_voice(voice: &ISpeechVoice) -> Result<(), TtsError> {
     let empty = BSTR::from("");
     let flags = SpeechVoiceSpeakFlags(SVSFlagsAsync.0 | SVSFPurgeBeforeSpeak.0);
@@ -277,5 +377,40 @@ struct ComGuard;
 impl Drop for ComGuard {
     fn drop(&mut self) {
         unsafe { CoUninitialize() };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automatic_language_detects_vietnamese_diacritics() {
+        assert_eq!(
+            resolve_language(TtsLanguage::Auto, "Được, mình đã mở ứng dụng."),
+            TtsLanguage::Vietnamese
+        );
+        assert_eq!(
+            resolve_language(TtsLanguage::Auto, "Sure, I opened the app."),
+            TtsLanguage::English
+        );
+    }
+
+    #[test]
+    fn language_markup_uses_windows_sapi_langids() {
+        assert!(language_markup("Xin chào", TtsLanguage::Vietnamese).starts_with(
+            "<lang langid=\"42A\">"
+        ));
+        assert!(language_markup("Hello", TtsLanguage::English).starts_with(
+            "<lang langid=\"409\">"
+        ));
+    }
+
+    #[test]
+    fn sapi_xml_text_is_escaped() {
+        assert_eq!(
+            escape_sapi_xml("A & B < C > D \"x\" 'y'"),
+            "A &amp; B &lt; C &gt; D &quot;x&quot; &apos;y&apos;"
+        );
     }
 }
