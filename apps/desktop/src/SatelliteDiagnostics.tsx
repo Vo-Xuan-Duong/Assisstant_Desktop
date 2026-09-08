@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { emit, listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { getRuntimeReadiness } from "./api";
 import { setQuickAutoDismissHold } from "./quickLifecycle";
 import type { RuntimeReadinessReport, SatelliteDeviceSnapshot } from "./types";
 import "./satellite-diagnostics.css";
 
-const QUICK_RESIZE_EVENT = "quick:resize_request";
-const PANEL_HEIGHT = 380;
 const PANEL_HOLD_SOURCE = "satellite-diagnostics";
 
 function formatUnix(value: number): string {
@@ -77,7 +75,6 @@ export default function SatelliteDiagnostics() {
   const show = () => {
     setOpen(true);
     setQuickAutoDismissHold(PANEL_HOLD_SOURCE, true);
-    void emit(QUICK_RESIZE_EVENT, { height: PANEL_HEIGHT });
     void refresh();
   };
 
