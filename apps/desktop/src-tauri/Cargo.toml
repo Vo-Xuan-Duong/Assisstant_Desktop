@@ -33,6 +33,10 @@ path = "src/bin/assistant.rs"
 name = "assistant-satellite"
 path = "src/bin/assistant-satellite.rs"
 
+[[bin]]
+name = "assistant-satellite-remote"
+path = "src/bin/assistant-satellite-remote.rs"
+
 [build-dependencies]
 tauri-build = { version = "2.6", features = [] }
 
