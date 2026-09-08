@@ -11,6 +11,7 @@ pub mod monitor_layout;
 pub mod power;
 pub mod process;
 pub mod screen;
+pub mod secret;
 pub mod system;
 pub mod virtualized;
 pub mod window;

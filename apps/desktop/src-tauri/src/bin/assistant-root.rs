@@ -79,10 +79,14 @@ fn print_extension_help_hint() {
     println!(
         r#"
   satellite show                           Show Android voice satellite configuration
+  satellite doctor                         Diagnose pairing, bind, trust and credential storage
   satellite pair --qr [--host <LAN-IP>]    Pair a phone with a local terminal QR
   satellite devices                        List trusted/revoked Android devices
   satellite revoke-device <device-id>      Revoke one Android device
   satellite allow-device <device-id>       Allow a previously revoked device
+  satellite firewall show                  Inspect the named Windows Firewall rule
+  satellite firewall install               Install Private+LocalSubnet TCP rule
+  satellite firewall remove                Remove only the Assistant satellite firewall rule
   satellite help                           Show the complete satellite command surface
 
   tts voices [--json]                      List installed Windows SAPI voices

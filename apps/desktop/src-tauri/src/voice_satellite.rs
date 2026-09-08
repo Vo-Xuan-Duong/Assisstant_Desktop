@@ -18,6 +18,7 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 use voice_runtime::tts::{TextToSpeech, TtsLanguage};
+use windows_tools::secret::{is_dpapi_text, unprotect_text_for_current_user};
 
 use crate::{DesktopState, WakeService};
 
@@ -427,11 +428,24 @@ fn config_from_app(app: &AppHandle) -> Result<Option<SatelliteConfig>, String> {
     if bind.is_empty() {
         return Err("satellite bind address cannot be empty".into());
     }
-    let token = settings
+    let persisted_token = settings
         .token
         .map(|value| value.trim().to_owned())
-        .filter(|value| value.len() >= 16)
-        .ok_or_else(|| "satellite is enabled but has no valid pairing token".to_owned())?;
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "satellite is enabled but has no pairing token".to_owned())?;
+    let token = if is_dpapi_text(&persisted_token) {
+        unprotect_text_for_current_user(&persisted_token).map_err(|error| {
+            format!(
+                "cannot decrypt satellite pairing token in {} for the current Windows user: {error}",
+                settings_path.display()
+            )
+        })?
+    } else {
+        persisted_token
+    };
+    if token.len() < 16 {
+        return Err("satellite is enabled but has no valid pairing token".to_owned());
+    }
 
     Ok(Some(SatelliteConfig {
         bind: bind.to_owned(),
