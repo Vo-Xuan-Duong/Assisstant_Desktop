@@ -13,6 +13,7 @@ It listens through Android `SpeechRecognizer`, shows partial recognition locally
 - system `SpeechRecognizer` fallback;
 - push-to-talk;
 - Quick Settings **Assistant Voice** tile;
+- static launcher shortcut **Nói AI**;
 - manual interrupt-to-talk while desktop is Processing/Speaking;
 - optional **Hội thoại liên tục** turn-taking mode;
 - automatic WebSocket reconnect with bounded exponential backoff;
@@ -152,7 +153,7 @@ Keystore protects persistence at rest; the token still exists in process memory 
 2. Choose recognition language **Tiếng Việt** or **English**.
 3. Choose desktop response mode **VI**, **EN**, or **Auto**.
 4. Optionally keep **Ưu tiên nhận dạng on-device** enabled.
-5. Tap **Nói với Assistant** or use the Quick Settings tile.
+5. Start speech from the app, Quick Settings tile, or launcher shortcut.
 6. Partial recognition stays on Android.
 7. One final transcript is sent to Windows.
 8. Windows processes it through Assistant Core -> Antigravity -> MCP -> permission gates.
@@ -160,9 +161,49 @@ Keystore protects persistence at rest; the token still exists in process memory 
 
 If Windows is already Processing/Speaking, the primary button becomes **Nói ngắt Assistant**. It opens an authenticated control connection, requests cancellation, waits for the desktop acknowledgement, and only then starts a fresh recognition turn. Executing/Confirming remain intentionally non-cancellable.
 
+## Activation surfaces
+
+### In-app
+
+Tap **Nói với Assistant**.
+
+### Quick Settings
+
+Add the **Assistant Voice** tile from Android's Quick Settings editor.
+
+Tapping it:
+
+1. opens `MainActivity` through the platform-supported tile launch API;
+2. never bypasses microphone permission;
+3. reconnects to the paired desktop when needed;
+4. safely cancels Processing/Speaking first when necessary;
+5. starts recognition only when the desktop is ready.
+
+Android 14+ uses the required `PendingIntent` launch API; Android 8-13 use the older Intent overload. Microphone permission must have been granted in the app first.
+
+### Launcher shortcut
+
+Long-press the **Assistant Voice Satellite** launcher icon and select **Nói AI**. Supported launchers may also allow dragging/pinning that shortcut to the home screen.
+
+The static shortcut uses:
+
+```text
+shortcuts.xml
+  -> VoiceShortcutActivity
+  -> MainActivity + EXTRA_START_VOICE=true
+```
+
+`VoiceShortcutActivity` is a NoDisplay trampoline with empty task affinity. It contains no pairing/network/AI/tool logic and immediately forwards into the existing voice activation path.
+
+The launcher shortcut therefore keeps the same pairing, microphone-permission, reconnect and safe-cancel requirements as the app and Quick Settings tile. No desktop endpoint or pairing token is stored in shortcut metadata.
+
+See [`../../docs/PHASE28B_ANDROID_LAUNCHER_SHORTCUT.md`](../../docs/PHASE28B_ANDROID_LAUNCHER_SHORTCUT.md).
+
+If **Hội thoại liên tục** is enabled, Quick Settings or launcher activation can also become the first turn of a conversational session.
+
 ## Voice diagnostics
 
-Final recognition results now expose read-only diagnostics on the phone:
+Final recognition results expose read-only diagnostics on the phone:
 
 ```text
 Bạn nói
@@ -221,25 +262,9 @@ Conversation mode is bounded:
 - a TTS failure ends the conversation;
 - on-device -> system recognizer fallback remains a non-terminal status and can continue normally.
 
-Automatic follow-up recognition reuses the in-memory preferences; it does not rewrite Android settings/Keystore on every follow-up window.
+Automatic follow-up recognition reuses in-memory preferences; it does not rewrite Android settings/Keystore on every follow-up window.
 
 `SpeechRecognizer` is therefore still **not** used as a permanent always-listening loop.
-
-## Quick Settings activation
-
-Add the **Assistant Voice** tile from Android's Quick Settings editor.
-
-Tapping it:
-
-1. opens `MainActivity` through the platform-supported tile launch API;
-2. never bypasses microphone permission;
-3. reconnects to the paired desktop when needed;
-4. safely cancels Processing/Speaking first when necessary;
-5. starts recognition only when the desktop is ready.
-
-Android 14+ uses the required `PendingIntent` launch API; Android 8-13 use the older Intent overload. Microphone permission must have been granted in the app first.
-
-If **Hội thoại liên tục** is enabled, a Quick Settings initiated turn can also become the first turn of a conversational session.
 
 ## Connection resilience
 
@@ -270,7 +295,7 @@ The normal recognizer is vendor-dependent. On Google-enabled phones it may be ba
 Current mid-response barge-in is **explicit/manual**:
 
 ```text
-Tap Nói ngắt Assistant / Quick Settings activation
+Nói ngắt Assistant / Quick Settings / launcher activation
   -> cancel Processing or Speaking
   -> wait for desktop cancellation acknowledgement
   -> start a fresh SpeechRecognizer turn
@@ -318,6 +343,7 @@ Development compatibility environment overrides remain available, but managed re
 See:
 
 - [`../../docs/VOICE_SATELLITE.md`](../../docs/VOICE_SATELLITE.md)
+- [`../../docs/PHASE28B_ANDROID_LAUNCHER_SHORTCUT.md`](../../docs/PHASE28B_ANDROID_LAUNCHER_SHORTCUT.md)
 - [`../../docs/PHASE29B_VOICE_DIAGNOSTICS.md`](../../docs/PHASE29B_VOICE_DIAGNOSTICS.md)
 - [`../../docs/PHASE30_TAILSCALE_REMOTE.md`](../../docs/PHASE30_TAILSCALE_REMOTE.md)
 - [`../../docs/PHASE31_CONVERSATIONAL_VOICE.md`](../../docs/PHASE31_CONVERSATIONAL_VOICE.md)

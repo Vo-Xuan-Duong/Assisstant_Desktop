@@ -15,7 +15,7 @@ Android Voice Satellite
   `- final text
     |
   authenticated WebSocket
-    |  LAN, or encrypted Tailscale tailnet
+    |  trusted LAN or encrypted Tailscale tailnet
     v
 +---------------------------------------------------------------+
 | Assisstant Desktop                                            |
@@ -53,20 +53,22 @@ Implemented in source:
 - final-text-only command submission;
 - local QR pairing;
 - trusted Android device registry and per-device revoke;
-- Android Keystore AES-GCM protection for the pairing token;
-- Windows current-user DPAPI protection for the persisted pairing token;
+- Android Keystore AES-GCM protection for pairing credentials;
+- Windows current-user DPAPI protection for persisted pairing credentials;
 - command request IDs and duplicate-execution protection;
 - Android Stop / manual interrupt-to-talk;
-- Quick Settings `Assistant Voice` tile;
+- Quick Settings **Assistant Voice** tile;
+- launcher shortcut **Nói AI**;
 - bounded WebSocket reconnect backoff;
 - bounded SpeechRecognizer fallback/retry;
 - read-only Android STT engine/confidence/alternatives/latency diagnostics;
-- completed desktop-turn timing through AI/tool/TTS response completion;
+- completed desktop-turn timing through AI/tool/TTS completion;
+- read-only Satellite diagnostics panel in the desktop Quick UI;
 - `VI`, `EN`, `Auto` response-language propagation;
 - selectable installed Windows SAPI voices for Vietnamese and English;
 - locale/default SAPI fallback;
 - Windows Firewall diagnostics/Private+LocalSubnet rule helper;
-- Tailscale Serve based tailnet-only remote satellite transport;
+- Tailscale Serve tailnet-only remote satellite transport;
 - safe conversational follow-up mode that only reopens the microphone after desktop TTS finishes;
 - sherpa-onnx Vietnamese Zipformer retained as desktop fallback STT;
 - existing desktop wake-word runtime retained for the fallback path.
@@ -84,7 +86,7 @@ Phone   = microphone + speech-to-text
 Desktop = reasoning + tools + response + TTS
 ```
 
-No dedicated paid speech-recognition API is required. Android can use an on-device recognizer where available; otherwise it uses the system recognition service. On Google-enabled phones that system service may be backed by Google Speech Services and may require Internet.
+No dedicated paid speech-recognition API is required by this architecture. Android can use an on-device recognizer where available; otherwise it uses the system recognition service. On Google-enabled phones that service may be backed by Google Speech Services and may require Internet.
 
 ## Android Voice Satellite
 
@@ -107,13 +109,41 @@ Current behavior:
 - desktop state/response display;
 - Stop and manual interrupt-to-talk;
 - Quick Settings activation;
+- launcher shortcut activation;
 - reconnect backoff `1s -> 2s -> 4s -> 8s -> 15s max`;
 - no automatic replay of a command after transport failure;
 - bounded on-device -> system recognizer fallback;
-- optional confidence/alternatives/engine/timing diagnostics without changing submitted command text;
+- confidence/alternatives/engine/timing diagnostics without changing submitted command text;
 - optional **Hội thoại liên tục** turn-taking mode.
 
 `SpeechRecognizer` is **not** kept running continuously as an always-listening loop.
+
+## Fast Android activation
+
+There are three supported user-initiated activation paths:
+
+```text
+In-app Nói với Assistant
+Quick Settings tile: Assistant Voice
+Launcher shortcut: Nói AI
+```
+
+The static launcher shortcut uses a minimal `VoiceShortcutActivity` trampoline and forwards into the same `MainActivity.EXTRA_START_VOICE` path as other activation surfaces.
+
+All activation surfaces preserve the same checks:
+
+```text
+user activation
+  -> pairing present?
+  -> microphone permission granted?
+  -> reconnect desktop if needed
+  -> if Processing/Speaking: request safe cancel and wait for acknowledgement
+  -> SpeechRecognizer.startListening()
+```
+
+The shortcut metadata contains no endpoint or pairing credential and adds no notification/background-service permission.
+
+See [`docs/PHASE28B_ANDROID_LAUNCHER_SHORTCUT.md`](docs/PHASE28B_ANDROID_LAUNCHER_SHORTCUT.md).
 
 ## Pair a phone on the local LAN
 
@@ -143,7 +173,13 @@ Manual fallback:
 assistant satellite pair
 ```
 
-then enter the printed token and `ws://<PC-LAN-IP>:8765` in the Android app.
+then enter the printed token and:
+
+```text
+ws://<PC-LAN-IP>:8765
+```
+
+in the Android app.
 
 ## Satellite management
 
@@ -173,6 +209,29 @@ Persistent data is stored under:
 
 The desktop normally hot-reloads satellite settings in about one second.
 
+## Desktop Satellite diagnostics
+
+The Quick surface includes a read-only **Satellite** panel backed by the existing `assistant_readiness` command.
+
+It can display:
+
+```text
+listener enabled/disabled
+paired/unpaired
+bind address
+credential storage class
+LAN/local or managed Tailscale mode
+trusted/revoked device counts
+device id/name/first seen/last seen/revoked state
+state warnings
+```
+
+The panel deliberately does **not** receive or decrypt the pairing token. It has only open/close/refresh controls. Pairing rotation, revoke/allow, firewall and Tailscale mutations remain in the authoritative desktop CLI.
+
+Voice Satellite is optional for overall desktop readiness: a disabled/unpaired satellite is not a blocking failure for text Assistant/MCP operation.
+
+See [`docs/PHASE26B_SATELLITE_DIAGNOSTICS_UI.md`](docs/PHASE26B_SATELLITE_DIAGNOSTICS_UI.md).
+
 ## Pairing and device trust
 
 Authentication is layered:
@@ -189,7 +248,7 @@ per-device revoke markers
 desktop permission model
 ```
 
-Known devices are recorded in `satellite-devices.json`. Per-device revocation is authoritative even if a phone still has the current bootstrap token.
+Known devices are recorded in `satellite-devices.json`. Per-device revocation remains authoritative even if a phone still knows the current bootstrap token.
 
 ```powershell
 assistant satellite devices
@@ -211,7 +270,7 @@ New/rewritten `satellite.json` files store the token as a current-user Windows D
 "token": "dpapi:<hex-ciphertext>"
 ```
 
-The runtime decrypts it before WebSocket authentication. Legacy plaintext files remain readable and migrate to DPAPI on the next mutating satellite command.
+The runtime decrypts it before WebSocket authentication. Legacy plaintext remains readable and migrates to DPAPI on the next mutating satellite command.
 
 Check with:
 
@@ -219,7 +278,7 @@ Check with:
 assistant satellite doctor
 ```
 
-DPAPI/Keystore protect credentials **at rest**; neither claims to protect a credential already present in a compromised running process.
+DPAPI/Keystore protect credentials **at rest**; neither protects a credential already present in a compromised running process.
 
 ## Windows Firewall
 
@@ -362,15 +421,15 @@ The switch alone does not activate the microphone; a session starts from a user-
 
 Conversation mode stops instead of looping indefinitely when there is silence/`NO_MATCH`, a terminal recognizer error, TTS failure, permission loss, desktop disconnect, or an invalid next-turn state.
 
-Android exposes **Kết thúc hội thoại** to cancel Android listening/pending follow-up. This does not cancel a Windows action just because the user does not want another turn; **Dừng Assistant** remains the explicit desktop cancellation control.
+Android exposes **Kết thúc hội thoại** to cancel Android listening/pending follow-up. This does not cancel a Windows action merely because the user does not want another turn; **Dừng Assistant** remains the explicit desktop cancellation control.
 
 Automatic follow-up windows reuse current in-memory preferences and do not rewrite Android settings/Keystore on every conversational turn.
 
 See [`docs/PHASE31_CONVERSATIONAL_VOICE.md`](docs/PHASE31_CONVERSATIONAL_VOICE.md).
 
-## Why automatic acoustic full duplex is still not claimed
+## Why automatic acoustic full duplex is not claimed
 
-The current preferred audio topology is:
+Current preferred audio topology:
 
 ```text
 Windows speaker -> room air -> Android microphone
@@ -380,12 +439,18 @@ If Android listens during desktop TTS, it can hear and transcribe the Assistant 
 
 Therefore the project does **not** keep SpeechRecognizer active while desktop TTS is speaking and does not treat RMS/VAD thresholds as a substitute for AEC.
 
-A future full-duplex implementation would need a real reference-aware media topology, such as moving capture/playback into one AEC-capable endpoint or a WebRTC-like audio path carrying an echo reference.
+A future full-duplex implementation needs a real reference-aware media topology, for example:
+
+- route capture and response playback through one endpoint that owns the echo reference;
+- stream synchronized desktop TTS reference audio to the phone and process raw capture before recognition;
+- use one WebRTC-like media session with AEC/NS/AGC before STT.
 
 Until then:
 
-- normal conversation -> wait for TTS completion, then auto-listen;
-- mid-response interruption -> explicit **Nói ngắt Assistant** / Quick Settings cancellation.
+```text
+normal conversation -> wait for TTS completion -> auto follow-up
+mid-response interruption -> explicit Nói ngắt Assistant / Quick Settings / launcher activation
+```
 
 ## Desktop fallback voice
 
@@ -482,10 +547,15 @@ Do not equate source completion with device verification. Validate locally:
 - Android Keystore migration/persistence works;
 - Windows DPAPI round-trip and restart work;
 - trusted-device revoke works while connected;
+- desktop Satellite diagnostics shows correct non-secret state and never exposes the pairing token;
+- malformed satellite state is surfaced as warnings rather than crashing Quick;
 - firewall rule is exactly Private + LocalSubnet;
 - `vi-VN` / `en-US` recognition works on the target phone;
-- STT engine/confidence/alternatives/timing diagnostics match what the target recognizer returns;
+- STT engine/confidence/alternatives/timing diagnostics match target recognizer behavior;
 - alternatives never cause additional commands;
+- Quick Settings activation works;
+- launcher **Nói AI** shortcut appears and reuses the existing MainActivity/task correctly;
+- activation surfaces cannot bypass pairing or microphone permission;
 - selected Vietnamese/English SAPI voices work on the target Windows installation;
 - Stop/interrupt-to-talk works across Processing/Speaking;
 - reconnect does not replay an already-submitted Windows action;
@@ -495,18 +565,18 @@ Do not equate source completion with device verification. Validate locally:
 - conversation follow-up retains expected Assistant context;
 - silence/`NO_MATCH` ends conversation mode rather than retrying forever;
 - **Kết thúc hội thoại** prevents pending auto-listen;
-- fallback Zipformer/wake still work.
+- fallback Zipformer/wake still work;
+- NSIS/startup/release packaging is validated on the target Windows installation.
 
 Per project policy, repository implementation does not run remote GitHub Actions, native builds/tests, installers, microphones, Tailscale mutations, or model downloads.
 
 ## Remaining roadmap
 
-The core functional MVP is implemented in source through **Phase 31A**, with Phase 29B diagnostics added for target-device tuning. Remaining work is primarily validation, product polish, and optional higher-complexity capabilities:
+The core functional MVP is implemented in source through **Phase 31A**, with Phase 26B/28B/29B product polish also implemented. Remaining work is primarily local acceptance and optional higher-complexity capabilities:
 
-- local Windows/Android/Tailscale acceptance testing;
-- richer connected-device diagnostics in desktop product UI;
-- optional notification/headset/hardware activation surfaces;
-- optional domain/app-name normalization after real recognition data demonstrates a need;
+- local Windows/Android/Tailscale acceptance testing and release packaging validation;
+- optional notification/headset/hardware activation surfaces if they prove useful;
+- optional domain/app-name normalization after real recognition data demonstrates a concrete need;
 - **Phase 31B** automatic acoustic full duplex only after a real AEC/reference-audio architecture exists.
 
 Automatic acoustic barge-in will not be enabled by pretending RMS VAD can distinguish user speech from the desktop speaker.
@@ -518,8 +588,10 @@ Authoritative roadmap: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
 - [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)
 - [`docs/VOICE_SATELLITE.md`](docs/VOICE_SATELLITE.md)
 - [`docs/PHASE26_WINDOWS_HARDENING.md`](docs/PHASE26_WINDOWS_HARDENING.md)
+- [`docs/PHASE26B_SATELLITE_DIAGNOSTICS_UI.md`](docs/PHASE26B_SATELLITE_DIAGNOSTICS_UI.md)
 - [`docs/PHASE27C_SAPI_VOICE_PREFERENCES.md`](docs/PHASE27C_SAPI_VOICE_PREFERENCES.md)
 - [`docs/PHASE28_29_ANDROID_ACTIVATION_RESILIENCE.md`](docs/PHASE28_29_ANDROID_ACTIVATION_RESILIENCE.md)
+- [`docs/PHASE28B_ANDROID_LAUNCHER_SHORTCUT.md`](docs/PHASE28B_ANDROID_LAUNCHER_SHORTCUT.md)
 - [`docs/PHASE29B_VOICE_DIAGNOSTICS.md`](docs/PHASE29B_VOICE_DIAGNOSTICS.md)
 - [`docs/PHASE30_TAILSCALE_REMOTE.md`](docs/PHASE30_TAILSCALE_REMOTE.md)
 - [`docs/PHASE31_CONVERSATIONAL_VOICE.md`](docs/PHASE31_CONVERSATIONAL_VOICE.md)
