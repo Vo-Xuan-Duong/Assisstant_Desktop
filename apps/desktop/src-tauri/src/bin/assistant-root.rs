@@ -8,6 +8,7 @@ use std::{
 
 const CORE_OVERRIDE_ENV: &str = "ASSISTANT_CORE_CLI";
 const SATELLITE_OVERRIDE_ENV: &str = "ASSISTANT_SATELLITE_CLI";
+const TTS_OVERRIDE_ENV: &str = "ASSISTANT_TTS_CLI";
 
 fn main() {
     match run() {
@@ -25,13 +26,22 @@ fn run() -> Result<ExitStatus, String> {
     let command = command_index.and_then(|index| args.get(index));
 
     if command.is_some_and(|value| value == OsStr::new("satellite")) {
-        let index = command_index.expect("satellite command index must exist");
-        let mut forwarded = args;
-        forwarded.remove(index);
-        return run_cli(
-            resolve_cli(SATELLITE_OVERRIDE_ENV, "assistant-satellite")?,
-            &forwarded,
+        return run_namespaced_cli(
+            args,
+            command_index.expect("satellite command index must exist"),
+            SATELLITE_OVERRIDE_ENV,
+            "assistant-satellite",
             "satellite CLI",
+        );
+    }
+
+    if command.is_some_and(|value| value == OsStr::new("tts")) {
+        return run_namespaced_cli(
+            args,
+            command_index.expect("tts command index must exist"),
+            TTS_OVERRIDE_ENV,
+            "assistant-tts",
+            "TTS CLI",
         );
     }
 
@@ -42,9 +52,20 @@ fn run() -> Result<ExitStatus, String> {
             value == OsStr::new("help") || value == OsStr::new("--help") || value == OsStr::new("-h")
         })
     {
-        print_satellite_help_hint();
+        print_extension_help_hint();
     }
     Ok(status)
+}
+
+fn run_namespaced_cli(
+    mut args: Vec<OsString>,
+    command_index: usize,
+    override_env: &str,
+    stem: &str,
+    label: &str,
+) -> Result<ExitStatus, String> {
+    args.remove(command_index);
+    run_cli(resolve_cli(override_env, stem)?, &args, label)
 }
 
 fn run_cli(path: PathBuf, args: &[OsString], label: &str) -> Result<ExitStatus, String> {
@@ -54,7 +75,7 @@ fn run_cli(path: PathBuf, args: &[OsString], label: &str) -> Result<ExitStatus, 
         .map_err(|error| format!("cannot launch {label} {}: {error}", path.display()))
 }
 
-fn print_satellite_help_hint() {
+fn print_extension_help_hint() {
     println!(
         r#"
   satellite show                           Show Android voice satellite configuration
@@ -63,6 +84,12 @@ fn print_satellite_help_hint() {
   satellite revoke-device <device-id>      Revoke one Android device
   satellite allow-device <device-id>       Allow a previously revoked device
   satellite help                           Show the complete satellite command surface
+
+  tts voices [--json]                      List installed Windows SAPI voices
+  tts show [--json]                        Show preferred VI/EN voice tokens
+  tts set <vi|en> <index|voice-id>         Select a preferred installed voice
+  tts clear <vi|en|all>                    Return to locale/default voice fallback
+  tts help                                 Show the complete TTS command surface
 "#
     );
 }
@@ -178,12 +205,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn global_data_dir_is_skipped_before_satellite_command() {
+    fn global_data_dir_is_skipped_before_namespaced_command() {
         let args = vec![
             OsString::from("--data-dir"),
             OsString::from("C:/AssistantData"),
-            OsString::from("satellite"),
-            OsString::from("devices"),
+            OsString::from("tts"),
+            OsString::from("voices"),
         ];
         assert_eq!(first_command_index(&args).unwrap(), Some(2));
     }

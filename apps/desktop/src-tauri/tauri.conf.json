@@ -35,7 +35,8 @@
       "binaries/assistant-mcp",
       "binaries/assistant",
       "binaries/assistant-core",
-      "binaries/assistant-satellite"
+      "binaries/assistant-satellite",
+      "binaries/assistant-tts"
     ],
     "shortDescription": "Windows AI assistant powered by Antigravity and MCP"
   }
