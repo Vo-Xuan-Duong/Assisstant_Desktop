@@ -511,8 +511,16 @@ fn sapi_worker(config: TtsConfig, receiver: Receiver<SapiCommand>) {
                 preferences,
                 result,
             } => {
-                apply_preferred_voice(&voice, default_voice.as_ref(), language, &preferences);
-                if !run_speech(&voice, &receiver, text, language, result) {
+                let preferred_voice_active =
+                    apply_preferred_voice(&voice, default_voice.as_ref(), language, &preferences);
+                if !run_speech(
+                    &voice,
+                    &receiver,
+                    text,
+                    language,
+                    preferred_voice_active,
+                    result,
+                ) {
                     break;
                 }
             }
@@ -529,34 +537,38 @@ fn apply_preferred_voice(
     default_voice: Option<&ISpeechObjectToken>,
     language: TtsLanguage,
     preferences: &TtsVoicePreferences,
-) {
+) -> bool {
     let Some(preferred_id) = preferences.preferred_id(language) else {
         if let Some(default_voice) = default_voice {
             let _ = unsafe { voice.putref_Voice(default_voice) };
         }
-        return;
+        return false;
     };
 
     match find_voice_token(voice, preferred_id) {
-        Ok(Some(token)) => {
-            if let Err(error) = unsafe { voice.putref_Voice(&token) } {
+        Ok(Some(token)) => match unsafe { voice.putref_Voice(&token) } {
+            Ok(()) => true,
+            Err(error) => {
                 warn!(%error, %preferred_id, "failed to activate preferred SAPI voice; using locale fallback");
                 if let Some(default_voice) = default_voice {
                     let _ = unsafe { voice.putref_Voice(default_voice) };
                 }
+                false
             }
-        }
+        },
         Ok(None) => {
             warn!(%preferred_id, "preferred SAPI voice is no longer installed; using locale fallback");
             if let Some(default_voice) = default_voice {
                 let _ = unsafe { voice.putref_Voice(default_voice) };
             }
+            false
         }
         Err(error) => {
             warn!(%error, %preferred_id, "could not enumerate SAPI voices; using locale fallback");
             if let Some(default_voice) = default_voice {
                 let _ = unsafe { voice.putref_Voice(default_voice) };
             }
+            false
         }
     }
 }
@@ -589,9 +601,18 @@ fn run_speech(
     receiver: &Receiver<SapiCommand>,
     text: String,
     language: TtsLanguage,
+    preferred_voice_active: bool,
     result: oneshot::Sender<Result<(), TtsError>>,
 ) -> bool {
-    let markup = language_markup(&text, language);
+    // SAPI's <lang> tag is a voice-selection tag. When a stable voice token was
+    // explicitly selected above, using <lang> here could replace that voice.
+    // Keep XML escaping for safety but only use locale voice selection in the
+    // automatic/fallback path.
+    let markup = if preferred_voice_active {
+        escape_sapi_xml(&text)
+    } else {
+        language_markup(&text, language)
+    };
     let text = BSTR::from(markup);
     let speak_flags = SpeechVoiceSpeakFlags(
         SVSFlagsAsync.0 | SVSFPurgeBeforeSpeak.0 | SVSFIsXML.0,
