@@ -29,8 +29,9 @@ The phone is not another AI brain and never receives direct MCP, Win32, shell, o
 8. No dedicated paid STT API is required by the primary architecture.
 9. Remote voice must not expose a raw public WebSocket port.
 10. `SpeechRecognizer` must not become an uncontrolled 24/7 recognition loop.
-11. Automatic acoustic barge-in must not be claimed without a real echo-reference/AEC-capable architecture.
-12. Source completion is not target-device verification; native validation is performed locally by the user.
+11. Recognition confidence/alternatives are diagnostics and must not silently change a Windows command.
+12. Automatic acoustic barge-in must not be claimed without a real echo-reference/AEC-capable architecture.
+13. Source completion is not target-device verification; native validation is performed locally by the user.
 
 ## 3. Locked technology stack
 
@@ -75,6 +76,7 @@ Android Voice Satellite
   SpeechRecognizer
   Quick Settings / push-to-talk / interrupt-to-talk
   optional conversational turn-taking
+  read-only STT diagnostics
   Keystore-protected credential
            |
      authenticated WebSocket
@@ -247,13 +249,37 @@ Delivered:
 - cancellation propagation to Antigravity/SAPI;
 - Executing/Confirming remain intentionally non-cancellable.
 
-Optional quality follow-ups:
+Potential domain-specific command normalization remains deferred until real-device diagnostics demonstrate a concrete need.
 
-- confidence/alternative-result UX where useful;
-- domain/app-name normalization;
-- richer latency/recognizer diagnostics.
+## 11. Phase 29B — Android voice diagnostics — COMPLETE IN SOURCE; LOCAL DATA COLLECTION REQUIRED
 
-## 11. Phase 30 — Secure remote satellite through Tailscale — COMPLETE IN SOURCE; LOCAL VALIDATION REQUIRED
+Delivered read-only diagnostics:
+
+- final recognizer engine label (`on-device` or `system`);
+- elapsed STT time measured with monotonic `SystemClock`;
+- optional first confidence score when the recognizer supplies a valid `0..1` value;
+- up to two additional final recognition candidates for display only;
+- completed desktop-turn elapsed time from successful command submission through AI/tool/TTS response completion;
+- cancellation/error paths clear in-flight turn timing;
+- conversational auto-follow-ups no longer rewrite settings/Keystore on every recognition window.
+
+Safety rule:
+
+```text
+first RESULTS_RECOGNITION candidate
+        |
+        +--> exact command submitted to desktop
+
+confidence / alternatives
+        |
+        `--> Android diagnostics UI only
+```
+
+No confidence threshold changes, rejects, approves, or rewrites a Windows action. Missing confidence is valid.
+
+See [`PHASE29B_VOICE_DIAGNOSTICS.md`](PHASE29B_VOICE_DIAGNOSTICS.md).
+
+## 12. Phase 30 — Secure remote satellite through Tailscale — COMPLETE IN SOURCE; LOCAL VALIDATION REQUIRED
 
 Architecture:
 
@@ -294,13 +320,11 @@ Properties:
 
 This phase carries raw `ws://` packets inside Tailscale's encrypted tailnet. Independent WSS/TLS termination is not claimed.
 
-## 12. Phase 31A — Safe conversational turn-taking — COMPLETE IN SOURCE; LOCAL VALIDATION REQUIRED
+## 13. Phase 31A — Safe conversational turn-taking — COMPLETE IN SOURCE; LOCAL VALIDATION REQUIRED
 
-Goal: repeated voice turns without tapping the microphone after every desktop response, while still avoiding microphone capture during desktop TTS.
+Goal: repeated voice turns without tapping the microphone after every desktop response, while avoiding microphone capture during desktop TTS.
 
-Android now has a persisted **Hội thoại liên tục** option.
-
-Flow:
+Android has a persisted **Hội thoại liên tục** option.
 
 ```text
 Android listens
@@ -316,21 +340,21 @@ Android listens
 Properties:
 
 - enabling the switch alone does not turn on the microphone;
-- the session starts only from a user-initiated voice activation;
+- the session starts only from user voice activation;
 - desktop session/context is reused naturally across follow-up turns;
 - **Kết thúc hội thoại** cancels Android listening/pending follow-up without cancelling a Windows action simply because no more follow-up is wanted;
 - explicit **Dừng Assistant** remains the control for safe desktop cancellation;
-- disconnect, TTS failure, terminal recognizer failure, missing permission, or an invalid next-turn state ends the conversational session;
+- disconnect, TTS failure, terminal recognizer failure, missing permission, or invalid next-turn state ends the conversational session;
 - `NO_MATCH` / speech timeout ends the session instead of creating an infinite retry loop;
 - bounded recognizer fallback/recovery messages are non-terminal status events.
 
 See [`PHASE31_CONVERSATIONAL_VOICE.md`](PHASE31_CONVERSATIONAL_VOICE.md).
 
-## 13. Phase 31B — Automatic acoustic barge-in / true full duplex — DEFERRED UNTIL A REAL AEC ARCHITECTURE EXISTS
+## 14. Phase 31B — Automatic acoustic barge-in / true full duplex — DEFERRED UNTIL A REAL AEC ARCHITECTURE EXISTS
 
 Do **not** enable automatic acoustic barge-in with the existing RMS VAD or ordinary Android SpeechRecognizer alone.
 
-Current physical audio topology is:
+Current physical audio topology:
 
 ```text
 Windows speaker -> room air -> Android microphone
@@ -338,24 +362,22 @@ Windows speaker -> room air -> Android microphone
 
 If Android listens while desktop TTS is speaking, it can transcribe the Assistant itself. The phone currently has no synchronized far-end playback reference from Windows, so a conventional reference-aware echo canceller cannot reliably remove desktop speech.
 
-A future implementation needs an actual AEC-capable topology, for example one of:
+A future implementation needs an actual AEC-capable topology, for example:
 
 - route both capture and response playback through one endpoint that owns an echo reference;
-- stream a synchronized desktop TTS reference to the phone and process raw capture before recognition;
-- move full voice I/O to a single WebRTC-like media session with AEC/NS/AGC and then feed clean user speech to STT.
+- stream synchronized desktop TTS reference audio to the phone and process raw capture before recognition;
+- move full voice I/O to a single WebRTC-like media session with AEC/NS/AGC before STT.
 
-Only after that architecture is implemented and locally validated should the product automatically keep a microphone active during desktop speaker output.
-
-Until then:
+Until that architecture is implemented and locally validated:
 
 ```text
 normal conversation -> wait until TTS completes -> auto follow-up
 mid-response interruption -> explicit Nói ngắt Assistant / Quick Settings cancel
 ```
 
-is the safe supported behavior.
+is the supported behavior.
 
-## 14. Response behavior
+## 15. Response behavior
 
 Vietnamese:
 
@@ -379,7 +401,7 @@ Rules:
 - long task -> concise progress/result summaries;
 - never claim an action succeeded unless the tool result did.
 
-## 15. Security invariants
+## 16. Security invariants
 
 Windows tools:
 
@@ -405,9 +427,10 @@ Satellite invariants:
 - LAN rule -> Private + LocalSubnet;
 - remote mode -> Tailscale Serve/tailnet only;
 - no Assistant-controlled Funnel/public port exposure;
-- conversational mode does not lower any desktop permission boundary.
+- diagnostics never alter command/permission semantics;
+- conversational mode does not lower desktop permission boundaries.
 
-## 16. Cost/privacy model
+## 17. Cost/privacy model
 
 Speech recognition does not require a dedicated paid API key.
 
@@ -418,7 +441,7 @@ Speech recognition does not require a dedicated paid API key.
 
 Antigravity/Gemini reasoning remains under its existing authentication/quota model.
 
-## 17. Local acceptance matrix
+## 18. Local acceptance matrix
 
 Before release readiness, validate on target Windows + Android hardware.
 
@@ -433,38 +456,42 @@ Before release readiness, validate on target Windows + Android hardware.
 7. Android Keystore survives restart and migration.
 8. reconnect does not duplicate Windows actions.
 9. Quick Settings activation and interrupt-to-talk work.
-10. conversation mode does not listen during desktop TTS.
-11. a follow-up recognition window opens after TTS completion.
-12. follow-up turns retain the expected Assistant conversation context.
-13. silence/`NO_MATCH` stops conversation mode rather than looping.
-14. **Kết thúc hội thoại** prevents a pending microphone follow-up.
+10. STT engine label matches the recognizer actually used after fallback.
+11. confidence is optional and absent values are handled safely.
+12. alternatives remain UI-only and never create extra commands.
+13. STT/desktop-turn timings behave sensibly across success/cancel/error.
+14. conversation mode does not listen during desktop TTS.
+15. a follow-up recognition window opens after TTS completion.
+16. follow-up turns retain expected Assistant conversation context.
+17. silence/`NO_MATCH` stops conversation mode rather than looping.
+18. **Kết thúc hội thoại** prevents a pending microphone follow-up.
 
 ### Windows security/TTS
 
-15. DPAPI token persists/reloads across desktop restart for the same Windows user.
-16. legacy plaintext migrates as designed.
-17. firewall helper creates only the expected Private+LocalSubnet rule.
-18. VI/EN/Auto produce correct response language.
-19. selected Vietnamese/English SAPI voices are used where installed.
-20. missing/removed preferred voice falls back safely.
-21. SAPI cancellation works.
+19. DPAPI token persists/reloads across desktop restart for the same Windows user.
+20. legacy plaintext migrates as designed.
+21. firewall helper creates only the expected Private+LocalSubnet rule.
+22. VI/EN/Auto produce correct response language.
+23. selected Vietnamese/English SAPI voices are used where installed.
+24. missing/removed preferred voice falls back safely.
+25. SAPI cancellation works.
 
 ### Remote
 
-22. Tailscale Serve maps the tailnet port to `127.0.0.1`.
-23. Android works over mobile data while both devices remain in the permitted tailnet.
-24. revoke still blocks a remote phone.
-25. remote disable restores previous local state when safe.
-26. unrelated Tailscale Serve configuration remains untouched.
-27. no Funnel/public endpoint is created.
+26. Tailscale Serve maps the tailnet port to `127.0.0.1`.
+27. Android works over mobile data while both devices remain in the permitted tailnet.
+28. revoke still blocks a remote phone.
+29. remote disable restores previous local state when safe.
+30. unrelated Tailscale Serve configuration remains untouched.
+31. no Funnel/public endpoint is created.
 
 ### Fallback/release
 
-28. Zipformer fallback and desktop wake still work.
-29. staged/installed canonical/helper executables resolve correctly.
-30. NSIS package/startup flow works on the target Windows installation.
+32. Zipformer fallback and desktop wake still work.
+33. staged/installed canonical/helper executables resolve correctly.
+34. NSIS package/startup flow works on the target Windows installation.
 
-## 18. Definition of feature-complete MVP
+## 19. Definition of feature-complete MVP
 
 Core feature-complete source now includes:
 
@@ -473,6 +500,7 @@ Core feature-complete source now includes:
 - pairing/trust/credential protection;
 - VI/EN responses and selectable TTS;
 - Stop/reconnect/deduplication;
+- read-only recognition/turn diagnostics;
 - trusted-LAN and tailnet-only remote modes;
 - safe conversational follow-up turn-taking;
 - desktop fallback voice;
@@ -480,9 +508,9 @@ Core feature-complete source now includes:
 
 The project is **not release-ready until local acceptance passes**.
 
-Automatic acoustic full duplex is explicitly outside the current release-readiness claim until a real AEC/reference-audio design exists.
+Automatic acoustic full duplex remains outside the current release-readiness claim until a real AEC/reference-audio design exists.
 
-## 19. Validation policy
+## 20. Validation policy
 
 Repository development remains source-first.
 
