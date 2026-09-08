@@ -1,0 +1,212 @@
+.satellite-diagnostics {
+  position: fixed;
+  top: 10px;
+  right: 14px;
+  z-index: 40;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+}
+
+.satellite-diagnostics-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(20, 22, 30, 0.78);
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 12px;
+  cursor: pointer;
+  backdrop-filter: blur(18px);
+}
+
+.satellite-diagnostics-trigger:hover {
+  background: rgba(34, 37, 49, 0.9);
+}
+
+.satellite-diagnostics.is-open {
+  inset: 8px 10px auto 10px;
+}
+
+.satellite-diagnostics-panel {
+  width: min(720px, calc(100vw - 20px));
+  max-height: 354px;
+  overflow: auto;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(13, 15, 22, 0.97);
+  color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(24px);
+}
+
+.satellite-diagnostics-panel header,
+.satellite-device-list-heading,
+.satellite-device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.satellite-diagnostics-panel header p {
+  margin: 0 0 3px;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.satellite-diagnostics-panel h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.satellite-diagnostics-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.satellite-diagnostics-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  padding: 6px 9px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+}
+
+.satellite-diagnostics-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.satellite-diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.satellite-diagnostics-grid > div {
+  min-width: 0;
+  border-radius: 11px;
+  padding: 9px 10px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.satellite-diagnostics-grid span,
+.satellite-device-meta span,
+.satellite-device-list-heading span {
+  display: block;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 11px;
+}
+
+.satellite-diagnostics-grid strong,
+.satellite-diagnostics-grid code {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.satellite-diagnostics-warning,
+.satellite-diagnostics-error {
+  margin: 10px 0 0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.satellite-diagnostics-warning {
+  background: rgba(218, 165, 32, 0.12);
+  color: rgba(255, 226, 151, 0.95);
+}
+
+.satellite-diagnostics-error {
+  background: rgba(220, 70, 70, 0.13);
+  color: rgba(255, 181, 181, 0.95);
+}
+
+.satellite-device-list-heading {
+  margin-top: 14px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.satellite-device-list-heading strong {
+  font-size: 12px;
+}
+
+.satellite-device-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.satellite-device-row {
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.satellite-device-row > div:first-child {
+  min-width: 0;
+}
+
+.satellite-device-row strong {
+  display: block;
+  font-size: 12px;
+}
+
+.satellite-device-row code {
+  display: block;
+  max-width: 360px;
+  margin-top: 2px;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.satellite-device-meta {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.satellite-device-meta .is-trusted {
+  color: rgba(151, 235, 185, 0.9);
+}
+
+.satellite-device-meta .is-revoked {
+  color: rgba(255, 166, 166, 0.9);
+}
+
+.satellite-device-empty {
+  margin: 12px 0 2px;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 12px;
+}
+
+@media (max-width: 620px) {
+  .satellite-diagnostics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .satellite-device-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .satellite-device-meta {
+    text-align: left;
+  }
+}
