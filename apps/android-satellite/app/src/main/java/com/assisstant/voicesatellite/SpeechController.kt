@@ -198,8 +198,8 @@ class SpeechController(
         val candidates = results
             ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             .orEmpty()
-            .map(String::trim)
-            .filter(String::isNotEmpty)
+            .map { candidate -> candidate.trim() }
+            .filter { candidate -> candidate.isNotEmpty() }
             .distinct()
             .take(MAX_RESULT_CANDIDATES)
 
