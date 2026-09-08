@@ -17,6 +17,8 @@ It listens through Android `SpeechRecognizer`, shows partial recognition locally
 - optional **Hội thoại liên tục** turn-taking mode;
 - automatic WebSocket reconnect with bounded exponential backoff;
 - one bounded recognizer-busy retry and on-device -> system recognizer fallback;
+- recognition diagnostics: engine, elapsed time, optional confidence, and up to two alternatives;
+- completed desktop-turn timing through AI/tool/TTS response completion;
 - authenticated WebSocket over trusted LAN or a Tailscale tailnet;
 - QR/deep-link pairing;
 - pairing token protected with Android Keystore AES-GCM;
@@ -158,6 +160,37 @@ Keystore protects persistence at rest; the token still exists in process memory 
 
 If Windows is already Processing/Speaking, the primary button becomes **Nói ngắt Assistant**. It opens an authenticated control connection, requests cancellation, waits for the desktop acknowledgement, and only then starts a fresh recognition turn. Executing/Confirming remain intentionally non-cancellable.
 
+## Voice diagnostics
+
+Final recognition results now expose read-only diagnostics on the phone:
+
+```text
+Bạn nói
+Mở Visual Studio Code
+
+STT: on-device · 842 ms · confidence 91%
+Phương án khác: Mở Visual Studio Cốt · Mở VS Code
+```
+
+The app records:
+
+- whether the final result came from the on-device or system recognizer;
+- recognition elapsed time;
+- the first confidence value only when Android supplies a valid score;
+- up to two additional final recognition candidates.
+
+The **first recognition candidate remains the exact command submitted to Windows**. Confidence does not auto-approve/reject a command, and alternatives are display-only. Android recognizers are allowed to omit confidence data.
+
+The response area also displays a completed desktop-turn duration measured from successful command submission until the desktop `response` arrives after AI/tool/TTS processing:
+
+```text
+Desktop turn: 2380 ms (AI/tool/TTS đến khi response hoàn tất)
+```
+
+This is not a pure network RTT metric.
+
+See [`../../docs/PHASE29B_VOICE_DIAGNOSTICS.md`](../../docs/PHASE29B_VOICE_DIAGNOSTICS.md).
+
 ## Conversational mode
 
 Enable **Hội thoại liên tục** when you want turn-taking without tapping the microphone button after every response.
@@ -187,6 +220,8 @@ Conversation mode is bounded:
 - losing the desktop connection ends the conversation;
 - a TTS failure ends the conversation;
 - on-device -> system recognizer fallback remains a non-terminal status and can continue normally.
+
+Automatic follow-up recognition reuses the in-memory preferences; it does not rewrite Android settings/Keystore on every follow-up window.
 
 `SpeechRecognizer` is therefore still **not** used as a permanent always-listening loop.
 
@@ -283,5 +318,6 @@ Development compatibility environment overrides remain available, but managed re
 See:
 
 - [`../../docs/VOICE_SATELLITE.md`](../../docs/VOICE_SATELLITE.md)
+- [`../../docs/PHASE29B_VOICE_DIAGNOSTICS.md`](../../docs/PHASE29B_VOICE_DIAGNOSTICS.md)
 - [`../../docs/PHASE30_TAILSCALE_REMOTE.md`](../../docs/PHASE30_TAILSCALE_REMOTE.md)
 - [`../../docs/PHASE31_CONVERSATIONAL_VOICE.md`](../../docs/PHASE31_CONVERSATIONAL_VOICE.md)

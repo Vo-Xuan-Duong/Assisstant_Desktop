@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     companion object {
@@ -67,6 +69,13 @@ class MainActivity : ComponentActivity() {
     private var pendingVoiceActivation = false
     private var conversationActive by mutableStateOf(false)
 
+    private var lastRecognitionConfidence by mutableStateOf<Float?>(null)
+    private var lastRecognitionAlternatives by mutableStateOf<List<String>>(emptyList())
+    private var lastRecognitionLatencyMs by mutableStateOf<Long?>(null)
+    private var lastRecognitionEngine by mutableStateOf<String?>(null)
+    private var lastDesktopTurnLatencyMs by mutableStateOf<Long?>(null)
+    private var commandStartedAtMs: Long? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pairingSecretStore = PairingSecretStore(this)
@@ -81,6 +90,7 @@ class MainActivity : ComponentActivity() {
                 connectionStatus = status
                 if (!ready) {
                     assistantTurnState = "idle"
+                    commandStartedAtMs = null
                     stopConversationSession(
                         cancelRecognizer = true,
                         message = if (conversationActive) {
@@ -95,6 +105,9 @@ class MainActivity : ComponentActivity() {
             },
             onTurnState = { state ->
                 assistantTurnState = if (state == "cancelled") "idle" else state
+                if (state == "cancelled") {
+                    commandStartedAtMs = null
+                }
                 statusMessage = when (state) {
                     "processing" -> "Desktop đang xử lý lệnh…"
                     "speaking" -> "Desktop đang trả lời…"
@@ -109,6 +122,10 @@ class MainActivity : ComponentActivity() {
             onResponse = { text, ttsError ->
                 assistantTurnState = "idle"
                 lastResponse = text
+                lastDesktopTurnLatencyMs = commandStartedAtMs?.let { startedAt ->
+                    (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
+                }
+                commandStartedAtMs = null
                 if (ttsError == null) {
                     if (conversationActive && conversationModeEnabled) {
                         statusMessage = "Desktop đã trả lời. Chuẩn bị nghe lượt tiếp theo…"
@@ -122,6 +139,7 @@ class MainActivity : ComponentActivity() {
                 }
             },
             onError = { message ->
+                commandStartedAtMs = null
                 if (conversationActive) {
                     stopConversationSession(cancelRecognizer = true)
                 }
@@ -133,18 +151,26 @@ class MainActivity : ComponentActivity() {
             context = this,
             onListeningChanged = { listening = it },
             onPartialText = { partialText = it },
-            onFinalText = { finalText ->
-                partialText = finalText
-                if (!satelliteClient.sendCommand(finalText, responseLanguage)) {
+            onFinalResult = { result ->
+                partialText = result.text
+                lastRecognitionConfidence = result.confidence
+                lastRecognitionAlternatives = result.alternatives
+                lastRecognitionLatencyMs = result.elapsedMs
+                lastRecognitionEngine = if (result.usedOnDeviceRecognizer) "on-device" else "system"
+
+                if (!satelliteClient.sendCommand(result.text, responseLanguage)) {
+                    commandStartedAtMs = null
                     stopConversationSession(cancelRecognizer = false)
                     statusMessage = "Chưa kết nối với desktop hoặc kết nối chưa sẵn sàng."
                 } else {
+                    commandStartedAtMs = SystemClock.elapsedRealtime()
                     assistantTurnState = "processing"
                     statusMessage = "Đã gửi lệnh cho desktop."
                 }
             },
             onStatus = { message -> statusMessage = message },
             onError = { message ->
+                commandStartedAtMs = null
                 if (conversationActive) {
                     stopConversationSession(cancelRecognizer = false)
                     statusMessage = "$message Hội thoại đã dừng."
@@ -409,6 +435,24 @@ class MainActivity : ComponentActivity() {
             if (partialText.isNotBlank()) {
                 Text("Bạn nói", style = MaterialTheme.typography.titleSmall)
                 Text(partialText, style = MaterialTheme.typography.bodyLarge)
+
+                val recognitionLatency = lastRecognitionLatencyMs
+                val recognitionEngine = lastRecognitionEngine
+                if (recognitionLatency != null && recognitionEngine != null) {
+                    val confidenceText = lastRecognitionConfidence?.let { score ->
+                        " · confidence ${(score * 100f).roundToInt()}%"
+                    }.orEmpty()
+                    Text(
+                        "STT: $recognitionEngine · ${recognitionLatency} ms$confidenceText",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (lastRecognitionAlternatives.isNotEmpty()) {
+                    Text(
+                        "Phương án khác: ${lastRecognitionAlternatives.joinToString(" · ")}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
 
             if (statusMessage.isNotBlank()) {
@@ -419,6 +463,12 @@ class MainActivity : ComponentActivity() {
                 HorizontalDivider()
                 Text("Desktop trả lời", style = MaterialTheme.typography.titleSmall)
                 Text(lastResponse, style = MaterialTheme.typography.bodyLarge)
+                lastDesktopTurnLatencyMs?.let { latency ->
+                    Text(
+                        "Desktop turn: ${latency} ms (AI/tool/TTS đến khi response hoàn tất)",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }
@@ -440,6 +490,7 @@ class MainActivity : ComponentActivity() {
                 }
                 connected = false
                 assistantTurnState = "idle"
+                commandStartedAtMs = null
                 connectionStatus = "Đã nhập pairing từ QR"
                 desktopAddress = pairing.desktopAddress
                 pairingToken = pairing.token
@@ -531,10 +582,15 @@ class MainActivity : ComponentActivity() {
         if (conversationModeEnabled) {
             conversationActive = true
         }
-        saveSettings()
         if (clearLastResponse) {
+            saveSettings()
             lastResponse = ""
+            lastDesktopTurnLatencyMs = null
         }
+        lastRecognitionConfidence = null
+        lastRecognitionAlternatives = emptyList()
+        lastRecognitionLatencyMs = null
+        lastRecognitionEngine = null
         statusMessage = if (conversationActive) {
             "Đang nghe lượt hội thoại…"
         } else if (preferOnDevice) {
