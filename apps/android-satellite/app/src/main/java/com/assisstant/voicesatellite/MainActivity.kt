@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 class MainActivity : ComponentActivity() {
     private lateinit var satelliteClient: SatelliteClient
     private lateinit var speechController: SpeechController
+    private lateinit var pairingSecretStore: PairingSecretStore
 
     private var desktopAddress by mutableStateOf("ws://192.168.1.20:8765")
     private var pairingToken by mutableStateOf("")
@@ -56,6 +57,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pairingSecretStore = PairingSecretStore(this)
         loadSettings()
         consumePairingIntent(intent)
 
@@ -317,20 +319,53 @@ class MainActivity : ComponentActivity() {
     private fun loadSettings() {
         val prefs = getSharedPreferences("voice_satellite", MODE_PRIVATE)
         desktopAddress = prefs.getString("desktop_address", desktopAddress) ?: desktopAddress
-        pairingToken = prefs.getString("pairing_token", "") ?: ""
         recognitionLanguage = prefs.getString("recognition_language", "vi-VN") ?: "vi-VN"
         responseLanguage = prefs.getString("response_language", "vi") ?: "vi"
         preferOnDevice = prefs.getBoolean("prefer_on_device", true)
+
+        val legacyToken = prefs.getString("pairing_token", null)?.trim().orEmpty()
+        val secureToken = pairingSecretStore.loadToken()
+        secureToken
+            .onSuccess { token ->
+                if (!token.isNullOrBlank()) {
+                    pairingToken = token
+                    if (legacyToken.isNotEmpty()) {
+                        prefs.edit().remove("pairing_token").apply()
+                    }
+                } else if (legacyToken.isNotEmpty()) {
+                    val migration = pairingSecretStore.saveToken(legacyToken)
+                    if (migration.isSuccess) {
+                        pairingToken = legacyToken
+                        prefs.edit().remove("pairing_token").apply()
+                    } else {
+                        pairingToken = legacyToken
+                        statusMessage = "Android Keystore chưa lưu được pairing token cũ; token plaintext tạm thời được giữ để tránh mất pairing."
+                    }
+                }
+            }
+            .onFailure {
+                pairingToken = legacyToken
+                statusMessage = "Không thể đọc pairing token từ Android Keystore. Hãy quét lại QR nếu kết nối không còn hoạt động."
+            }
     }
 
     private fun saveSettings() {
-        getSharedPreferences("voice_satellite", MODE_PRIVATE)
-            .edit()
+        val prefs = getSharedPreferences("voice_satellite", MODE_PRIVATE)
+        prefs.edit()
             .putString("desktop_address", desktopAddress.trim())
-            .putString("pairing_token", pairingToken.trim())
             .putString("recognition_language", recognitionLanguage)
             .putString("response_language", responseLanguage)
             .putBoolean("prefer_on_device", preferOnDevice)
             .apply()
+
+        pairingSecretStore.saveToken(pairingToken)
+            .onSuccess {
+                prefs.edit().remove("pairing_token").apply()
+            }
+            .onFailure {
+                if (pairingToken.isNotBlank()) {
+                    statusMessage = "Không thể lưu pairing token vào Android Keystore; token mới chỉ tồn tại trong phiên hiện tại."
+                }
+            }
     }
 }

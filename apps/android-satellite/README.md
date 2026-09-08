@@ -14,6 +14,7 @@ It listens through Android `SpeechRecognizer`, shows partial recognition locally
 - push-to-talk;
 - authenticated WebSocket connection over trusted LAN;
 - QR/deep-link pairing without manually typing the endpoint/token;
+- pairing token protected with an Android Keystore AES-256-GCM key;
 - stable per-installation `device_id`;
 - desktop trusted-device registry and per-device revoke;
 - response modes `VI`, `EN`, `Auto`;
@@ -145,7 +146,22 @@ To allow it again:
 assistant satellite allow-device <device-id>
 ```
 
-Reinstalling/clearing app storage can create a new installation identity. The current QR transports the shared bootstrap token; device-specific QR credentials and Keystore/DPAPI hardening remain follow-up work.
+Reinstalling/clearing app storage can create a new installation identity. The current QR transports the shared bootstrap token; device-specific credentials remain follow-up work.
+
+## Pairing-token storage on Android
+
+New and imported pairing tokens are no longer intentionally persisted as plaintext in the normal `voice_satellite` preferences file.
+
+The app creates an AES-256 key in the `AndroidKeyStore` provider and encrypts the token with `AES/GCM/NoPadding`. Only the IV and ciphertext are stored in the private `voice_satellite_secrets` preferences file; the AES key remains managed by Android Keystore.
+
+Existing installs are migrated conservatively:
+
+1. if a Keystore-protected token already exists, it is used and any legacy plaintext `pairing_token` preference is deleted;
+2. if only the old plaintext value exists, the app attempts to encrypt it with Keystore and deletes the plaintext only after successful migration;
+3. if migration fails, the old value is temporarily retained so an upgrade does not silently destroy an existing pairing;
+4. if Keystore data becomes unreadable after a restore/reset/invalidation, the app reports the problem and the user can pair again by QR.
+
+The token still exists in process memory while the app is connected or showing the pairing field; Keystore protects persistence at rest, not an already-running compromised process.
 
 ## Using the app
 
@@ -173,7 +189,7 @@ The normal recognizer is vendor-dependent. On phones using Google services it ma
 
 The current transport is unencrypted `ws://` and is intended only for a trusted/private LAN. Do not expose port `8765` directly to the public Internet.
 
-The pairing QR contains a credential. Treat the QR/URI like the token itself: do not post screenshots or store it in public logs. The custom Android deep-link scheme is an MVP convenience mechanism, not a replacement for future device-specific credentials/Keystore-backed trust.
+The pairing QR contains a credential. Treat the QR/URI like the token itself: do not post screenshots or store it in public logs. The custom Android deep-link scheme is an MVP convenience mechanism, not a replacement for future device-specific credentials.
 
 The phone is low-authority: it cannot bypass desktop permission checks or approve Sensitive actions.
 
