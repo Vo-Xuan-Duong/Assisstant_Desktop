@@ -552,18 +552,6 @@ async fn handle_connection(
                             .await?;
                             continue;
                         }
-                        if !remember_command_id(&id).await {
-                            send_json(
-                                &mut socket,
-                                &ServerMessage::Error {
-                                    id: Some(&id),
-                                    code: "duplicate_command",
-                                    message: "this command id was already accepted; the desktop will not execute it twice",
-                                },
-                            )
-                            .await?;
-                            continue;
-                        }
                         handle_command(&app, &mut socket, &id, &text, response_language).await?;
                     }
                     ClientMessage::Cancel { id } => {
@@ -690,6 +678,19 @@ async fn handle_command(
     }
     drop(state);
 
+    if !remember_command_id(id).await {
+        send_json(
+            socket,
+            &ServerMessage::Error {
+                id: Some(id),
+                code: "duplicate_command",
+                message: "this command id was already accepted; the desktop will not execute it twice",
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+
     crate::show_quick_window(app, "satellite");
     let _ = app.emit(
         VOICE_TRANSCRIPT_EVENT,
@@ -735,18 +736,49 @@ async fn handle_command(
     )
     .await?;
 
-    let tts_error = speak_response(app, &response, response_language.tts_language())
-        .await
-        .err();
-    send_json(
-        socket,
-        &ServerMessage::Response {
-            id,
-            text: &response,
-            tts_error: tts_error.as_deref(),
-        },
-    )
-    .await
+    match speak_response(app, &response, response_language.tts_language()).await {
+        Ok(()) => {
+            send_json(
+                socket,
+                &ServerMessage::Response {
+                    id,
+                    text: &response,
+                    tts_error: None,
+                },
+            )
+            .await
+        }
+        Err(error) if is_cancellation_error(&error) => {
+            send_json(
+                socket,
+                &ServerMessage::Response {
+                    id,
+                    text: &response,
+                    tts_error: None,
+                },
+            )
+            .await?;
+            send_json(
+                socket,
+                &ServerMessage::Cancelled {
+                    id: Some(id),
+                    accepted: true,
+                },
+            )
+            .await
+        }
+        Err(error) => {
+            send_json(
+                socket,
+                &ServerMessage::Response {
+                    id,
+                    text: &response,
+                    tts_error: Some(&error),
+                },
+            )
+            .await
+        }
+    }
 }
 
 async fn complete_satellite_prompt(
@@ -888,6 +920,11 @@ async fn cancel_active_interaction(app: &AppHandle) -> bool {
             false
         }
     }
+}
+
+fn is_cancellation_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("cancelled") || normalized.contains("canceled")
 }
 
 fn is_valid_command_id(id: &str) -> bool {
@@ -1086,5 +1123,12 @@ mod tests {
         assert!(!is_valid_command_id(""));
         assert!(!is_valid_command_id("bad id"));
         assert!(!is_valid_command_id(&"a".repeat(MAX_COMMAND_ID_CHARS + 1)));
+    }
+
+    #[test]
+    fn cancellation_error_detection_accepts_both_spellings() {
+        assert!(is_cancellation_error("text-to-speech request was cancelled"));
+        assert!(is_cancellation_error("request canceled"));
+        assert!(!is_cancellation_error("device unavailable"));
     }
 }
