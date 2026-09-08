@@ -25,12 +25,22 @@ class SatelliteClient(
         .pingInterval(20, TimeUnit.SECONDS)
         .build()
     private val deviceId = loadOrCreateDeviceId(context.applicationContext)
+    private val deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
 
     @Volatile
     private var webSocket: WebSocket? = null
 
     @Volatile
     private var ready = false
+
+    @Volatile
+    private var connectedUrl: String? = null
+
+    @Volatile
+    private var connectedToken: String? = null
+
+    @Volatile
+    private var activeCommandId: String? = null
 
     fun connect(rawUrl: String, token: String) {
         close()
@@ -39,23 +49,20 @@ class SatelliteClient(
             post { onError("Địa chỉ desktop không hợp lệ. Ví dụ: ws://192.168.1.20:8765") }
             return
         }
-        if (token.trim().length < 16) {
+        val normalizedToken = token.trim()
+        if (normalizedToken.length < 16) {
             post { onError("Pairing token phải có ít nhất 16 ký tự.") }
             return
         }
 
+        connectedUrl = url
+        connectedToken = normalizedToken
         ready = false
         post { onConnectionChanged(false, "Đang kết nối…") }
         val request = Request.Builder().url(url).build()
         webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                val hello = JSONObject()
-                    .put("type", "hello")
-                    .put("token", token.trim())
-                    .put("device_id", deviceId)
-                    .put("device_name", "${Build.MANUFACTURER} ${Build.MODEL}".trim())
-                    .put("protocol", 1)
-                webSocket.send(hello.toString())
+                webSocket.send(helloPayload(normalizedToken).toString())
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -68,11 +75,13 @@ class SatelliteClient(
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 ready = false
+                activeCommandId = null
                 post { onConnectionChanged(false, "Đã ngắt kết nối") }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 ready = false
+                activeCommandId = null
                 post {
                     onConnectionChanged(false, "Không kết nối")
                     onError(t.message ?: "Kết nối WebSocket thất bại.")
@@ -89,16 +98,78 @@ class SatelliteClient(
         val command = text.trim()
         if (command.isEmpty()) return false
 
+        val commandId = UUID.randomUUID().toString()
         val payload = JSONObject()
             .put("type", "command")
-            .put("id", UUID.randomUUID().toString())
+            .put("id", commandId)
             .put("text", command)
             .put("response_language", responseLanguage)
-        return socket.send(payload.toString())
+        val sent = socket.send(payload.toString())
+        if (sent) {
+            activeCommandId = commandId
+        }
+        return sent
+    }
+
+    /**
+     * Opens a short-lived authenticated control WebSocket so Stop can be handled
+     * while the primary session is blocked waiting for a long Assistant turn.
+     */
+    fun sendCancel(): Boolean {
+        val url = connectedUrl ?: return false
+        val token = connectedToken ?: return false
+        val commandId = activeCommandId
+        val request = runCatching { Request.Builder().url(url).build() }.getOrNull() ?: return false
+
+        httpClient.newWebSocket(request, object : WebSocketListener() {
+            private var cancelSent = false
+
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send(helloPayload(token).toString())
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val payload = runCatching { JSONObject(text) }.getOrNull() ?: return
+                when (payload.optString("type")) {
+                    "ready" -> if (!cancelSent) {
+                        cancelSent = true
+                        val cancel = JSONObject()
+                            .put("type", "cancel")
+                        if (commandId != null) {
+                            cancel.put("id", commandId)
+                        }
+                        if (!webSocket.send(cancel.toString())) {
+                            post { onError("Không gửi được yêu cầu dừng Assistant.") }
+                            webSocket.close(1011, "cancel send failed")
+                        }
+                    }
+                    "cancelled" -> {
+                        val accepted = payload.optBoolean("accepted", false)
+                        if (accepted) {
+                            post { onTurnState("cancelled") }
+                        } else {
+                            post { onError("Desktop hiện không có tác vụ có thể dừng.") }
+                        }
+                        webSocket.close(1000, "cancel complete")
+                    }
+                    "error" -> {
+                        val message = payload.optString("message", "Desktop từ chối yêu cầu dừng.")
+                        post { onError(message) }
+                        webSocket.close(1008, "cancel rejected")
+                    }
+                }
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                post { onError(t.message ?: "Không thể mở kênh điều khiển để dừng Assistant.") }
+            }
+        })
+        return true
     }
 
     fun close() {
         ready = false
+        activeCommandId = null
         webSocket?.close(1000, "satellite closing")
         webSocket = null
     }
@@ -127,16 +198,34 @@ class SatelliteClient(
                 post { onTurnState(state) }
             }
             "response" -> {
+                activeCommandId = null
                 val text = payload.optString("text")
                 val ttsError = payload.optString("tts_error").takeIf { it.isNotBlank() && it != "null" }
                 post { onResponse(text, ttsError) }
             }
+            "cancelled" -> {
+                activeCommandId = null
+                post { onTurnState("cancelled") }
+            }
             "error" -> {
-                val message = payload.optString("message", "Desktop assistant báo lỗi.")
-                post { onError(message) }
+                val code = payload.optString("code")
+                if (code == "cancelled") {
+                    activeCommandId = null
+                    post { onTurnState("cancelled") }
+                } else {
+                    val message = payload.optString("message", "Desktop assistant báo lỗi.")
+                    post { onError(message) }
+                }
             }
         }
     }
+
+    private fun helloPayload(token: String): JSONObject = JSONObject()
+        .put("type", "hello")
+        .put("token", token.trim())
+        .put("device_id", deviceId)
+        .put("device_name", deviceName)
+        .put("protocol", 1)
 
     private fun normalizeUrl(rawUrl: String): String? {
         val trimmed = rawUrl.trim().trimEnd('/')
