@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -15,8 +17,18 @@ class SpeechController(
     private val onFinalText: (String) -> Unit,
     private val onError: (String) -> Unit,
 ) : RecognitionListener {
+    companion object {
+        private const val RETRY_DELAY_MS = 350L
+    }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var recognizer: SpeechRecognizer? = null
     private var usingOnDevice = false
+    private var lastLanguageTag = "vi-VN"
+    private var requestedPreferOnDevice = true
+    private var fallbackAttempted = false
+    private var busyRetryAttempted = false
+    private var intentionallyCancelled = false
 
     fun start(languageTag: String, preferOnDevice: Boolean) {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
@@ -24,12 +36,41 @@ class SpeechController(
             return
         }
 
+        lastLanguageTag = languageTag
+        requestedPreferOnDevice = preferOnDevice
+        fallbackAttempted = false
+        busyRetryAttempted = false
+        intentionallyCancelled = false
+
         val shouldUseOnDevice = preferOnDevice &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+        startInternal(languageTag, shouldUseOnDevice)
+    }
 
-        if (recognizer == null || shouldUseOnDevice != usingOnDevice) {
-            recreateRecognizer(shouldUseOnDevice)
+    fun stop() {
+        runCatching { recognizer?.stopListening() }
+    }
+
+    fun cancel() {
+        intentionallyCancelled = true
+        mainHandler.removeCallbacksAndMessages(null)
+        runCatching { recognizer?.cancel() }
+        onListeningChanged(false)
+    }
+
+    fun destroy() {
+        intentionallyCancelled = true
+        mainHandler.removeCallbacksAndMessages(null)
+        recognizer?.destroy()
+        recognizer = null
+        onListeningChanged(false)
+    }
+
+    private fun startInternal(languageTag: String, onDevice: Boolean) {
+        if (intentionallyCancelled) return
+        if (recognizer == null || onDevice != usingOnDevice) {
+            recreateRecognizer(onDevice)
         }
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -37,7 +78,7 @@ class SpeechController(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            if (shouldUseOnDevice) {
+            if (onDevice) {
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             }
         }
@@ -48,23 +89,28 @@ class SpeechController(
             recognizer?.startListening(intent)
         } catch (error: Exception) {
             onListeningChanged(false)
-            onError(error.message ?: "Không thể bắt đầu nhận dạng giọng nói.")
+            if (!tryRecoverFromStartFailure(onDevice)) {
+                onError(error.message ?: "Không thể bắt đầu nhận dạng giọng nói.")
+            }
         }
     }
 
-    fun stop() {
-        runCatching { recognizer?.stopListening() }
-    }
-
-    fun cancel() {
-        runCatching { recognizer?.cancel() }
-        onListeningChanged(false)
-    }
-
-    fun destroy() {
-        recognizer?.destroy()
-        recognizer = null
-        onListeningChanged(false)
+    private fun tryRecoverFromStartFailure(onDevice: Boolean): Boolean {
+        if (intentionallyCancelled) return false
+        if (onDevice && !fallbackAttempted) {
+            fallbackAttempted = true
+            onError("Bộ nhận dạng on-device chưa sẵn sàng; đang chuyển sang SpeechRecognizer hệ thống.")
+            recreateRecognizer(false)
+            mainHandler.postDelayed({ startInternal(lastLanguageTag, false) }, RETRY_DELAY_MS)
+            return true
+        }
+        if (!busyRetryAttempted) {
+            busyRetryAttempted = true
+            recreateRecognizer(onDevice)
+            mainHandler.postDelayed({ startInternal(lastLanguageTag, onDevice) }, RETRY_DELAY_MS)
+            return true
+        }
+        return false
     }
 
     private fun recreateRecognizer(onDevice: Boolean) {
@@ -96,13 +142,35 @@ class SpeechController(
 
     override fun onError(error: Int) {
         onListeningChanged(false)
+        if (intentionallyCancelled) return
+
+        val engineFailure = error == SpeechRecognizer.ERROR_SERVER ||
+            error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED ||
+            error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+
+        if (usingOnDevice && engineFailure && requestedPreferOnDevice && !fallbackAttempted) {
+            fallbackAttempted = true
+            onError("Nhận dạng on-device tạm thời không sẵn sàng; đang dùng dịch vụ nhận dạng hệ thống.")
+            recreateRecognizer(false)
+            mainHandler.postDelayed({ startInternal(lastLanguageTag, false) }, RETRY_DELAY_MS)
+            return
+        }
+
+        if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY && !busyRetryAttempted) {
+            busyRetryAttempted = true
+            val retryOnDevice = usingOnDevice
+            recreateRecognizer(retryOnDevice)
+            mainHandler.postDelayed({ startInternal(lastLanguageTag, retryOnDevice) }, RETRY_DELAY_MS)
+            return
+        }
+
         val message = when (error) {
             SpeechRecognizer.ERROR_AUDIO -> "Lỗi microphone/audio."
             SpeechRecognizer.ERROR_CLIENT -> "Phiên nhận dạng đã bị hủy."
             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Ứng dụng chưa có quyền microphone."
             SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Dịch vụ nhận dạng đang gặp lỗi mạng."
             SpeechRecognizer.ERROR_NO_MATCH -> "Chưa nhận ra câu nói. Hãy thử lại."
-            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Bộ nhận dạng đang bận."
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Bộ nhận dạng đang bận. Hãy thử lại."
             SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "Dịch vụ nhận dạng giọng nói không sẵn sàng."
             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Không phát hiện giọng nói."
             else -> "Nhận dạng giọng nói thất bại (mã $error)."
