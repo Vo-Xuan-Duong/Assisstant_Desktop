@@ -209,10 +209,15 @@ class SatelliteClient(
             }
             "error" -> {
                 val code = payload.optString("code")
+                val id = payload.optString("id").takeIf { it.isNotBlank() && it != "null" }
                 if (code == "cancelled") {
                     activeCommandId = null
                     post { onTurnState("cancelled") }
                 } else {
+                    if (id != null) {
+                        activeCommandId = null
+                        post { onTurnState("idle") }
+                    }
                     val message = payload.optString("message", "Desktop assistant báo lỗi.")
                     post { onError(message) }
                 }
