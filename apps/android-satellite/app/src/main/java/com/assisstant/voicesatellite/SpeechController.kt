@@ -15,6 +15,7 @@ class SpeechController(
     private val onListeningChanged: (Boolean) -> Unit,
     private val onPartialText: (String) -> Unit,
     private val onFinalText: (String) -> Unit,
+    private val onStatus: (String) -> Unit,
     private val onError: (String) -> Unit,
 ) : RecognitionListener {
     companion object {
@@ -99,13 +100,14 @@ class SpeechController(
         if (intentionallyCancelled) return false
         if (onDevice && !fallbackAttempted) {
             fallbackAttempted = true
-            onError("Bộ nhận dạng on-device chưa sẵn sàng; đang chuyển sang SpeechRecognizer hệ thống.")
+            onStatus("Bộ nhận dạng on-device chưa sẵn sàng; đang chuyển sang SpeechRecognizer hệ thống.")
             recreateRecognizer(false)
             mainHandler.postDelayed({ startInternal(lastLanguageTag, false) }, RETRY_DELAY_MS)
             return true
         }
         if (!busyRetryAttempted) {
             busyRetryAttempted = true
+            onStatus("Bộ nhận dạng đang bận; đang thử khởi tạo lại một lần.")
             recreateRecognizer(onDevice)
             mainHandler.postDelayed({ startInternal(lastLanguageTag, onDevice) }, RETRY_DELAY_MS)
             return true
@@ -150,7 +152,7 @@ class SpeechController(
 
         if (usingOnDevice && engineFailure && requestedPreferOnDevice && !fallbackAttempted) {
             fallbackAttempted = true
-            onError("Nhận dạng on-device tạm thời không sẵn sàng; đang dùng dịch vụ nhận dạng hệ thống.")
+            onStatus("Nhận dạng on-device tạm thời không sẵn sàng; đang dùng dịch vụ nhận dạng hệ thống.")
             recreateRecognizer(false)
             mainHandler.postDelayed({ startInternal(lastLanguageTag, false) }, RETRY_DELAY_MS)
             return
@@ -159,6 +161,7 @@ class SpeechController(
         if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY && !busyRetryAttempted) {
             busyRetryAttempted = true
             val retryOnDevice = usingOnDevice
+            onStatus("Bộ nhận dạng đang bận; đang thử khởi tạo lại một lần.")
             recreateRecognizer(retryOnDevice)
             mainHandler.postDelayed({ startInternal(lastLanguageTag, retryOnDevice) }, RETRY_DELAY_MS)
             return
@@ -166,7 +169,7 @@ class SpeechController(
 
         val message = when (error) {
             SpeechRecognizer.ERROR_AUDIO -> "Lỗi microphone/audio."
-            SpeechRecognizer.ERROR_CLIENT -> "Phiên nhận dạng đã bị hủy."
+            SpeechRecognizer.ERROR_CLIENT -> "Phiên nhận dạng kết thúc do lỗi phía ứng dụng."
             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Ứng dụng chưa có quyền microphone."
             SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Dịch vụ nhận dạng đang gặp lỗi mạng."
             SpeechRecognizer.ERROR_NO_MATCH -> "Chưa nhận ra câu nói. Hãy thử lại."
@@ -175,9 +178,7 @@ class SpeechController(
             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Không phát hiện giọng nói."
             else -> "Nhận dạng giọng nói thất bại (mã $error)."
         }
-        if (error != SpeechRecognizer.ERROR_CLIENT) {
-            onError(message)
-        }
+        onError(message)
     }
 
     override fun onResults(results: Bundle?) {
@@ -190,6 +191,8 @@ class SpeechController(
         if (best.isNotEmpty()) {
             onPartialText(best)
             onFinalText(best)
+        } else {
+            onError("Không nhận được nội dung giọng nói cuối cùng. Hãy thử lại.")
         }
     }
 
