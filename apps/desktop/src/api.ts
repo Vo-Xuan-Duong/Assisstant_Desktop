@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AssistantEvent,
   AudioLevel,
+  RuntimeReadinessReport,
   VoiceCapabilities,
   VoiceTranscriptEvent,
   VoiceTurnResult,
@@ -14,6 +15,10 @@ export function submitPrompt(text: string): Promise<string> {
 
 export function getVoiceCapabilities(): Promise<VoiceCapabilities> {
   return invoke<VoiceCapabilities>("assistant_voice_capabilities");
+}
+
+export function getRuntimeReadiness(): Promise<RuntimeReadinessReport> {
+  return invoke<RuntimeReadinessReport>("assistant_readiness");
 }
 
 export function runVoiceTurn(): Promise<VoiceTurnResult> {
