@@ -184,8 +184,18 @@ fn tailscale_enable(settings_path: &Path, remote_state_path: &Path) -> CliResult
         })?;
     let _ = token;
 
-    let (_, port) = split_bind(&settings.bind)?;
     let existing_state = load_remote_state(remote_state_path)?;
+    if let Some(state) = &existing_state {
+        let expected_bind = format!("127.0.0.1:{}", state.port);
+        if settings.bind != expected_bind {
+            return Err(format!(
+                "managed Tailscale state drift detected: expected backend bind {expected_bind}, found {}. Run `assistant satellite remote tailscale disable` before reconfiguring the satellite bind/port.",
+                settings.bind
+            ));
+        }
+    }
+
+    let (_, port) = split_bind(&settings.bind)?;
     let previous_bind = existing_state
         .as_ref()
         .map(|state| state.previous_bind.clone())
