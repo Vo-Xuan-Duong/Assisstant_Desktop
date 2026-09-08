@@ -1,7 +1,12 @@
 #[path = "satellite_devices.rs"]
 mod satellite_devices;
 
-use std::{fs, sync::LazyLock, time::Duration};
+use std::{
+    collections::{HashSet, VecDeque},
+    fs,
+    sync::LazyLock,
+    time::Duration,
+};
 
 use assistant_common::{AssistantState, UserRequest};
 use serde::{Deserialize, Serialize};
@@ -12,7 +17,7 @@ use tokio::{
     sync::Mutex as AsyncMutex,
 };
 use tracing::{debug, info, warn};
-use voice_runtime::tts::TextToSpeech;
+use voice_runtime::tts::{TextToSpeech, TtsLanguage};
 
 use crate::{DesktopState, WakeService};
 
@@ -27,8 +32,18 @@ const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_FRAME_BYTES: usize = 64 * 1024;
 const SETTINGS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEVICE_TRUST_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const MAX_RECENT_COMMAND_IDS: usize = 128;
+const MAX_COMMAND_ID_CHARS: usize = 128;
 
 static COMMAND_GATE: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
+static RECENT_COMMAND_IDS: LazyLock<AsyncMutex<RecentCommandIds>> =
+    LazyLock::new(|| AsyncMutex::new(RecentCommandIds::default()));
+
+#[derive(Default)]
+struct RecentCommandIds {
+    order: VecDeque<String>,
+    ids: HashSet<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SatelliteConfig {
@@ -64,6 +79,16 @@ impl Default for ResponseLanguage {
     }
 }
 
+impl ResponseLanguage {
+    fn tts_language(self) -> TtsLanguage {
+        match self {
+            Self::Vi => TtsLanguage::Vietnamese,
+            Self::En => TtsLanguage::English,
+            Self::Auto => TtsLanguage::Auto,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientMessage {
@@ -78,6 +103,10 @@ enum ClientMessage {
         text: String,
         #[serde(default)]
         response_language: ResponseLanguage,
+    },
+    Cancel {
+        #[serde(default)]
+        id: Option<String>,
     },
     Ping,
 }
@@ -97,6 +126,10 @@ enum ServerMessage<'a> {
         id: &'a str,
         text: &'a str,
         tts_error: Option<&'a str>,
+    },
+    Cancelled {
+        id: Option<&'a str>,
+        accepted: bool,
     },
     Error {
         id: Option<&'a str>,
@@ -421,13 +454,13 @@ async fn run_server(app: AppHandle, config: SatelliteConfig) -> Result<(), Strin
             .accept()
             .await
             .map_err(|error| format!("voice satellite accept failed: {error}"))?;
-
-        // Keep one active phone session in this supervisor-owned task. Token
-        // rotation/revoke aborts this entire task and device revoke is checked
-        // independently inside the authenticated connection loop below.
-        if let Err(error) = handle_connection(app.clone(), stream, config.token.clone()).await {
-            debug!(%peer, %error, "voice satellite connection closed");
-        }
+        let connection_app = app.clone();
+        let expected_token = config.token.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = handle_connection(connection_app, stream, expected_token).await {
+                debug!(%peer, %error, "voice satellite connection closed");
+            }
+        });
     }
 }
 
@@ -507,7 +540,42 @@ async fn handle_connection(
                         text,
                         response_language,
                     } => {
+                        if !is_valid_command_id(&id) {
+                            send_json(
+                                &mut socket,
+                                &ServerMessage::Error {
+                                    id: None,
+                                    code: "invalid_command_id",
+                                    message: "command id is empty, too long, or contains unsupported characters",
+                                },
+                            )
+                            .await?;
+                            continue;
+                        }
+                        if !remember_command_id(&id).await {
+                            send_json(
+                                &mut socket,
+                                &ServerMessage::Error {
+                                    id: Some(&id),
+                                    code: "duplicate_command",
+                                    message: "this command id was already accepted; the desktop will not execute it twice",
+                                },
+                            )
+                            .await?;
+                            continue;
+                        }
                         handle_command(&app, &mut socket, &id, &text, response_language).await?;
+                    }
+                    ClientMessage::Cancel { id } => {
+                        let accepted = cancel_active_interaction(&app).await;
+                        send_json(
+                            &mut socket,
+                            &ServerMessage::Cancelled {
+                                id: id.as_deref(),
+                                accepted,
+                            },
+                        )
+                        .await?;
                     }
                     ClientMessage::Ping => {
                         send_json(&mut socket, &ServerMessage::Pong).await?;
@@ -643,11 +711,13 @@ async fn handle_command(
     let response = match complete_satellite_prompt(app, text, response_language).await {
         Ok(response) => response,
         Err(error) => {
+            let cancelled = error.to_ascii_lowercase().contains("cancelled")
+                || error.to_ascii_lowercase().contains("canceled");
             send_json(
                 socket,
                 &ServerMessage::Error {
                     id: Some(id),
-                    code: "assistant_error",
+                    code: if cancelled { "cancelled" } else { "assistant_error" },
                     message: &error,
                 },
             )
@@ -665,7 +735,9 @@ async fn handle_command(
     )
     .await?;
 
-    let tts_error = speak_response(app, &response).await.err();
+    let tts_error = speak_response(app, &response, response_language.tts_language())
+        .await
+        .err();
     send_json(
         socket,
         &ServerMessage::Response {
@@ -736,7 +808,11 @@ fn response_policy(language: ResponseLanguage) -> &'static str {
     }
 }
 
-async fn speak_response(app: &AppHandle, text: &str) -> Result<(), String> {
+async fn speak_response(
+    app: &AppHandle,
+    text: &str,
+    language: TtsLanguage,
+) -> Result<(), String> {
     let state = app.state::<DesktopState>();
     let wake = app.state::<WakeService>();
 
@@ -751,7 +827,11 @@ async fn speak_response(app: &AppHandle, text: &str) -> Result<(), String> {
         return Err(error);
     }
 
-    let speak_result = state.tts.speak(text).await.map_err(|error| error.to_string());
+    let speak_result = state
+        .tts
+        .speak_with_language(text, language)
+        .await
+        .map_err(|error| error.to_string());
     let finish_result = state
         .core
         .finish_speaking()
@@ -761,6 +841,77 @@ async fn speak_response(app: &AppHandle, text: &str) -> Result<(), String> {
 
     speak_result?;
     finish_result
+}
+
+async fn cancel_active_interaction(app: &AppHandle) -> bool {
+    let state = app.state::<DesktopState>();
+    let phase = state.core.state().await;
+    match phase {
+        AssistantState::Listening => {
+            let generation = voice_runtime::cancellation::cancel_current();
+            match state.core.cancel_listening().await {
+                Ok(()) => {
+                    debug!(generation, "cancelled listening from Android satellite control channel");
+                    true
+                }
+                Err(error) => {
+                    warn!(%error, generation, "failed to cancel listening from Android satellite");
+                    false
+                }
+            }
+        }
+        AssistantState::Speaking => {
+            let accepted = state.tts.cancel();
+            if accepted {
+                debug!("requested SAPI cancellation from Android satellite");
+            }
+            accepted
+        }
+        AssistantState::Processing => {
+            if state.client.cancel_active_turn() {
+                debug!("requested Antigravity cancellation from Android satellite");
+                return true;
+            }
+            let core = state.core.clone();
+            let client = state.client.clone();
+            drop(state);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            if core.state().await == AssistantState::Processing && client.cancel_active_turn() {
+                debug!("requested delayed Antigravity cancellation from Android satellite");
+                true
+            } else {
+                false
+            }
+        }
+        phase => {
+            debug!(?phase, "ignored Android satellite cancel in non-cancellable phase");
+            false
+        }
+    }
+}
+
+fn is_valid_command_id(id: &str) -> bool {
+    let id = id.trim();
+    !id.is_empty()
+        && id.len() <= MAX_COMMAND_ID_CHARS
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+async fn remember_command_id(id: &str) -> bool {
+    let mut recent = RECENT_COMMAND_IDS.lock().await;
+    if recent.ids.contains(id) {
+        return false;
+    }
+    recent.ids.insert(id.to_owned());
+    recent.order.push_back(id.to_owned());
+    while recent.order.len() > MAX_RECENT_COMMAND_IDS {
+        if let Some(expired) = recent.order.pop_front() {
+            recent.ids.remove(&expired);
+        }
+    }
+    true
 }
 
 async fn send_json<T: Serialize>(
@@ -920,5 +1071,20 @@ mod tests {
         assert!(response_policy(ResponseLanguage::Vi).contains("Vietnamese"));
         assert!(response_policy(ResponseLanguage::En).contains("English"));
         assert!(response_policy(ResponseLanguage::Auto).contains("same language"));
+    }
+
+    #[test]
+    fn response_language_maps_to_tts_hint() {
+        assert_eq!(ResponseLanguage::Vi.tts_language(), TtsLanguage::Vietnamese);
+        assert_eq!(ResponseLanguage::En.tts_language(), TtsLanguage::English);
+        assert_eq!(ResponseLanguage::Auto.tts_language(), TtsLanguage::Auto);
+    }
+
+    #[test]
+    fn command_id_validation_is_bounded() {
+        assert!(is_valid_command_id("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(!is_valid_command_id(""));
+        assert!(!is_valid_command_id("bad id"));
+        assert!(!is_valid_command_id(&"a".repeat(MAX_COMMAND_ID_CHARS + 1)));
     }
 }
