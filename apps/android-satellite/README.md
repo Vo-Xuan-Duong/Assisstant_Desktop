@@ -2,7 +2,7 @@
 
 This Android app is the preferred speech-input surface for Assisstant Desktop.
 
-It listens through Android `SpeechRecognizer`, shows partial recognition locally, and sends only the final recognized text to Windows. The phone does not execute Windows tools, run MCP, call Antigravity directly, or speak the assistant response.
+It listens through Android `SpeechRecognizer`, shows partial recognition locally, and sends only final recognized text to Windows. The phone does not execute Windows tools, run MCP, call Antigravity directly, approve Sensitive actions, or speak the Assistant response.
 
 ## Current capabilities
 
@@ -12,17 +12,18 @@ It listens through Android `SpeechRecognizer`, shows partial recognition locally
 - Android on-device recognizer when available;
 - system `SpeechRecognizer` fallback;
 - push-to-talk;
-- Quick Settings **Assistant Voice** tile for fast activation;
+- Quick Settings **Assistant Voice** tile;
 - manual interrupt-to-talk while desktop is Processing/Speaking;
+- optional **Hội thoại liên tục** turn-taking mode;
 - automatic WebSocket reconnect with bounded exponential backoff;
-- one bounded recognizer-busy retry and on-device → system recognizer fallback;
-- authenticated WebSocket connection over trusted LAN;
-- QR/deep-link pairing without manually typing the endpoint/token;
-- pairing token protected with an Android Keystore AES-GCM key;
+- one bounded recognizer-busy retry and on-device -> system recognizer fallback;
+- authenticated WebSocket over trusted LAN or a Tailscale tailnet;
+- QR/deep-link pairing;
+- pairing token protected with Android Keystore AES-GCM;
 - stable per-installation `device_id`;
 - desktop trusted-device registry and per-device revoke;
 - response modes `VI`, `EN`, `Auto`;
-- desktop owns reasoning, Windows tools, permissions, and TTS.
+- desktop owns reasoning, permissions, Windows tools, and TTS.
 
 ## Build locally
 
@@ -34,214 +35,253 @@ apps/android-satellite/
 
 in Android Studio, sync Gradle, then build/install on the target phone.
 
-This source-first phase does not commit the Gradle wrapper JAR/binary. Generate a wrapper locally if command-line builds are required. No remote build or GitHub Actions validation is required for this phase.
+The source-first project does not commit the Gradle wrapper JAR/binary. Generate a wrapper locally if command-line Android builds are required. Per project policy, native Android builds/tests are validated locally rather than through remote GitHub Actions during these phases.
 
-## Recommended pairing: QR
+## Pair on a trusted LAN
 
-On the Windows PC:
+Recommended on Windows:
 
 ```powershell
 assistant satellite pair --qr
 ```
 
-The command:
-
-1. creates a fresh random 64-character pairing token;
-2. enables/hot-reloads the desktop listener;
-3. chooses a phone-reachable IPv4 address when possible;
-4. creates a compact `assd://p?...` pairing deep link;
-5. generates the QR entirely inside the local terminal.
-
-No QR web service is used and the token is not uploaded anywhere.
-
-If Windows selected the wrong adapter/IP, specify it explicitly:
+If the PC has multiple network adapters:
 
 ```powershell
 assistant satellite pair --qr --host 192.168.1.20
 ```
 
-You may combine it with a listener bind override:
+The QR is generated locally and contains a compact deep link:
 
-```powershell
-assistant satellite pair --qr --host 192.168.1.20 --bind 0.0.0.0:8765
+```text
+assd://p?h=<host>&p=<port>&t=<token>
 ```
 
-Scan the QR with the phone camera/QR scanner. Android opens the Voice Satellite app through the registered `assd://p` deep link and imports:
+No QR web service is used. Scanning imports the desktop endpoint/token but **does not connect automatically**; the user must still tap **Kết nối**.
 
-- desktop address;
-- WebSocket port;
-- pairing token.
-
-**Scanning does not automatically connect.** The app displays the imported address and requires an explicit **Kết nối** tap. This prevents an arbitrary QR from immediately causing a network connection.
-
-Windows Terminal or another ANSI-capable terminal is recommended for the terminal-rendered QR. The command also prints the pairing URI as a fallback.
-
-## Manual pairing fallback
-
-You can still use:
+Manual fallback:
 
 ```powershell
 assistant satellite pair
 ```
 
-Then enter:
+then enter the printed token and:
 
 ```text
 ws://<PC-LAN-IP>:8765
 ```
 
-and the printed token manually in the Android app.
+in the Android app.
 
-Persistent listener configuration is stored at:
+## Pair for remote use through Tailscale
 
-```text
-%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite.json
-```
+Do not port-forward the raw satellite port to the Internet.
 
-The Windows runtime watches this file and normally applies changes within about one second without a restart.
-
-Useful commands:
+Install/connect the normal Tailscale client on both Windows and Android and join the intended tailnet. On Windows:
 
 ```powershell
-assistant satellite show
-assistant satellite pair
-assistant satellite pair --qr
-assistant satellite pair --qr --host <PC-LAN-IP>
-assistant satellite enable
-assistant satellite disable
-assistant satellite bind 0.0.0.0:8765
-assistant satellite revoke
-assistant satellite devices
-assistant satellite revoke-device <device-id>
-assistant satellite allow-device <device-id>
+assistant satellite remote tailscale enable
+assistant satellite remote tailscale pair --qr
 ```
 
-`assistant-satellite ...` remains available as a compatibility helper, but `assistant satellite ...` is the canonical user-facing command surface.
+The desktop backend is rebound to loopback and exposed through **Tailscale Serve**, not Funnel:
+
+```text
+Android + Tailscale
+      |
+ encrypted tailnet
+      |
+Tailscale Serve TCP
+      |
+127.0.0.1:<satellite-port>
+      |
+Assisstant Desktop
+```
+
+The Android app needs no Tailscale SDK. The remote QR simply imports the PC's Tailscale IPv4 endpoint plus the normal Assistant pairing token.
+
+Inspect/disable remote mode with:
+
+```powershell
+assistant satellite remote tailscale show
+assistant satellite remote tailscale disable
+```
 
 ## Trusted-device identity
 
-The Android app generates a UUID once per installation and stores it in private `SharedPreferences`. It sends that `device_id` in the WebSocket `hello` message together with the pairing token and device name.
+Android generates a UUID once per installation and sends it in the authenticated `hello` message with the pairing token and device name.
 
-After the token is verified, Windows records the device in:
+Windows records known devices in:
 
 ```text
 %LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\satellite-devices.json
 ```
 
-Run:
+Manage devices with:
 
 ```powershell
 assistant satellite devices
-```
-
-to see registered devices and their first/last-seen Unix timestamps.
-
-To block only one phone:
-
-```powershell
 assistant satellite revoke-device <device-id>
-```
-
-A connected revoked phone should be disconnected by Windows within roughly one second and cannot reconnect even if it still knows the current shared token.
-
-To allow it again:
-
-```powershell
 assistant satellite allow-device <device-id>
 ```
 
-Reinstalling/clearing app storage can create a new installation identity. The current QR transports the shared bootstrap token; device-specific credentials remain follow-up work.
+A connected revoked phone is rechecked by Windows and disconnected. Reinstalling/clearing app storage can create a new installation identity.
 
-## Pairing-token storage on Android
+## Pairing-token storage
 
-New and imported pairing tokens are no longer intentionally persisted as plaintext in the normal `voice_satellite` preferences file.
+New/imported pairing tokens are not intentionally persisted as plaintext in the normal app preferences.
 
-The app creates an AES key in the `AndroidKeyStore` provider and encrypts the token with `AES/GCM/NoPadding`. AES-256 is preferred and the implementation can fall back to AES-128 on a Keystore that rejects a 256-bit key. Only the IV and ciphertext are stored in the private `voice_satellite_secrets` preferences file; the AES key remains managed by Android Keystore.
+The app:
 
-Existing installs are migrated conservatively:
+1. creates an AES key through `AndroidKeyStore`;
+2. prefers AES-256 and falls back to AES-128 where necessary;
+3. encrypts with `AES/GCM/NoPadding`;
+4. stores IV + ciphertext in private preferences;
+5. migrates legacy plaintext conservatively;
+6. deletes legacy plaintext only after encrypted persistence succeeds.
 
-1. if a Keystore-protected token already exists, it is used and any legacy plaintext `pairing_token` preference is deleted;
-2. if only the old plaintext value exists, the app attempts to encrypt it with Keystore and deletes the plaintext only after successful migration;
-3. if migration fails, the old value is temporarily retained so an upgrade does not silently destroy an existing pairing;
-4. if Keystore data becomes unreadable after a restore/reset/invalidation, the app reports the problem and the user can pair again by QR.
+If the Keystore state becomes unreadable after restore/reset/invalidation, the app reports the issue and the phone can be paired again.
 
-The token still exists in process memory while the app is connected or showing the pairing field; Keystore protects persistence at rest, not an already-running compromised process.
+Keystore protects persistence at rest; the token still exists in process memory while the app uses it.
 
-## Using the app
+## Normal voice flow
 
-1. Put the phone and PC on the same trusted Wi-Fi/LAN.
-2. Prefer `assistant satellite pair --qr` on Windows.
-3. Scan the QR and confirm the imported desktop address.
-4. Tap **Kết nối**.
-5. Choose **Tiếng Việt** or **English** recognition.
-6. Choose desktop response language **VI**, **EN**, or **Auto**.
-7. Leave **Ưu tiên nhận dạng on-device** enabled if desired.
-8. Tap **Nói với Assistant** and speak.
-9. Partial recognition stays on the phone.
-10. Only the final text is submitted to Windows.
-11. Windows processes the command through Assistant Core/Antigravity/MCP/permissions and speaks the answer through desktop TTS.
+1. Pair and connect the phone.
+2. Choose recognition language **Tiếng Việt** or **English**.
+3. Choose desktop response mode **VI**, **EN**, or **Auto**.
+4. Optionally keep **Ưu tiên nhận dạng on-device** enabled.
+5. Tap **Nói với Assistant** or use the Quick Settings tile.
+6. Partial recognition stays on Android.
+7. One final transcript is sent to Windows.
+8. Windows processes it through Assistant Core -> Antigravity -> MCP -> permission gates.
+9. Windows speaks the response through SAPI.
 
-If the desktop is already Processing or Speaking, the main button becomes **Nói ngắt Assistant**. It uses the authenticated cancellation control channel first and starts a new recognition turn only after the desktop confirms cancellation. Executing/Confirming remain intentionally non-cancellable.
+If Windows is already Processing/Speaking, the primary button becomes **Nói ngắt Assistant**. It opens an authenticated control connection, requests cancellation, waits for the desktop acknowledgement, and only then starts a fresh recognition turn. Executing/Confirming remain intentionally non-cancellable.
+
+## Conversational mode
+
+Enable **Hội thoại liên tục** when you want turn-taking without tapping the microphone button after every response.
+
+The mode does **not** immediately turn on the microphone. It becomes active when you start a normal voice turn.
+
+Flow:
+
+```text
+Android listens
+  -> final transcript
+  -> desktop processes
+  -> desktop TTS speaks
+  -> TTS completes
+  -> short 450 ms guard delay
+  -> Android opens one follow-up recognition window
+```
+
+The desktop keeps using its existing Assistant session, so follow-up utterances naturally continue the same conversation context unless the desktop conversation is reset separately.
+
+While active, Android shows **Kết thúc hội thoại**. Ending the session cancels the current/pending Android listening window but does not cancel a Windows task merely because no further follow-up is desired. Use **Dừng Assistant** for explicit safe desktop cancellation.
+
+Conversation mode is bounded:
+
+- speech timeout / `NO_MATCH` ends the conversation instead of looping forever;
+- terminal audio/network/permission/recognizer errors end the conversation;
+- losing the desktop connection ends the conversation;
+- a TTS failure ends the conversation;
+- on-device -> system recognizer fallback remains a non-terminal status and can continue normally.
+
+`SpeechRecognizer` is therefore still **not** used as a permanent always-listening loop.
 
 ## Quick Settings activation
 
-After installing the app, add the **Assistant Voice** tile from Android's Quick Settings tile editor.
+Add the **Assistant Voice** tile from Android's Quick Settings editor.
 
 Tapping it:
 
 1. opens `MainActivity` through the platform-supported tile launch API;
 2. never bypasses microphone permission;
-3. reconnects to the saved paired desktop when needed;
-4. if the desktop is Processing/Speaking, requests the same safe cancellation used by **Nói ngắt Assistant**;
-5. starts speech recognition only when the desktop is ready.
+3. reconnects to the paired desktop when needed;
+4. safely cancels Processing/Speaking first when necessary;
+5. starts recognition only when the desktop is ready.
 
-On Android 14+ the tile uses the required `PendingIntent` launch API; Android 8–13 use the older Intent overload. The user must grant microphone permission in the app at least once before one-tap tile activation can start listening.
+Android 14+ uses the required `PendingIntent` launch API; Android 8-13 use the older Intent overload. Microphone permission must have been granted in the app first.
+
+If **Hội thoại liên tục** is enabled, a Quick Settings initiated turn can also become the first turn of a conversational session.
 
 ## Connection resilience
 
-A transient WebSocket loss does not require manually tapping **Kết nối** again. The Android client reconnects with bounded exponential backoff:
+Transient WebSocket losses reconnect with bounded backoff:
 
 ```text
-1s → 2s → 4s → 8s → 15s max
+1s -> 2s -> 4s -> 8s -> 15s max
 ```
 
-Each connection attempt has a generation id so callbacks from an older socket cannot overwrite the state of a newer connection.
+Connection generations prevent callbacks from stale sockets from overwriting current state.
 
-Authentication failures and device revocation are terminal for automatic reconnect: the app stops retrying and asks the user to pair/allow the device again.
+Authentication failure and device revocation stop automatic reconnect. Commands are **not automatically resent** after transport failure because a Windows side effect may already have executed even if its response was lost. Desktop request-ID deduplication remains an additional replay boundary.
 
-Commands are **not automatically resent** after a transport failure. This is deliberate because a Windows action may already have executed even if the response was lost. Desktop command-id replay protection remains the duplicate-execution safety boundary.
+An active conversational session is deliberately stopped on disconnect; it is not silently resumed later with the microphone automatically reopening after a delayed reconnect.
 
 ## Speech-recognition behavior
 
-When on-device recognition is preferred, the app uses Android's on-device recognizer only when the platform reports it available. Otherwise it falls back to the normal system recognizer.
+When on-device recognition is preferred, Android uses it only when the platform reports support. Otherwise it uses the system recognizer.
 
-If an on-device recognizer becomes busy, disconnects, or reports a server/engine failure, the app performs one bounded fallback to the normal system recognizer. A busy recognizer can also be recreated and retried once. The app does not create an unlimited recognition retry loop.
+If an on-device engine becomes busy/disconnected/unavailable, the controller can perform one bounded fallback to the system recognizer. A busy recognizer can be recreated/retried once.
 
-The normal recognizer is vendor-dependent. On phones using Google services it may be backed by Google's speech-recognition service and may require Internet. No dedicated paid STT API key is required by this project.
+Recovery/fallback notifications are status events. Final failures such as `NO_MATCH`, speech timeout, microphone/network/permission/server errors are terminal for the current recognition window and stop an active conversational session.
 
-`SpeechRecognizer` is not kept running continuously. Quick Settings is the current fast activation path; an optional local wake word can be added later without turning `SpeechRecognizer` into a 24/7 loop.
+The normal recognizer is vendor-dependent. On Google-enabled phones it may be backed by Google Speech Services and may require Internet. This project does not require a dedicated paid STT API key.
 
 ## Barge-in scope
 
-Current barge-in is **explicit/manual**:
+Current mid-response barge-in is **explicit/manual**:
 
 ```text
 Tap Nói ngắt Assistant / Quick Settings activation
-  → cancel Processing or Speaking
-  → wait for desktop cancellation acknowledgement
-  → start a fresh Android SpeechRecognizer turn
+  -> cancel Processing or Speaking
+  -> wait for desktop cancellation acknowledgement
+  -> start a fresh SpeechRecognizer turn
 ```
 
-This is intentionally different from automatic acoustic full-duplex barge-in. Listening for user speech while desktop audio is playing reliably requires acoustic echo cancellation/reference audio handling; that future AEC/full-duplex work is not claimed complete here.
+Conversational follow-up is different: Android waits until desktop TTS finishes before listening again.
+
+Automatic acoustic full-duplex barge-in is **not** claimed. Because the preferred microphone is on the phone while the desktop speaker produces the response, opening SpeechRecognizer during TTS can cause the phone to transcribe the Assistant itself. There is currently no synchronized far-end reference audio on the phone for a real echo canceller.
+
+Do not replace that missing AEC architecture with RMS/VAD thresholds and call it full duplex.
+
+## Useful Windows commands
+
+```powershell
+assistant satellite show
+assistant satellite doctor
+assistant satellite pair --qr
+assistant satellite enable
+assistant satellite disable
+assistant satellite revoke
+assistant satellite devices
+assistant satellite revoke-device <device-id>
+assistant satellite allow-device <device-id>
+assistant satellite firewall show
+assistant satellite firewall install
+assistant satellite firewall remove
+assistant satellite remote tailscale show
+assistant satellite remote tailscale enable
+assistant satellite remote tailscale pair --qr
+assistant satellite remote tailscale disable
+```
 
 ## Security notes
 
-The current transport is unencrypted `ws://` and is intended only for a trusted/private LAN. Do not expose port `8765` directly to the public Internet.
+LAN mode is intended for trusted/private networks. The managed Windows firewall rule is restricted to the configured TCP port, Private profile, and LocalSubnet.
 
-The pairing QR contains a credential. Treat the QR/URI like the token itself: do not post screenshots or store it in public logs. The custom Android deep-link scheme is an MVP convenience mechanism, not a replacement for future device-specific credentials.
+Remote mode uses Tailscale's encrypted tailnet and Tailscale Serve. The project does not configure Tailscale Funnel and should not expose raw port `8765` directly to the public Internet.
 
-The phone is low-authority: it cannot bypass desktop permission checks or approve Sensitive actions.
+The pairing QR contains a credential. Treat QR/URI/token material as secret and do not publish it in screenshots or logs.
 
-For development compatibility, `ASSISTANT_VOICE_SATELLITE_TOKEN` and `ASSISTANT_VOICE_SATELLITE_BIND` remain supported as environment overrides.
+The phone remains low-authority: Windows permissions and Sensitive confirmations remain authoritative.
 
-See [`../../docs/VOICE_SATELLITE.md`](../../docs/VOICE_SATELLITE.md) for protocol and security details.
+Development compatibility environment overrides remain available, but managed remote mode requires persisted settings to be authoritative.
+
+See:
+
+- [`../../docs/VOICE_SATELLITE.md`](../../docs/VOICE_SATELLITE.md)
+- [`../../docs/PHASE30_TAILSCALE_REMOTE.md`](../../docs/PHASE30_TAILSCALE_REMOTE.md)
+- [`../../docs/PHASE31_CONVERSATIONAL_VOICE.md`](../../docs/PHASE31_CONVERSATIONAL_VOICE.md)
