@@ -12,6 +12,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import kotlin.math.min
 
 class SatelliteClient(
     context: Context,
@@ -20,6 +21,11 @@ class SatelliteClient(
     private val onResponse: (String, String?) -> Unit,
     private val onError: (String) -> Unit,
 ) {
+    companion object {
+        private const val INITIAL_RECONNECT_DELAY_MS = 1_000L
+        private const val MAX_RECONNECT_DELAY_MS = 15_000L
+    }
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val httpClient = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
@@ -42,8 +48,18 @@ class SatelliteClient(
     @Volatile
     private var activeCommandId: String? = null
 
+    @Volatile
+    private var desiredConnection = false
+
+    @Volatile
+    private var connectionGeneration = 0L
+
+    @Volatile
+    private var reconnectScheduled = false
+
+    private var reconnectAttempt = 0
+
     fun connect(rawUrl: String, token: String) {
-        close()
         val url = normalizeUrl(rawUrl)
         if (url == null) {
             post { onError("Địa chỉ desktop không hợp lệ. Ví dụ: ws://192.168.1.20:8765") }
@@ -55,39 +71,20 @@ class SatelliteClient(
             return
         }
 
+        val generation = connectionGeneration + 1
+        connectionGeneration = generation
+        desiredConnection = true
+        reconnectScheduled = false
+        reconnectAttempt = 0
         connectedUrl = url
         connectedToken = normalizedToken
+        activeCommandId = null
         ready = false
+
+        webSocket?.cancel()
+        webSocket = null
         post { onConnectionChanged(false, "Đang kết nối…") }
-        val request = Request.Builder().url(url).build()
-        webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                webSocket.send(helloPayload(normalizedToken).toString())
-            }
-
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                handleMessage(text)
-            }
-
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                webSocket.close(code, reason)
-            }
-
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                ready = false
-                activeCommandId = null
-                post { onConnectionChanged(false, "Đã ngắt kết nối") }
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                ready = false
-                activeCommandId = null
-                post {
-                    onConnectionChanged(false, "Không kết nối")
-                    onError(t.message ?: "Kết nối WebSocket thất bại.")
-                }
-            }
-        })
+        openWebSocket(url, normalizedToken, generation)
     }
 
     fun isReady(): Boolean = ready
@@ -168,6 +165,10 @@ class SatelliteClient(
     }
 
     fun close() {
+        desiredConnection = false
+        reconnectScheduled = false
+        reconnectAttempt = 0
+        connectionGeneration += 1
         ready = false
         activeCommandId = null
         connectedUrl = null
@@ -178,11 +179,63 @@ class SatelliteClient(
 
     fun shutdown() {
         close()
+        mainHandler.removeCallbacksAndMessages(null)
         httpClient.dispatcher.executorService.shutdown()
         httpClient.connectionPool.evictAll()
     }
 
-    private fun handleMessage(raw: String) {
+    private fun openWebSocket(url: String, token: String, generation: Long) {
+        if (!isCurrentConnection(generation)) return
+        reconnectScheduled = false
+        val request = runCatching { Request.Builder().url(url).build() }.getOrElse { error ->
+            post { onError(error.message ?: "Không thể tạo kết nối WebSocket.") }
+            scheduleReconnect(url, token, generation)
+            return
+        }
+
+        val socket = httpClient.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (!isCurrentConnection(generation)) {
+                    webSocket.close(1000, "stale connection")
+                    return
+                }
+                webSocket.send(helloPayload(token).toString())
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (!isCurrentConnection(generation)) return
+                handleMessage(webSocket, text, generation)
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(code, reason)
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (!isCurrentConnection(generation)) return
+                ready = false
+                activeCommandId = null
+                this@SatelliteClient.webSocket = null
+                post { onConnectionChanged(false, "Đã ngắt kết nối") }
+                scheduleReconnect(url, token, generation)
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (!isCurrentConnection(generation)) return
+                ready = false
+                activeCommandId = null
+                this@SatelliteClient.webSocket = null
+                post {
+                    onConnectionChanged(false, "Mất kết nối")
+                    onError(t.message ?: "Kết nối WebSocket thất bại.")
+                }
+                scheduleReconnect(url, token, generation)
+            }
+        })
+        webSocket = socket
+    }
+
+    private fun handleMessage(webSocket: WebSocket, raw: String, generation: Long) {
         val payload = try {
             JSONObject(raw)
         } catch (_: Exception) {
@@ -192,6 +245,8 @@ class SatelliteClient(
 
         when (payload.optString("type")) {
             "ready" -> {
+                reconnectAttempt = 0
+                reconnectScheduled = false
                 ready = true
                 post { onConnectionChanged(true, "Đã kết nối") }
             }
@@ -223,9 +278,42 @@ class SatelliteClient(
                     val message = payload.optString("message", "Desktop assistant báo lỗi.")
                     post { onError(message) }
                 }
+
+                if (code == "authentication_failed" || code == "device_revoked") {
+                    desiredConnection = false
+                    reconnectScheduled = false
+                    ready = false
+                    if (generation == connectionGeneration) {
+                        webSocket.close(1008, code)
+                    }
+                    post {
+                        onConnectionChanged(false, "Cần pair/cho phép lại thiết bị")
+                    }
+                }
             }
         }
     }
+
+    private fun scheduleReconnect(url: String, token: String, generation: Long) {
+        if (!isCurrentConnection(generation) || reconnectScheduled) return
+        reconnectScheduled = true
+        val shift = min(reconnectAttempt, 4)
+        val delay = min(INITIAL_RECONNECT_DELAY_MS shl shift, MAX_RECONNECT_DELAY_MS)
+        reconnectAttempt += 1
+        post {
+            onConnectionChanged(false, "Mất kết nối · thử lại sau ${delay / 1000}s")
+        }
+        mainHandler.postDelayed({
+            if (!isCurrentConnection(generation)) {
+                reconnectScheduled = false
+                return@postDelayed
+            }
+            openWebSocket(url, token, generation)
+        }, delay)
+    }
+
+    private fun isCurrentConnection(generation: Long): Boolean =
+        desiredConnection && generation == connectionGeneration
 
     private fun helloPayload(token: String): JSONObject = JSONObject()
         .put("type", "hello")

@@ -38,6 +38,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_START_VOICE = "com.assisstant.voicesatellite.START_VOICE"
+    }
+
     private lateinit var satelliteClient: SatelliteClient
     private lateinit var speechController: SpeechController
     private lateinit var pairingSecretStore: PairingSecretStore
@@ -55,12 +59,14 @@ class MainActivity : ComponentActivity() {
     private var partialText by mutableStateOf("")
     private var lastResponse by mutableStateOf("")
     private var statusMessage by mutableStateOf("")
+    private var pendingVoiceActivation = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pairingSecretStore = PairingSecretStore(this)
         loadSettings()
         consumePairingIntent(intent)
+        consumeVoiceActivationIntent(intent)
 
         satelliteClient = SatelliteClient(
             context = this,
@@ -69,6 +75,8 @@ class MainActivity : ComponentActivity() {
                 connectionStatus = status
                 if (!ready) {
                     assistantTurnState = "idle"
+                } else if (pendingVoiceActivation) {
+                    handlePendingVoiceActivation()
                 }
             },
             onTurnState = { state ->
@@ -79,6 +87,9 @@ class MainActivity : ComponentActivity() {
                     "cancelled" -> "Đã dừng Assistant."
                     "idle" -> "Sẵn sàng"
                     else -> state
+                }
+                if (state == "cancelled" && pendingVoiceActivation) {
+                    handlePendingVoiceActivation()
                 }
             },
             onResponse = { text, ttsError ->
@@ -116,12 +127,18 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        handlePendingVoiceActivation()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         consumePairingIntent(intent)
+        consumeVoiceActivationIntent(intent)
+        if (::satelliteClient.isInitialized && ::speechController.isInitialized) {
+            handlePendingVoiceActivation()
+        }
     }
 
     override fun onDestroy() {
@@ -136,8 +153,10 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.RequestPermission(),
         ) { granted ->
             if (granted) {
+                pendingVoiceActivation = false
                 startSpeechRecognition()
             } else {
+                pendingVoiceActivation = false
                 statusMessage = "Cần quyền microphone để nhận lệnh giọng nói."
             }
         }
@@ -190,6 +209,7 @@ class MainActivity : ComponentActivity() {
                 }
                 OutlinedButton(
                     onClick = {
+                        pendingVoiceActivation = false
                         satelliteClient.close()
                         connected = false
                         assistantTurnState = "idle"
@@ -260,24 +280,34 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(58.dp),
-                enabled = connected && assistantTurnState == "idle",
+                enabled = connected,
                 onClick = {
-                    if (listening) {
-                        speechController.stop()
-                    } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                        startSpeechRecognition()
-                    } else {
-                        microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                    when {
+                        listening -> speechController.stop()
+                        assistantTurnState in setOf("processing", "speaking") -> {
+                            requestInterruptAndTalk()
+                        }
+                        checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> {
+                            startSpeechRecognition()
+                        }
+                        else -> microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 },
             ) {
-                Text(if (listening) "Dừng nghe" else "Nói với Assistant")
+                Text(
+                    when {
+                        listening -> "Dừng nghe"
+                        assistantTurnState in setOf("processing", "speaking") -> "Nói ngắt Assistant"
+                        else -> "Nói với Assistant"
+                    }
+                )
             }
 
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = connected && assistantTurnState in setOf("processing", "speaking"),
                 onClick = {
+                    pendingVoiceActivation = false
                     speechController.cancel()
                     if (satelliteClient.sendCancel()) {
                         statusMessage = "Đang yêu cầu desktop dừng…"
@@ -288,6 +318,11 @@ class MainActivity : ComponentActivity() {
             ) {
                 Text("Dừng Assistant")
             }
+
+            Text(
+                "Mẹo: thêm tile “Assistant Voice” vào Quick Settings để mở thẳng chế độ nói.",
+                style = MaterialTheme.typography.bodySmall,
+            )
 
             if (partialText.isNotBlank()) {
                 Text("Bạn nói", style = MaterialTheme.typography.titleSmall)
@@ -314,6 +349,7 @@ class MainActivity : ComponentActivity() {
                 if (::satelliteClient.isInitialized) {
                     satelliteClient.close()
                 }
+                pendingVoiceActivation = false
                 connected = false
                 assistantTurnState = "idle"
                 connectionStatus = "Đã nhập pairing từ QR"
@@ -325,6 +361,64 @@ class MainActivity : ComponentActivity() {
             .onFailure { error ->
                 statusMessage = error.message ?: "Không thể đọc pairing QR."
             }
+    }
+
+    private fun consumeVoiceActivationIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_START_VOICE, false) == true) {
+            pendingVoiceActivation = true
+            intent.removeExtra(EXTRA_START_VOICE)
+        }
+    }
+
+    private fun handlePendingVoiceActivation() {
+        if (!pendingVoiceActivation) return
+        if (pairingToken.isBlank()) {
+            pendingVoiceActivation = false
+            statusMessage = "Chưa có pairing với desktop. Hãy quét QR trước."
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pendingVoiceActivation = false
+            statusMessage = "Quick Settings cần quyền microphone đã được cấp trước. Hãy bấm Nói với Assistant một lần để cấp quyền."
+            return
+        }
+        if (!satelliteClient.isReady()) {
+            statusMessage = "Đang kết nối desktop để bắt đầu nghe…"
+            satelliteClient.connect(desktopAddress, pairingToken)
+            return
+        }
+        if (assistantTurnState in setOf("processing", "speaking")) {
+            if (!satelliteClient.sendCancel()) {
+                pendingVoiceActivation = false
+                statusMessage = "Không thể dừng tác vụ hiện tại để bắt đầu nghe."
+            } else {
+                statusMessage = "Đang dừng câu trả lời hiện tại…"
+            }
+            return
+        }
+        if (assistantTurnState != "idle") {
+            pendingVoiceActivation = false
+            statusMessage = "Assistant hiện chưa sẵn sàng nhận lệnh mới."
+            return
+        }
+
+        pendingVoiceActivation = false
+        startSpeechRecognition()
+    }
+
+    private fun requestInterruptAndTalk() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            statusMessage = "Cần quyền microphone trước khi có thể nói ngắt Assistant."
+            return
+        }
+        pendingVoiceActivation = true
+        speechController.cancel()
+        if (satelliteClient.sendCancel()) {
+            statusMessage = "Đang dừng Assistant để nghe lệnh mới…"
+        } else {
+            pendingVoiceActivation = false
+            statusMessage = "Không thể gửi yêu cầu dừng cho desktop."
+        }
     }
 
     private fun startSpeechRecognition() {
