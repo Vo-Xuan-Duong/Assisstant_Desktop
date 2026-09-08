@@ -443,6 +443,7 @@ async fn run_server(app: AppHandle, config: SatelliteConfig) -> Result<(), Strin
     let listener = TcpListener::bind(&config.bind)
         .await
         .map_err(|error| format!("cannot bind voice satellite server to {}: {error}", config.bind))?;
+    let mut connections = tokio::task::JoinSet::new();
 
     info!(
         bind = %config.bind,
@@ -450,17 +451,24 @@ async fn run_server(app: AppHandle, config: SatelliteConfig) -> Result<(), Strin
     );
 
     loop {
-        let (stream, peer) = listener
-            .accept()
-            .await
-            .map_err(|error| format!("voice satellite accept failed: {error}"))?;
-        let connection_app = app.clone();
-        let expected_token = config.token.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(error) = handle_connection(connection_app, stream, expected_token).await {
-                debug!(%peer, %error, "voice satellite connection closed");
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (stream, peer) = accepted
+                    .map_err(|error| format!("voice satellite accept failed: {error}"))?;
+                let connection_app = app.clone();
+                let expected_token = config.token.clone();
+                connections.spawn(async move {
+                    if let Err(error) = handle_connection(connection_app, stream, expected_token).await {
+                        debug!(%peer, %error, "voice satellite connection closed");
+                    }
+                });
             }
-        });
+            Some(result) = connections.join_next(), if !connections.is_empty() => {
+                if let Err(error) = result {
+                    debug!(%error, "voice satellite connection task ended unexpectedly");
+                }
+            }
+        }
     }
 }
 
@@ -712,8 +720,7 @@ async fn handle_command(
     let response = match complete_satellite_prompt(app, text, response_language).await {
         Ok(response) => response,
         Err(error) => {
-            let cancelled = error.to_ascii_lowercase().contains("cancelled")
-                || error.to_ascii_lowercase().contains("canceled");
+            let cancelled = is_cancellation_error(&error);
             send_json(
                 socket,
                 &ServerMessage::Error {
