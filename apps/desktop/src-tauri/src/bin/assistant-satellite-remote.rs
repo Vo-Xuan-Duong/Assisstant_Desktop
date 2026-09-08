@@ -47,6 +47,7 @@ impl Default for SatelliteSettings {
 struct TailscaleRemoteState {
     version: u32,
     previous_bind: String,
+    previous_enabled: bool,
     port: u16,
 }
 
@@ -148,6 +149,7 @@ fn tailscale_show(settings_path: &Path, remote_state_path: &Path) -> CliResult<(
     if let Some(state) = &remote {
         println!("  serve_port     {}", state.port);
         println!("  restore_bind   {}", state.previous_bind);
+        println!("  restore_enable {}", state.previous_enabled);
         println!("  state_file     {}", remote_state_path.display());
     }
 
@@ -200,6 +202,10 @@ fn tailscale_enable(settings_path: &Path, remote_state_path: &Path) -> CliResult
         .as_ref()
         .map(|state| state.previous_bind.clone())
         .unwrap_or_else(|| settings.bind.clone());
+    let previous_enabled = existing_state
+        .as_ref()
+        .map(|state| state.previous_enabled)
+        .unwrap_or(settings.enabled);
     let original_settings = settings.clone();
 
     settings.enabled = true;
@@ -221,6 +227,7 @@ fn tailscale_enable(settings_path: &Path, remote_state_path: &Path) -> CliResult
     let state = TailscaleRemoteState {
         version: REMOTE_STATE_VERSION,
         previous_bind,
+        previous_enabled,
         port,
     };
     if let Err(error) = save_remote_state(remote_state_path, &state) {
@@ -295,9 +302,18 @@ fn tailscale_disable(settings_path: &Path, remote_state_path: &Path) -> CliResul
     let mut settings = load_settings(settings_path)?;
     let managed_loopback = format!("127.0.0.1:{}", state.port);
     if settings.bind == managed_loopback {
+        let user_disabled_listener = !settings.enabled;
         settings.bind = state.previous_bind.clone();
+        if !user_disabled_listener {
+            settings.enabled = state.previous_enabled;
+        }
         save_settings(settings_path, &settings)?;
         println!("Restored satellite bind to {}.", settings.bind);
+        if user_disabled_listener {
+            println!("Satellite was explicitly disabled while remote mode was active; keeping it disabled.");
+        } else {
+            println!("Restored satellite enabled state to {}.", settings.enabled);
+        }
     } else {
         println!(
             "Satellite bind is {}, not the managed {}; leaving the user-modified bind unchanged.",
