@@ -63,9 +63,9 @@ Implemented in source:
 - bounded SpeechRecognizer fallback/retry;
 - read-only Android STT engine/confidence/alternatives/latency diagnostics;
 - completed desktop-turn timing through AI/tool/TTS completion;
-- read-only Satellite diagnostics panel in the desktop Quick UI;
+- desktop Quick **Voice** panel with read-only Satellite diagnostics and bounded TTS settings;
 - `VI`, `EN`, `Auto` response-language propagation;
-- selectable installed Windows SAPI voices for Vietnamese and English;
+- selectable installed Windows SAPI voices for Vietnamese and English through CLI or Quick UI;
 - locale/default SAPI fallback;
 - Windows Firewall diagnostics/Private+LocalSubnet rule helper;
 - Tailscale Serve tailnet-only remote satellite transport;
@@ -209,11 +209,13 @@ Persistent data is stored under:
 
 The desktop normally hot-reloads satellite settings in about one second.
 
-## Desktop Satellite diagnostics
+## Desktop Voice panel
 
-The Quick surface includes a read-only **Satellite** panel backed by the existing `assistant_readiness` command.
+The Quick surface includes a compact **Voice** panel with two tabs.
 
-It can display:
+### Satellite
+
+The **Satellite** tab remains read-only and is backed by the existing `assistant_readiness` command. It can display:
 
 ```text
 listener enabled/disabled
@@ -226,11 +228,31 @@ device id/name/first seen/last seen/revoked state
 state warnings
 ```
 
-The panel deliberately does **not** receive or decrypt the pairing token. It has only open/close/refresh controls. Pairing rotation, revoke/allow, firewall and Tailscale mutations remain in the authoritative desktop CLI.
+The tab deliberately does **not** receive or decrypt the pairing token. Pairing rotation, revoke/allow, firewall and Tailscale mutations remain in the authoritative desktop CLI.
 
 Voice Satellite is optional for overall desktop readiness: a disabled/unpaired satellite is not a blocking failure for text Assistant/MCP operation.
 
 See [`docs/PHASE26B_SATELLITE_DIAGNOSTICS_UI.md`](docs/PHASE26B_SATELLITE_DIAGNOSTICS_UI.md).
+
+### TTS
+
+The **TTS** tab exposes the existing Windows SAPI Vietnamese/English preferences without launching a shell helper.
+
+For each language, choose:
+
+```text
+Tự động theo locale
+or
+one exact SAPI voice currently installed for the Windows user
+```
+
+The frontend sends only `vi`/`en` plus either `null` or an exact currently-enumerated SAPI token ID. Arbitrary paths, registry commands, and shell arguments are not accepted.
+
+The desktop UI and `WindowsSapiTts` runtime use the same `default_voice_preferences_path()` resolver. The `assistant tts ...` CLI's normal/default resolver points to the same `%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\tts.conf`, while its explicit `--data-dir` option can intentionally target another application-data root. UI changes apply from the next spoken response without restarting the desktop runtime.
+
+SAPI enumeration/update work is moved to blocking worker threads so COM initialization does not inherit the Tauri UI apartment.
+
+See [`docs/PHASE32A_TTS_SETTINGS_UI.md`](docs/PHASE32A_TTS_SETTINGS_UI.md).
 
 ## Pairing and device trust
 
@@ -375,7 +397,7 @@ User: Open Visual Studio Code
 Assistant: Sure, I’ve opened Visual Studio Code.
 ```
 
-List/select installed SAPI voices:
+List/select installed SAPI voices from the terminal:
 
 ```powershell
 assistant tts voices
@@ -387,6 +409,8 @@ assistant tts clear vi
 assistant tts clear en
 assistant tts clear all
 ```
+
+Or use **Quick -> Voice -> TTS** for the same normal/default VI/EN preference file.
 
 Preferences use stable SAPI token IDs and apply on the next utterance. Explicitly selected voices are preserved; automatic mode uses locale-aware SAPI fallback.
 
@@ -547,8 +571,12 @@ Do not equate source completion with device verification. Validate locally:
 - Android Keystore migration/persistence works;
 - Windows DPAPI round-trip and restart work;
 - trusted-device revoke works while connected;
-- desktop Satellite diagnostics shows correct non-secret state and never exposes the pairing token;
+- Quick **Voice -> Satellite** shows correct non-secret state and never exposes the pairing token;
 - malformed satellite state is surfaced as warnings rather than crashing Quick;
+- Quick **Voice -> TTS** lists the same installed voices as `assistant tts voices`;
+- Quick VI/EN selections are reflected by `assistant tts show` and apply on the next matching response when both use the normal/default application-data path;
+- TTS **Tự động theo locale** clears the explicit preference and restores fallback;
+- malformed/stale TTS settings surface an error/warning without crashing Quick;
 - firewall rule is exactly Private + LocalSubnet;
 - `vi-VN` / `en-US` recognition works on the target phone;
 - STT engine/confidence/alternatives/timing diagnostics match target recognizer behavior;
@@ -572,11 +600,12 @@ Per project policy, repository implementation does not run remote GitHub Actions
 
 ## Remaining roadmap
 
-The core functional MVP is implemented in source through **Phase 31A**, with Phase 26B/28B/29B product polish also implemented. Remaining work is primarily local acceptance and optional higher-complexity capabilities:
+The core functional MVP is implemented in source through **Phase 31A**, with Phase 26B/28B/29B/32A product polish also implemented. Remaining work is primarily local acceptance and optional higher-complexity capabilities:
 
 - local Windows/Android/Tailscale acceptance testing and release packaging validation;
 - optional notification/headset/hardware activation surfaces if they prove useful;
 - optional domain/app-name normalization after real recognition data demonstrates a concrete need;
+- optional carefully bounded Satellite management UI beyond the current read-only diagnostics;
 - **Phase 31B** automatic acoustic full duplex only after a real AEC/reference-audio architecture exists.
 
 Automatic acoustic barge-in will not be enabled by pretending RMS VAD can distinguish user speech from the desktop speaker.
@@ -595,3 +624,4 @@ Authoritative roadmap: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
 - [`docs/PHASE29B_VOICE_DIAGNOSTICS.md`](docs/PHASE29B_VOICE_DIAGNOSTICS.md)
 - [`docs/PHASE30_TAILSCALE_REMOTE.md`](docs/PHASE30_TAILSCALE_REMOTE.md)
 - [`docs/PHASE31_CONVERSATIONAL_VOICE.md`](docs/PHASE31_CONVERSATIONAL_VOICE.md)
+- [`docs/PHASE32A_TTS_SETTINGS_UI.md`](docs/PHASE32A_TTS_SETTINGS_UI.md)

@@ -8,6 +8,7 @@ mod resource_installer;
 mod resource_manifest;
 mod resource_registry;
 mod runtime_paths;
+mod tts_settings;
 mod wake_desktop;
 
 use std::sync::{Arc, Mutex};
@@ -1051,6 +1052,8 @@ pub fn run() {
             assistant_save_antigravity_settings,
             assistant_launch_antigravity_auth,
             assistant_readiness,
+            tts_settings::assistant_tts_settings,
+            tts_settings::assistant_tts_set_voice,
             assistant_resources,
             resource_api::assistant_resource_catalog,
             resource_api::assistant_resource_install,

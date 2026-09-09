@@ -65,12 +65,14 @@
   font-weight: 650;
 }
 
-.satellite-diagnostics-actions {
+.satellite-diagnostics-actions,
+.satellite-diagnostics-tabs {
   display: flex;
   gap: 7px;
 }
 
-.satellite-diagnostics-actions button {
+.satellite-diagnostics-actions button,
+.satellite-diagnostics-tabs button {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   padding: 5px 8px;
@@ -80,9 +82,27 @@
   cursor: pointer;
 }
 
-.satellite-diagnostics-actions button:disabled {
+.satellite-diagnostics-actions button:disabled,
+.satellite-diagnostics-tabs button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.satellite-diagnostics-tabs {
+  margin-top: 9px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.satellite-diagnostics-tabs button {
+  padding: 4px 10px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.satellite-diagnostics-tabs button.is-active {
+  border-color: rgba(138, 180, 248, 0.34);
+  background: rgba(138, 180, 248, 0.12);
+  color: rgba(220, 232, 255, 0.96);
 }
 
 .satellite-diagnostics-grid {
@@ -197,12 +217,71 @@
   font-size: 11px;
 }
 
+.tts-settings-panel {
+  min-height: 92px;
+}
+
+.tts-settings-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.tts-settings-row {
+  min-width: 0;
+  border-radius: 10px;
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.tts-settings-row > span {
+  display: block;
+  margin-bottom: 5px;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.tts-settings-row select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 5px 7px;
+  background: rgba(6, 8, 13, 0.92);
+  color: rgba(255, 255, 255, 0.9);
+  font: inherit;
+  font-size: 10px;
+}
+
+.tts-settings-row select:disabled {
+  opacity: 0.58;
+}
+
+.tts-settings-row small {
+  display: block;
+  margin-top: 4px;
+  color: rgba(255, 202, 140, 0.86);
+  font-size: 9px;
+  line-height: 1.3;
+}
+
+.tts-settings-note {
+  margin: 7px 1px 0;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
 @media (max-width: 620px) {
   .satellite-diagnostics {
     right: 76px;
   }
 
-  .satellite-diagnostics-grid {
+  .satellite-diagnostics-grid,
+  .tts-settings-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

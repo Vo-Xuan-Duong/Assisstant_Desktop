@@ -39,6 +39,20 @@ export interface AudioLevel {
   peak: number;
 }
 
+export interface SapiVoiceInfo {
+  id: string;
+  name: string;
+  language?: string | null;
+}
+
+export type TtsLanguage = "vi" | "en";
+
+export interface TtsSettingsSnapshot {
+  vietnamese_voice_id?: string | null;
+  english_voice_id?: string | null;
+  voices: SapiVoiceInfo[];
+}
+
 export type ReadinessLevel = "ready" | "optional_missing" | "blocking";
 
 export interface ReadinessCheck {
