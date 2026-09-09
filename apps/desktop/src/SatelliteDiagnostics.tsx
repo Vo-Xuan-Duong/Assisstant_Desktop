@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { getRuntimeReadiness, getTtsSettings, setTtsVoice } from "./api";
+import {
+  getRuntimeReadiness,
+  getTtsSettings,
+  setSatelliteDeviceRevoked,
+  setSatelliteEnabled,
+  setTtsVoice,
+} from "./api";
 import { setQuickAutoDismissHold } from "./quickLifecycle";
 import type {
   RuntimeReadinessReport,
@@ -22,7 +28,14 @@ function formatUnix(value: number): string {
   }).format(new Date(value * 1000));
 }
 
-function DeviceRow({ device }: { device: SatelliteDeviceSnapshot }) {
+interface DeviceRowProps {
+  device: SatelliteDeviceSnapshot;
+  disabled: boolean;
+  busy: boolean;
+  onToggle: (device: SatelliteDeviceSnapshot) => void;
+}
+
+function DeviceRow({ device, disabled, busy, onToggle }: DeviceRowProps) {
   return (
     <li className="satellite-device-row">
       <div>
@@ -34,6 +47,14 @@ function DeviceRow({ device }: { device: SatelliteDeviceSnapshot }) {
           {device.revoked ? "Revoked" : "Trusted"}
         </span>
         <span>Last seen {formatUnix(device.last_seen_unix)}</span>
+        <button
+          type="button"
+          className={device.revoked ? "is-allow" : "is-revoke"}
+          disabled={disabled}
+          onClick={() => onToggle(device)}
+        >
+          {busy ? "Đang lưu…" : device.revoked ? "Cho phép lại" : "Thu hồi"}
+        </button>
       </div>
     </li>
   );
@@ -104,6 +125,8 @@ export default function SatelliteDiagnostics() {
   const [report, setReport] = useState<RuntimeReadinessReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [satelliteSaving, setSatelliteSaving] = useState<string | null>(null);
+  const [satelliteMutationError, setSatelliteMutationError] = useState<string | null>(null);
   const [tts, setTts] = useState<TtsSettingsSnapshot | null>(null);
   const [ttsLoading, setTtsLoading] = useState(false);
   const [ttsSaving, setTtsSaving] = useState(false);
@@ -143,6 +166,7 @@ export default function SatelliteDiagnostics() {
   const close = useCallback(() => {
     setOpen(false);
     setTab("satellite");
+    setSatelliteMutationError(null);
     setQuickAutoDismissHold(PANEL_HOLD_SOURCE, false);
   }, []);
 
@@ -165,6 +189,7 @@ export default function SatelliteDiagnostics() {
   const show = () => {
     setOpen(true);
     setQuickAutoDismissHold(PANEL_HOLD_SOURCE, true);
+    setSatelliteMutationError(null);
     refresh();
   };
 
@@ -181,6 +206,35 @@ export default function SatelliteDiagnostics() {
     }
   }, [ttsLoading, ttsSaving]);
 
+  const updateSatelliteEnabled = useCallback(async (enabled: boolean) => {
+    if (satelliteSaving || loading) return;
+    setSatelliteSaving("listener");
+    setSatelliteMutationError(null);
+    try {
+      await setSatelliteEnabled(enabled);
+      await refreshSatellite();
+    } catch (cause) {
+      setSatelliteMutationError(String(cause));
+    } finally {
+      setSatelliteSaving(null);
+    }
+  }, [loading, refreshSatellite, satelliteSaving]);
+
+  const updateDeviceTrust = useCallback(async (device: SatelliteDeviceSnapshot) => {
+    if (satelliteSaving || loading) return;
+    const operation = `device:${device.id}`;
+    setSatelliteSaving(operation);
+    setSatelliteMutationError(null);
+    try {
+      await setSatelliteDeviceRevoked(device.id, !device.revoked);
+      await refreshSatellite();
+    } catch (cause) {
+      setSatelliteMutationError(String(cause));
+    } finally {
+      setSatelliteSaving(null);
+    }
+  }, [loading, refreshSatellite, satelliteSaving]);
+
   const satellite = report?.satellite;
   const effectivelyPaired = Boolean(satellite?.paired || satellite?.environment_token_override);
   const credentialLabel = satellite?.environment_token_override
@@ -188,6 +242,11 @@ export default function SatelliteDiagnostics() {
     : satellite?.credential_storage;
   const refreshing = loading || ttsLoading;
   const ttsControlsDisabled = ttsSaving || ttsLoading;
+  const satelliteControlsDisabled = Boolean(satelliteSaving || loading);
+  const listenerLocked = Boolean(
+    satellite?.environment_token_override || satellite?.remote_managed,
+  );
+  const listenerCanEnable = Boolean(satellite?.enabled || satellite?.paired);
 
   return (
     <div className={`satellite-diagnostics ${open ? "is-open" : ""}`}>
@@ -210,7 +269,7 @@ export default function SatelliteDiagnostics() {
               <h2>{tab === "satellite" ? "Trạng thái kết nối" : "Giọng đọc Windows"}</h2>
             </div>
             <div className="satellite-diagnostics-actions">
-              <button type="button" disabled={refreshing || ttsSaving} onClick={refresh}>
+              <button type="button" disabled={refreshing || ttsSaving || Boolean(satelliteSaving)} onClick={refresh}>
                 {refreshing ? "Đang tải…" : "Làm mới"}
               </button>
               <button type="button" onClick={close}>Đóng</button>
@@ -241,6 +300,9 @@ export default function SatelliteDiagnostics() {
           {tab === "satellite" ? (
             <>
               {error ? <p className="satellite-diagnostics-error">Không thể đọc diagnostics: {error}</p> : null}
+              {satelliteMutationError ? (
+                <p className="satellite-diagnostics-error">Không thể cập nhật Satellite: {satelliteMutationError}</p>
+              ) : null}
 
               {satellite ? (
                 <>
@@ -251,6 +313,38 @@ export default function SatelliteDiagnostics() {
                     <div><span>Credential</span><strong>{credentialLabel}</strong></div>
                     <div><span>Remote</span><strong>{satellite.remote_managed ? `Tailscale :${satellite.remote_port ?? "?"}` : "LAN/local"}</strong></div>
                     <div><span>Devices</span><strong>{satellite.trusted_devices} trusted · {satellite.revoked_devices} revoked</strong></div>
+                  </div>
+
+                  <div className="satellite-management-row">
+                    <div>
+                      <strong>Satellite listener</strong>
+                      <span>
+                        {listenerLocked
+                          ? satellite.remote_managed
+                            ? "Tailscale managed mode đang giữ quyền điều khiển listener."
+                            : "Environment token override đang giữ quyền điều khiển listener."
+                          : satellite.enabled
+                            ? "Tắt listener nhưng giữ nguyên pairing hiện tại."
+                            : satellite.paired
+                              ? "Bật lại listener với pairing hiện tại."
+                              : "Cần pair thiết bị bằng CLI trước khi bật listener."}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={
+                        satelliteControlsDisabled
+                        || listenerLocked
+                        || (!satellite.enabled && !listenerCanEnable)
+                      }
+                      onClick={() => void updateSatelliteEnabled(!satellite.enabled)}
+                    >
+                      {satelliteSaving === "listener"
+                        ? "Đang lưu…"
+                        : satellite.enabled
+                          ? "Tắt listener"
+                          : "Bật listener"}
+                    </button>
                   </div>
 
                   {satellite.environment_token_override ? (
@@ -265,11 +359,22 @@ export default function SatelliteDiagnostics() {
 
                   <div className="satellite-device-list-heading">
                     <strong>Thiết bị đã biết</strong>
-                    <span>Read-only · quản trị bằng `assistant satellite ...`</span>
+                    <span>Cho phép/thu hồi theo device ID · pairing token vẫn chỉ quản trị bằng CLI</span>
                   </div>
                   {satellite.devices.length > 0 ? (
                     <ul className="satellite-device-list">
-                      {satellite.devices.map((device) => <DeviceRow key={device.id} device={device} />)}
+                      {satellite.devices.map((device) => {
+                        const operation = `device:${device.id}`;
+                        return (
+                          <DeviceRow
+                            key={device.id}
+                            device={device}
+                            disabled={satelliteControlsDisabled}
+                            busy={satelliteSaving === operation}
+                            onToggle={(selected) => void updateDeviceTrust(selected)}
+                          />
+                        );
+                      })}
                     </ul>
                   ) : (
                     <p className="satellite-device-empty">Chưa có Android device nào được đăng ký.</p>
