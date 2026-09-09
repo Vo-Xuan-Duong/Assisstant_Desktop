@@ -71,23 +71,28 @@ impl TtsSettingsService {
 }
 
 #[tauri::command]
-pub fn assistant_tts_settings() -> Result<TtsSettingsView, String> {
-    service()?.snapshot()
+pub async fn assistant_tts_settings() -> Result<TtsSettingsView, String> {
+    let path = settings_path()?;
+    tokio::task::spawn_blocking(move || TtsSettingsService::new(path).snapshot())
+        .await
+        .map_err(|error| format!("TTS settings worker failed: {error}"))?
 }
 
 #[tauri::command]
-pub fn assistant_tts_set_voice(
+pub async fn assistant_tts_set_voice(
     payload: SetTtsVoicePayload,
 ) -> Result<TtsSettingsView, String> {
-    service()?.set_voice(payload)
+    let path = settings_path()?;
+    tokio::task::spawn_blocking(move || TtsSettingsService::new(path).set_voice(payload))
+        .await
+        .map_err(|error| format!("TTS settings worker failed: {error}"))?
 }
 
-fn service() -> Result<TtsSettingsService, String> {
-    let path = default_voice_preferences_path().ok_or_else(|| {
+fn settings_path() -> Result<PathBuf, String> {
+    default_voice_preferences_path().ok_or_else(|| {
         "Cannot resolve the Windows TTS settings path. Set ASSISTANT_TTS_SETTINGS_PATH to an absolute path."
             .to_owned()
-    })?;
-    Ok(TtsSettingsService::new(path))
+    })
 }
 
 fn view(preferences: TtsVoicePreferences, voices: Vec<SapiVoiceInfo>) -> TtsSettingsView {
