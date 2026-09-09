@@ -12,7 +12,6 @@ use tauri::{AppHandle, Manager};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    task::JoinHandle,
     time::{interval, timeout},
 };
 use tracing::{debug, warn};
@@ -87,8 +86,8 @@ impl ManagementResponse {
 pub struct ManagementIpc {
     endpoint_path: PathBuf,
     secret: String,
-    server_task: JoinHandle<()>,
-    settings_task: JoinHandle<()>,
+    server_task: tauri::async_runtime::JoinHandle<()>,
+    settings_task: tauri::async_runtime::JoinHandle<()>,
 }
 
 impl ManagementIpc {
