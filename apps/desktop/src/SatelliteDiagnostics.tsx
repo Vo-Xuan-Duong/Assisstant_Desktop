@@ -169,18 +169,17 @@ export default function SatelliteDiagnostics() {
   };
 
   const updateTtsVoice = useCallback(async (language: TtsLanguage, voiceId: string | null) => {
-    if (ttsSaving) return;
+    if (ttsSaving || ttsLoading) return;
     setTtsSaving(true);
     setTtsError(null);
     try {
       setTts(await setTtsVoice(language, voiceId));
     } catch (cause) {
       setTtsError(String(cause));
-      void refreshTts();
     } finally {
       setTtsSaving(false);
     }
-  }, [refreshTts, ttsSaving]);
+  }, [ttsLoading, ttsSaving]);
 
   const satellite = report?.satellite;
   const effectivelyPaired = Boolean(satellite?.paired || satellite?.environment_token_override);
@@ -188,6 +187,7 @@ export default function SatelliteDiagnostics() {
     ? "environment-override"
     : satellite?.credential_storage;
   const refreshing = loading || ttsLoading;
+  const ttsControlsDisabled = ttsSaving || ttsLoading;
 
   return (
     <div className={`satellite-diagnostics ${open ? "is-open" : ""}`}>
@@ -290,7 +290,7 @@ export default function SatelliteDiagnostics() {
                       label="Tiếng Việt"
                       selectedVoiceId={tts.vietnamese_voice_id}
                       voices={tts.voices}
-                      disabled={ttsSaving}
+                      disabled={ttsControlsDisabled}
                       onChange={(language, voiceId) => void updateTtsVoice(language, voiceId)}
                     />
                     <TtsVoiceSelect
@@ -298,7 +298,7 @@ export default function SatelliteDiagnostics() {
                       label="English"
                       selectedVoiceId={tts.english_voice_id}
                       voices={tts.voices}
-                      disabled={ttsSaving}
+                      disabled={ttsControlsDisabled}
                       onChange={(language, voiceId) => void updateTtsVoice(language, voiceId)}
                     />
                   </div>
