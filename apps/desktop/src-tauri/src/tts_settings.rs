@@ -2,12 +2,12 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use voice_runtime::tts::{
-    SapiVoiceInfo, TtsVoicePreferences, enumerate_windows_sapi_voices, load_voice_preferences,
-    save_voice_preferences,
+    SapiVoiceInfo, TtsVoicePreferences, default_voice_preferences_path,
+    enumerate_windows_sapi_voices, load_voice_preferences, save_voice_preferences,
 };
 
 #[derive(Debug)]
-pub struct TtsSettingsService {
+struct TtsSettingsService {
     path: PathBuf,
 }
 
@@ -25,21 +25,17 @@ pub struct SetTtsVoicePayload {
 }
 
 impl TtsSettingsService {
-    pub fn new(path: PathBuf) -> Self {
+    fn new(path: PathBuf) -> Self {
         Self { path }
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub fn snapshot(&self) -> Result<TtsSettingsView, String> {
+    fn snapshot(&self) -> Result<TtsSettingsView, String> {
         let preferences = load_voice_preferences(&self.path).map_err(|error| error.to_string())?;
         let voices = enumerate_windows_sapi_voices().map_err(|error| error.to_string())?;
         Ok(view(preferences, voices))
     }
 
-    pub fn set_voice(&self, payload: SetTtsVoicePayload) -> Result<TtsSettingsView, String> {
+    fn set_voice(&self, payload: SetTtsVoicePayload) -> Result<TtsSettingsView, String> {
         let language = normalize_language(&payload.language)?;
         let requested_voice_id = payload
             .voice_id
@@ -53,7 +49,9 @@ impl TtsSettingsService {
                 let voice = installed
                     .iter()
                     .find(|voice| voice.id == id)
-                    .ok_or_else(|| "The selected SAPI voice is not installed on this Windows user.".to_owned())?;
+                    .ok_or_else(|| {
+                        "The selected SAPI voice is not installed on this Windows user.".to_owned()
+                    })?;
                 Some(voice.id.clone())
             }
             None => None,
@@ -70,6 +68,26 @@ impl TtsSettingsService {
         save_voice_preferences(&self.path, &preferences).map_err(|error| error.to_string())?;
         Ok(view(preferences, installed))
     }
+}
+
+#[tauri::command]
+pub fn assistant_tts_settings() -> Result<TtsSettingsView, String> {
+    service()?.snapshot()
+}
+
+#[tauri::command]
+pub fn assistant_tts_set_voice(
+    payload: SetTtsVoicePayload,
+) -> Result<TtsSettingsView, String> {
+    service()?.set_voice(payload)
+}
+
+fn service() -> Result<TtsSettingsService, String> {
+    let path = default_voice_preferences_path().ok_or_else(|| {
+        "Cannot resolve the Windows TTS settings path. Set ASSISTANT_TTS_SETTINGS_PATH to an absolute path."
+            .to_owned()
+    })?;
+    Ok(TtsSettingsService::new(path))
 }
 
 fn view(preferences: TtsVoicePreferences, voices: Vec<SapiVoiceInfo>) -> TtsSettingsView {
