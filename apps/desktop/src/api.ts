@@ -4,6 +4,8 @@ import type {
   AssistantEvent,
   AudioLevel,
   RuntimeReadinessReport,
+  TtsLanguage,
+  TtsSettingsSnapshot,
   VoiceCapabilities,
   VoiceTranscriptEvent,
   VoiceTurnResult,
@@ -19,6 +21,19 @@ export function getVoiceCapabilities(): Promise<VoiceCapabilities> {
 
 export function getRuntimeReadiness(): Promise<RuntimeReadinessReport> {
   return invoke<RuntimeReadinessReport>("assistant_readiness");
+}
+
+export function getTtsSettings(): Promise<TtsSettingsSnapshot> {
+  return invoke<TtsSettingsSnapshot>("assistant_tts_settings");
+}
+
+export function setTtsVoice(
+  language: TtsLanguage,
+  voiceId: string | null,
+): Promise<TtsSettingsSnapshot> {
+  return invoke<TtsSettingsSnapshot>("assistant_tts_set_voice", {
+    payload: { language, voice_id: voiceId },
+  });
 }
 
 export function runVoiceTurn(): Promise<VoiceTurnResult> {
