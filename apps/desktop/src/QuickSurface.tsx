@@ -1,6 +1,7 @@
 import QuickOverlay from "./QuickOverlay";
 import QuickRecentResponses from "./QuickRecentResponses";
 import QuickResponseActions from "./QuickResponseActions";
+import ReleaseChecklist from "./ReleaseChecklist";
 import SatelliteDiagnostics from "./SatelliteDiagnostics";
 import { useQuickAutoDismiss } from "./quickAutoDismiss";
 
@@ -12,6 +13,7 @@ export default function QuickSurface() {
       <QuickRecentResponses />
       <QuickResponseActions />
       <SatelliteDiagnostics />
+      <ReleaseChecklist />
     </>
   );
 }
