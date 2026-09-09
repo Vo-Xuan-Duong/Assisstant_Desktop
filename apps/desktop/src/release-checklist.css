@@ -1,0 +1,276 @@
+.release-checklist {
+  position: fixed;
+  top: 46px;
+  right: 88px;
+  z-index: 39;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+}
+
+.release-checklist-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(20, 22, 30, 0.78);
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 12px;
+  cursor: pointer;
+  backdrop-filter: blur(18px);
+}
+
+.release-checklist-trigger:hover {
+  background: rgba(34, 37, 49, 0.9);
+}
+
+.release-checklist.is-open {
+  inset: 8px 10px auto 10px;
+  z-index: 45;
+}
+
+.release-checklist-panel {
+  width: min(820px, calc(100vw - 20px));
+  max-height: min(340px, calc(100vh - 16px));
+  overflow: auto;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 13px;
+  background: rgba(13, 15, 22, 0.985);
+  color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(24px);
+}
+
+.release-checklist-panel header,
+.release-checklist-actions,
+.release-gate-summary,
+.release-checklist-toolbar,
+.release-checklist-row {
+  display: flex;
+  align-items: center;
+}
+
+.release-checklist-panel header {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.release-checklist-panel header p {
+  margin: 0 0 2px;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.release-checklist-panel h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.release-checklist-actions {
+  gap: 7px;
+}
+
+.release-checklist-actions button,
+.release-checklist-toolbar button,
+.release-checklist-toolbar select,
+.acceptance-status {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  font-size: 10px;
+}
+
+.release-checklist-actions button,
+.release-checklist-toolbar button {
+  cursor: pointer;
+}
+
+.release-checklist-actions button:disabled,
+.acceptance-status:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.release-gate-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.release-gate-summary > div {
+  min-width: 0;
+  border-radius: 9px;
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.release-gate-summary span {
+  display: block;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 9px;
+}
+
+.release-gate-summary strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.acceptance-ready,
+.acceptance-passed {
+  color: rgba(151, 235, 185, 0.94);
+}
+
+.acceptance-pending {
+  color: rgba(255, 224, 151, 0.94);
+}
+
+.acceptance-failed,
+.acceptance-blocked {
+  color: rgba(255, 166, 166, 0.94);
+}
+
+.release-gate-note,
+.release-checklist-error,
+.release-checklist-empty {
+  margin: 8px 0 0;
+  border-radius: 9px;
+  padding: 7px 9px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.release-gate-note {
+  background: rgba(138, 180, 248, 0.08);
+  color: rgba(220, 232, 255, 0.82);
+}
+
+.release-checklist-error {
+  background: rgba(220, 70, 70, 0.13);
+  color: rgba(255, 181, 181, 0.95);
+}
+
+.release-checklist-toolbar {
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 7px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.release-checklist-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.release-checklist-toolbar label > span,
+.release-checklist-toolbar > span {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 9px;
+}
+
+.release-checklist-toolbar select,
+.acceptance-status {
+  background: rgba(6, 8, 13, 0.92);
+}
+
+.release-reset-button {
+  color: rgba(255, 194, 194, 0.9) !important;
+}
+
+.release-checklist-group {
+  margin-top: 10px;
+}
+
+.release-checklist-group h3 {
+  margin: 0;
+  padding: 0 0 5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.release-checklist-group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.release-checklist-row {
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.release-check-number {
+  flex: 0 0 24px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.055);
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 9px;
+}
+
+.release-check-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.release-check-copy strong {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.release-check-copy span {
+  display: block;
+  margin-top: 2px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 8px;
+}
+
+.acceptance-status {
+  flex: 0 0 92px;
+  min-width: 92px;
+}
+
+@media (max-width: 620px) {
+  .release-checklist {
+    right: 76px;
+  }
+
+  .release-gate-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .release-checklist-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .release-checklist-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .acceptance-status {
+    margin-left: 32px;
+  }
+}
