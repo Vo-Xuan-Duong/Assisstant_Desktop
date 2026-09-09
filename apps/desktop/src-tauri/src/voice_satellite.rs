@@ -140,7 +140,7 @@ enum ServerMessage<'a> {
     Pong,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct SatelliteTranscriptEvent<'a> {
     text: &'a str,
     is_final: bool,
