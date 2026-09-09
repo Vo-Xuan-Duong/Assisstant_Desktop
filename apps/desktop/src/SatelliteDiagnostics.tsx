@@ -135,6 +135,7 @@ export default function SatelliteDiagnostics() {
   const refreshSatellite = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setSatelliteMutationError(null);
     try {
       setReport(await getRuntimeReadiness());
     } catch (cause) {
@@ -247,6 +248,11 @@ export default function SatelliteDiagnostics() {
     satellite?.environment_token_override || satellite?.remote_managed,
   );
   const listenerCanEnable = Boolean(satellite?.enabled || satellite?.paired);
+  const listenerLabel = satellite?.environment_token_override
+    ? "Managed (env)"
+    : satellite?.remote_managed
+      ? satellite.enabled ? "Enabled (managed)" : "Disabled (managed)"
+      : satellite?.enabled ? "Enabled" : "Disabled";
 
   return (
     <div className={`satellite-diagnostics ${open ? "is-open" : ""}`}>
@@ -307,7 +313,7 @@ export default function SatelliteDiagnostics() {
               {satellite ? (
                 <>
                   <div className="satellite-diagnostics-grid">
-                    <div><span>Listener</span><strong>{satellite.enabled ? "Enabled" : "Disabled"}</strong></div>
+                    <div><span>Listener</span><strong>{listenerLabel}</strong></div>
                     <div><span>Pairing</span><strong>{effectivelyPaired ? (satellite.environment_token_override ? "Paired (env)" : "Paired") : "Unpaired"}</strong></div>
                     <div><span>Bind</span><code>{satellite.bind}</code></div>
                     <div><span>Credential</span><strong>{credentialLabel}</strong></div>
