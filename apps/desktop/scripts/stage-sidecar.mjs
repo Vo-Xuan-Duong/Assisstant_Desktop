@@ -21,6 +21,10 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(desktopDir, "../..");
 const tauriDir = path.join(desktopDir, "src-tauri");
+const configuredTargetDir = process.env.CARGO_TARGET_DIR;
+const targetDir = configuredTargetDir
+  ? path.resolve(repoRoot, configuredTargetDir)
+  : path.join(repoRoot, "target");
 const targetTriple = execFileSync("rustc", ["--print", "host-tuple"], {
   cwd: repoRoot,
   encoding: "utf8",
@@ -86,10 +90,6 @@ const voiceArgs = ["build", "-p", "voice-runtime", "--features", "wake-sherpa", 
 if (requestedProfile === "release") voiceArgs.push("--release");
 execFileSync("cargo", voiceArgs, { cwd: repoRoot, stdio: "inherit" });
 
-const configuredTargetDir = process.env.CARGO_TARGET_DIR;
-const targetDir = configuredTargetDir
-  ? path.resolve(repoRoot, configuredTargetDir)
-  : path.join(repoRoot, "target");
 const source = path.join(targetDir, requestedProfile, "assistant-mcp.exe");
 if (!existsSync(source)) {
   throw new Error(`Expected sidecar binary was not produced: ${source}`);
@@ -189,32 +189,52 @@ function hasRequiredSherpaRuntime(files) {
 }
 
 const runtimeDir = path.join(targetDir, requestedProfile);
-let runtimeDllSources = collectSherpaRuntimeDlls(runtimeDir);
-if (!hasRequiredSherpaRuntime(runtimeDllSources)) {
-  const sherpaVersion = lockedPackageVersion("sherpa-onnx-sys");
-  const archivePlatform =
-    targetTriple === "x86_64-pc-windows-msvc"
-      ? "win-x64"
-      : targetTriple === "aarch64-pc-windows-msvc"
-        ? "win-arm64"
-        : null;
-  if (!archivePlatform) {
-    throw new Error(`Unsupported Windows target for Sherpa runtime staging: ${targetTriple}`);
-  }
+const sherpaVersion = lockedPackageVersion("sherpa-onnx-sys");
+const archivePlatform =
+  targetTriple === "x86_64-pc-windows-msvc"
+    ? "win-x64"
+    : targetTriple === "aarch64-pc-windows-msvc"
+      ? "win-arm64"
+      : null;
+if (!archivePlatform) {
+  throw new Error(`Unsupported Windows target for Sherpa runtime staging: ${targetTriple}`);
+}
+const lockedPrebuiltDir = path.join(
+  targetDir,
+  "sherpa-onnx-prebuilt",
+  `sherpa-onnx-v${sherpaVersion}-${archivePlatform}-shared-MT-Release-lib`,
+);
+
+function resolveSherpaRuntimeDlls() {
+  const profileDlls = collectSherpaRuntimeDlls(runtimeDir);
+  if (hasRequiredSherpaRuntime(profileDlls)) return profileDlls;
 
   // sherpa-onnx-sys owns this cache and may place runtime DLLs below different
   // subdirectories across crate releases. Stay scoped to the exact locked
   // version/platform cache instead of assuming a specific `lib`/`bin` layout.
-  const lockedPrebuiltDir = path.join(
-    targetDir,
-    "sherpa-onnx-prebuilt",
-    `sherpa-onnx-v${sherpaVersion}-${archivePlatform}-shared-MT-Release-lib`,
+  return collectSherpaRuntimeDllsRecursive(lockedPrebuiltDir);
+}
+
+let runtimeDllSources = resolveSherpaRuntimeDlls();
+if (!hasRequiredSherpaRuntime(runtimeDllSources)) {
+  // Rust CI caches may restore the compiled sherpa-onnx-sys artifact without
+  // restoring its downloaded runtime DLLs. In that case Cargo considers the
+  // build script fresh and never materializes the DLLs on the new runner.
+  // Clean only this dependency and rebuild voice-runtime so the locked crate's
+  // build script runs again. This fallback is skipped whenever DLLs exist.
+  console.log(
+    `Sherpa runtime DLLs are absent; rematerializing sherpa-onnx-sys ${sherpaVersion} runtime.`,
   );
-  runtimeDllSources = collectSherpaRuntimeDllsRecursive(lockedPrebuiltDir);
+  execFileSync("cargo", ["clean", "-p", "sherpa-onnx-sys"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+  });
+  execFileSync("cargo", voiceArgs, { cwd: repoRoot, stdio: "inherit" });
+  runtimeDllSources = resolveSherpaRuntimeDlls();
 }
 if (!hasRequiredSherpaRuntime(runtimeDllSources)) {
   throw new Error(
-    "Sherpa runtime DLLs were not produced by the native build or its locked prebuilt cache.",
+    "Sherpa runtime DLLs were not produced after rematerializing the locked sherpa-onnx-sys build.",
   );
 }
 
