@@ -33,6 +33,7 @@ The phone is not another AI brain and never receives direct MCP, Win32, shell, o
 12. The desktop diagnostics WebView must never receive/decrypt the pairing token.
 13. Automatic acoustic barge-in must not be claimed without a real echo-reference/AEC-capable architecture.
 14. Source completion is not target-device verification; native validation is performed locally by the user.
+15. Automated readiness status must not be presented as release certification.
 
 ## 3. Locked technology stack
 
@@ -106,11 +107,12 @@ Context    Antigravity/Gemini
                |
          Windows SAPI
 
-Quick Voice UI
+Quick Control UI
   |- Satellite -> readiness/device diagnostics
   |               + bounded listener enable/disable
   |               + bounded known-device revoke/allow
   |- TTS -> bounded installed SAPI voice selection for VI/EN
+  |- System -> read-only existing runtime readiness checks
   `- pairing secret never enters the WebView
 ```
 
@@ -221,7 +223,7 @@ Delivered by extending the existing `assistant_readiness` payload with a non-sec
 - device id/name/first-seen/last-seen/revoked metadata;
 - warnings for malformed files, legacy credential storage, environment overrides and remote-state drift.
 
-The Quick surface originally exposed a compact read-only **Satellite** panel. Phase 32A folds it into the unified **Voice** panel, and Phase 32B later adds only bounded listener/device controls while preserving the non-secret snapshot.
+The Quick surface originally exposed a compact read-only **Satellite** panel. Phase 32A folds it into **Voice**, Phase 32B adds bounded listener/device controls, and Phase 33A renames the combined product surface to **Control** when the System self-check tab is added.
 
 Security boundary:
 
@@ -232,7 +234,7 @@ settings / device registry / remote state
 non-secret readiness snapshot
         |
         v
-Quick Voice -> Satellite tab
+Quick Control -> Satellite tab
 
 pairing token --------X------> WebView
 ```
@@ -462,8 +464,8 @@ Goal: move the common VI/EN SAPI voice-selection workflow into the Quick product
 
 Delivered:
 
-- the former Satellite trigger is now a unified **Voice** panel;
-- **Satellite** tab preserves the existing read-only diagnostics;
+- the former Satellite trigger becomes a unified **Voice** panel;
+- **Satellite** tab preserves the existing diagnostics;
 - **TTS** tab enumerates installed Windows SAPI voices;
 - separate Vietnamese/English selectors;
 - **Tự động theo locale** clears an explicit preference;
@@ -472,7 +474,7 @@ Delivered:
 - desktop UI and `WindowsSapiTts` share `default_voice_preferences_path()`; the CLI's normal default resolver targets the same `%LOCALAPPDATA%` file while retaining its explicit `--data-dir` override;
 - SAPI enumeration/update work runs on blocking worker threads so COM initialization does not inherit the Tauri UI apartment;
 - changes apply on the next utterance because `WindowsSapiTts` reloads preferences per spoken response;
-- Quick auto-dismiss remains held while the Voice panel is open.
+- Quick auto-dismiss remains held while the panel is open.
 
 Security boundary:
 
@@ -533,6 +535,47 @@ arbitrary path/shell args ---------------X
 
 See [`PHASE32B_SATELLITE_MANAGEMENT_UI.md`](PHASE32B_SATELLITE_MANAGEMENT_UI.md).
 
+## 16C. Phase 33A — Local Validation Dashboard — COMPLETE IN SOURCE; LOCAL VALIDATION REQUIRED
+
+Goal: make the existing automated runtime readiness state directly usable during local acceptance without creating a second health subsystem or pretending automated checks certify the release.
+
+Delivered:
+
+- the combined Quick **Voice** surface becomes **Control**;
+- adds a third **System** tab next to Satellite and TTS;
+- reuses `assistant_readiness` and `RuntimeReadinessReport` without adding native authority;
+- displays aggregate runtime state and Ready/Optional/Blocking counts;
+- displays every current readiness check;
+- sorts Blocking first, then Optional, then Ready;
+- exposes each check detail and only the local path already present in the readiness DTO;
+- explicitly states that Android, microphone, QR, Tailscale/mobile-data and installer acceptance remain real-device work;
+- no test runner, shell command, process launch, network probe, microphone execution or system mutation is added.
+
+Current automated readiness sources include Antigravity, MCP, Permission Broker, context storage, TTS, Satellite, local STT resource and wake runtime/resource.
+
+Security boundary:
+
+```text
+native readiness collectors
+        |
+        v
+assistant_readiness
+        |
+        v
+bounded DTO
+        |
+        v
+Quick Control -> System
+
+pairing token ----------------X
+arbitrary file read ----------X
+shell/process execution ------X
+network/firewall/Tailscale ---X
+microphone execution ---------X
+```
+
+See [`PHASE33A_LOCAL_VALIDATION_DASHBOARD.md`](PHASE33A_LOCAL_VALIDATION_DASHBOARD.md).
+
 ## 17. Response behavior
 
 Vietnamese:
@@ -566,7 +609,7 @@ Windows tools:
 - `SENSITIVE` — explicit confirmation;
 - `BLOCKED` — not exposed.
 
-Satellite/Voice UI invariants:
+Satellite/Control UI invariants:
 
 - no valid pairing -> no usable listener;
 - first application message authenticates;
@@ -591,7 +634,9 @@ Satellite/Voice UI invariants:
 - TTS UI cannot choose an arbitrary settings path or execute shell/registry commands;
 - Satellite UI can toggle only the persisted listener state and known-device revoke state;
 - Satellite UI cannot pair/rotate/revoke the shared credential, edit bind, run firewall commands, or manage Tailscale lifecycle;
-- listener UI refuses to compete with environment-token override or Tailscale managed state.
+- listener UI refuses to compete with environment-token override or Tailscale managed state;
+- System self-check is read-only and receives only the existing bounded readiness DTO;
+- runtime self-check must never be presented as release certification.
 
 ## 19. Cost/privacy model
 
@@ -643,7 +688,7 @@ Before release readiness, validate on target Windows + Android hardware.
 28. Quick Satellite diagnostics accurately reflects listener/bind/credential class/device state.
 29. no pairing token appears in the frontend/devtools payload.
 30. malformed satellite state surfaces a warning instead of crashing the Quick UI.
-31. opening Satellite diagnostics holds Quick auto-dismiss while interacting with the panel.
+31. opening Control holds Quick auto-dismiss while interacting with the panel.
 
 ### Remote
 
@@ -662,7 +707,7 @@ Before release readiness, validate on target Windows + Android hardware.
 
 ### Phase 32A TTS UI
 
-41. Quick **Voice -> TTS** lists the same installed voices as `assistant tts voices`.
+41. Quick **Control -> TTS** lists the same installed voices as `assistant tts voices`.
 42. selecting VI/EN in Quick is reflected by `assistant tts show` and the next matching spoken response when both use the normal/default application-data path.
 43. **Tự động theo locale** clears the explicit language preference and restores fallback behavior.
 44. malformed/stale TTS settings surface an error/warning without crashing Quick or silently rewriting invalid configuration.
@@ -678,6 +723,15 @@ Before release readiness, validate on target Windows + Android hardware.
 51. allowing the device restores access without rotating the shared token.
 52. pairing token, bind, firewall and Tailscale lifecycle remain unavailable to the WebView.
 
+### Phase 33A System self-check
+
+53. Quick **Control -> System** renders all current runtime readiness checks without crashing when optional components are missing.
+54. Blocking checks sort before Optional and Ready checks.
+55. summary Ready/Optional/Blocking counts match the visible rows.
+56. **Làm mới** reflects a real local configuration change in the existing readiness report.
+57. paths remain compact/truncated safely and no new generic filesystem read capability exists.
+58. no pairing credential or other secret is introduced into the System payload/UI, and the UI does not label the automated self-check as release certification.
+
 ## 21. Definition of feature-complete MVP
 
 Core feature-complete source now includes:
@@ -689,6 +743,7 @@ Core feature-complete source now includes:
 - VI/EN responses and selectable TTS;
 - bounded Quick UI for VI/EN installed SAPI voice preferences;
 - bounded Quick UI for Satellite listener enable/disable and known-device revoke/allow;
+- read-only Quick System self-check backed by the existing readiness engine;
 - Stop/reconnect/deduplication;
 - read-only recognition/turn diagnostics;
 - Quick Settings + launcher shortcut activation;
@@ -706,13 +761,15 @@ Automatic acoustic full duplex remains outside the current release-readiness cla
 ### Required before release
 
 - run the local acceptance matrix on target Windows and Android hardware;
+- use **Quick -> Control -> System** as the automated runtime starting point, not as a substitute for real-device checks;
 - fix any device-specific integration issues found by that validation;
 - validate Windows packaging/NSIS/startup behavior;
 - validate Tailscale remote mode over mobile data;
-- validate installed VI/EN SAPI voices, Phase 32A TTS UI, Phase 32B Satellite controls, and Android recognizer behavior.
+- validate installed VI/EN SAPI voices, Phase 32A TTS UI, Phase 32B Satellite controls, Phase 33A System self-check, and Android recognizer behavior.
 
 ### Optional product improvements
 
+- persisted manual acceptance tracking if an in-app release checklist proves useful after real local validation begins;
 - notification activation if a persistent notification is actually desired;
 - headset/hardware-button activation where Android/device policy permits it;
 - domain/app-name normalization only after collected recognition diagnostics show repeatable errors.
