@@ -23,6 +23,17 @@ export function getRuntimeReadiness(): Promise<RuntimeReadinessReport> {
   return invoke<RuntimeReadinessReport>("assistant_readiness");
 }
 
+export function setSatelliteEnabled(enabled: boolean): Promise<void> {
+  return invoke<void>("assistant_satellite_set_enabled", { enabled });
+}
+
+export function setSatelliteDeviceRevoked(deviceId: string, revoked: boolean): Promise<void> {
+  return invoke<void>("assistant_satellite_set_device_revoked", {
+    deviceId,
+    revoked,
+  });
+}
+
 export function getTtsSettings(): Promise<TtsSettingsSnapshot> {
   return invoke<TtsSettingsSnapshot>("assistant_tts_settings");
 }
