@@ -169,6 +169,20 @@ function collectSherpaRuntimeDlls(directory) {
     .map((name) => path.join(directory, name));
 }
 
+function collectSherpaRuntimeDllsRecursive(directory, depth = 0) {
+  if (!existsSync(directory) || depth > 5) return [];
+  const files = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectSherpaRuntimeDllsRecursive(entryPath, depth + 1));
+    } else if (entry.isFile() && /^(sherpa-onnx|onnxruntime).*\.dll$/i.test(entry.name)) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
 function hasRequiredSherpaRuntime(files) {
   const names = new Set(files.map((file) => path.basename(file).toLowerCase()));
   return names.has("sherpa-onnx-c-api.dll") && names.has("onnxruntime.dll");
@@ -187,13 +201,16 @@ if (!hasRequiredSherpaRuntime(runtimeDllSources)) {
   if (!archivePlatform) {
     throw new Error(`Unsupported Windows target for Sherpa runtime staging: ${targetTriple}`);
   }
-  const prebuiltLibDir = path.join(
+
+  // sherpa-onnx-sys owns this cache and may place runtime DLLs below different
+  // subdirectories across crate releases. Stay scoped to the exact locked
+  // version/platform cache instead of assuming a specific `lib`/`bin` layout.
+  const lockedPrebuiltDir = path.join(
     targetDir,
     "sherpa-onnx-prebuilt",
     `sherpa-onnx-v${sherpaVersion}-${archivePlatform}-shared-MT-Release-lib`,
-    "lib",
   );
-  runtimeDllSources = collectSherpaRuntimeDlls(prebuiltLibDir);
+  runtimeDllSources = collectSherpaRuntimeDllsRecursive(lockedPrebuiltDir);
 }
 if (!hasRequiredSherpaRuntime(runtimeDllSources)) {
   throw new Error(
@@ -201,9 +218,17 @@ if (!hasRequiredSherpaRuntime(runtimeDllSources)) {
   );
 }
 
+const uniqueRuntimeDlls = new Map();
+for (const runtimeDllSource of runtimeDllSources) {
+  const name = path.basename(runtimeDllSource);
+  if (!uniqueRuntimeDlls.has(name.toLowerCase())) {
+    uniqueRuntimeDlls.set(name.toLowerCase(), runtimeDllSource);
+  }
+}
+
 const testDepsDir = path.join(runtimeDir, "deps");
 mkdirSync(testDepsDir, { recursive: true });
-for (const runtimeDllSource of runtimeDllSources) {
+for (const runtimeDllSource of uniqueRuntimeDlls.values()) {
   const name = path.basename(runtimeDllSource);
   copyFileSync(runtimeDllSource, path.join(binariesDir, name));
   // Test executables live in deps. Windows searches the executable directory
@@ -218,5 +243,5 @@ console.log(`Staged satellite management helper: ${satelliteDestination}`);
 console.log(`Staged remote satellite helper: ${satelliteRemoteDestination}`);
 console.log(`Staged TTS management helper: ${ttsDestination}`);
 console.log(
-  `Staged Sherpa runtime DLLs: ${runtimeDllSources.map((file) => path.basename(file)).join(", ")}`,
+  `Staged Sherpa runtime DLLs: ${[...uniqueRuntimeDlls.values()].map((file) => path.basename(file)).join(", ")}`,
 );
