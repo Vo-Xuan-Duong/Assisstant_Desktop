@@ -106,9 +106,10 @@ Context    Antigravity/Gemini
                |
          Windows SAPI
 
-Quick UI
-  -> read-only Satellite readiness/device diagnostics
-  -> never receives pairing secret
+Quick Voice UI
+  |- Satellite -> read-only readiness/device diagnostics
+  |- TTS -> bounded installed SAPI voice selection for VI/EN
+  `- pairing secret never enters the WebView
 ```
 
 Fallback:
@@ -218,7 +219,7 @@ Delivered by extending the existing `assistant_readiness` payload with a non-sec
 - device id/name/first-seen/last-seen/revoked metadata;
 - warnings for malformed files, legacy credential storage, environment overrides and remote-state drift.
 
-The Quick surface exposes a compact read-only **Satellite** panel with open/close/refresh only.
+The Quick surface originally exposed a compact read-only **Satellite** panel. Phase 32A keeps that view read-only and folds it into the unified **Voice** panel.
 
 Security boundary:
 
@@ -229,12 +230,12 @@ settings / device registry / remote state
 non-secret readiness snapshot
         |
         v
-Quick Satellite panel
+Quick Voice -> Satellite tab
 
 pairing token --------X------> WebView
 ```
 
-Mutating operations remain in `assistant satellite ...`.
+Mutating Satellite operations remain in `assistant satellite ...`.
 
 A disabled/unpaired satellite is `optional_missing`, not a blocking failure for text Assistant/MCP operation.
 
@@ -264,7 +265,7 @@ assistant tts set en <voice>
 assistant tts clear <vi|en|all>
 ```
 
-Remaining here is target-machine validation/product UI polish, not missing core source capability.
+Phase 32A adds bounded product UI for these existing preferences; target-machine validation is still required.
 
 ## 10. Phase 28 — Fast Android activation — COMPLETE IN SOURCE
 
@@ -455,6 +456,40 @@ mid-response interruption -> explicit Nói ngắt Assistant / Quick Settings / l
 
 is the supported behavior.
 
+## 16A. Phase 32A — Desktop TTS settings UI — COMPLETE IN SOURCE; LOCAL VALIDATION REQUIRED
+
+Goal: move the common VI/EN SAPI voice-selection workflow into the Quick product surface while reusing the same `tts.conf` and keeping the WebView bounded.
+
+Delivered:
+
+- the former Satellite trigger is now a unified **Voice** panel;
+- **Satellite** tab preserves the existing read-only diagnostics;
+- **TTS** tab enumerates installed Windows SAPI voices;
+- separate Vietnamese/English selectors;
+- **Tự động theo locale** clears an explicit preference;
+- exact installed token IDs are validated before persistence;
+- stale removed voice selections are surfaced to the user;
+- the same `default_voice_preferences_path()` / `tts.conf` is used by UI, CLI and runtime;
+- changes apply on the next utterance because `WindowsSapiTts` reloads preferences per spoken response;
+- Quick auto-dismiss remains held while the Voice panel is open.
+
+Security boundary:
+
+```text
+WebView
+  -> vi | en
+  -> null OR exact currently-installed SAPI token id
+  -> bounded Tauri command
+  -> existing tts.conf
+
+arbitrary path / shell / registry command --------X
+Satellite pairing token --------------------------X
+```
+
+Satellite mutations remain CLI-only in this phase.
+
+See [`PHASE32A_TTS_SETTINGS_UI.md`](PHASE32A_TTS_SETTINGS_UI.md).
+
 ## 17. Response behavior
 
 Vietnamese:
@@ -488,7 +523,7 @@ Windows tools:
 - `SENSITIVE` — explicit confirmation;
 - `BLOCKED` — not exposed.
 
-Satellite invariants:
+Satellite/Voice UI invariants:
 
 - no valid pairing -> no usable listener;
 - first application message authenticates;
@@ -508,7 +543,9 @@ Satellite invariants:
 - diagnostics never alter command/permission semantics;
 - desktop diagnostics never expose the token;
 - launcher shortcut cannot bypass pairing/microphone/cancel checks;
-- conversational mode does not lower desktop permission boundaries.
+- conversational mode does not lower desktop permission boundaries;
+- TTS UI can persist only `vi`/`en` plus an exact installed SAPI token ID or automatic fallback;
+- TTS UI cannot choose an arbitrary settings path or execute shell/registry commands.
 
 ## 19. Cost/privacy model
 
@@ -577,6 +614,13 @@ Before release readiness, validate on target Windows + Android hardware.
 39. staged/installed canonical/helper executables resolve correctly.
 40. NSIS package/startup flow works on the target Windows installation.
 
+### Phase 32A TTS UI
+
+41. Quick **Voice -> TTS** lists the same installed voices as `assistant tts voices`.
+42. selecting VI/EN in Quick is reflected by `assistant tts show` and the next matching spoken response.
+43. **Tự động theo locale** clears the explicit language preference and restores fallback behavior.
+44. malformed/stale TTS settings surface an error/warning without crashing Quick or silently rewriting invalid configuration.
+
 ## 21. Definition of feature-complete MVP
 
 Core feature-complete source now includes:
@@ -586,6 +630,7 @@ Core feature-complete source now includes:
 - pairing/trust/credential protection;
 - read-only product diagnostics without secret exposure;
 - VI/EN responses and selectable TTS;
+- bounded Quick UI for VI/EN installed SAPI voice preferences;
 - Stop/reconnect/deduplication;
 - read-only recognition/turn diagnostics;
 - Quick Settings + launcher shortcut activation;
@@ -606,14 +651,14 @@ Automatic acoustic full duplex remains outside the current release-readiness cla
 - fix any device-specific integration issues found by that validation;
 - validate Windows packaging/NSIS/startup behavior;
 - validate Tailscale remote mode over mobile data;
-- validate installed VI/EN SAPI voices and Android recognizer behavior.
+- validate installed VI/EN SAPI voices, the Phase 32A TTS UI, and Android recognizer behavior.
 
 ### Optional product improvements
 
 - notification activation if a persistent notification is actually desired;
 - headset/hardware-button activation where Android/device policy permits it;
 - domain/app-name normalization only after collected recognition diagnostics show repeatable errors;
-- more user-facing settings UI for TTS/satellite management without weakening authority boundaries.
+- carefully bounded Satellite management UI beyond the current read-only diagnostics, without exposing pairing secrets or weakening the desktop authority boundary.
 
 ### Deferred research
 
