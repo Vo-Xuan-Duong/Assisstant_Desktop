@@ -37,15 +37,20 @@ execFileSync("cargo", cargoArgs, {
   stdio: "inherit",
 });
 
-// The desktop package uses tauri-build, which validates every configured
-// externalBin during its build script. On a clean machine those files do not
-// exist yet because this staging script is responsible for producing them.
-// Disable externalBin only for these helper Cargo builds to break that
-// bootstrap cycle. The real Tauri dev/build invocation still uses the normal
-// configuration after this script has staged all binaries.
+// The desktop package uses tauri-build, which validates configured external
+// binaries and resource globs during its build script. On a clean machine
+// those files do not exist yet because this staging script is responsible for
+// producing them. Disable both checks only for these helper Cargo builds to
+// break that bootstrap cycle. The real Tauri dev/build invocation still uses
+// the normal configuration after this script has staged every file.
 const desktopHelperEnv = {
   ...process.env,
-  TAURI_CONFIG: JSON.stringify({ bundle: { externalBin: [] } }),
+  TAURI_CONFIG: JSON.stringify({
+    bundle: {
+      externalBin: [],
+      resources: [],
+    },
+  }),
 };
 const desktopHelperArgs = [
   "build",
