@@ -15,6 +15,10 @@
     "desktop:release:prepare": "powershell -ExecutionPolicy Bypass -File .\\scripts\\prepare-release.ps1",
     "desktop:release:verify": "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-release.ps1",
     "desktop:release:verify:public": "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-public-release.ps1",
+    "desktop:release:local": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\local-release-validation.ps1",
+    "desktop:release:local:public": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\local-release-validation.ps1 -PublicRelease",
+    "desktop:release:local:build": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\local-release-validation.ps1 -Build",
+    "desktop:release:local:build:public": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\local-release-validation.ps1 -PublicRelease -Build",
     "desktop:release:build": "pnpm desktop:native:prepare && pnpm desktop:assets:prepare && pnpm desktop:release:verify && powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-native.ps1 -Mode build",
     "desktop:release:build:public": "pnpm desktop:native:prepare && pnpm desktop:assets:prepare && pnpm desktop:release:verify:public && powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-native.ps1 -Mode build-public"
   }
