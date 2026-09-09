@@ -37,74 +37,37 @@ execFileSync("cargo", cargoArgs, {
   stdio: "inherit",
 });
 
-const assistantCoreArgs = [
+// The desktop package uses tauri-build, which validates every configured
+// externalBin during its build script. On a clean machine those files do not
+// exist yet because this staging script is responsible for producing them.
+// Disable externalBin only for these helper Cargo builds to break that
+// bootstrap cycle. The real Tauri dev/build invocation still uses the normal
+// configuration after this script has staged all binaries.
+const desktopHelperEnv = {
+  ...process.env,
+  TAURI_CONFIG: JSON.stringify({ bundle: { externalBin: [] } }),
+};
+const desktopHelperArgs = [
   "build",
   "-p",
   "assisstant-desktop",
   "--bin",
   "assistant",
-  "--locked",
-];
-if (requestedProfile === "release") assistantCoreArgs.push("--release");
-execFileSync("cargo", assistantCoreArgs, {
-  cwd: repoRoot,
-  stdio: "inherit",
-});
-
-const assistantRouterArgs = [
-  "build",
-  "-p",
-  "assisstant-desktop",
   "--bin",
   "assistant-root",
-  "--locked",
-];
-if (requestedProfile === "release") assistantRouterArgs.push("--release");
-execFileSync("cargo", assistantRouterArgs, {
-  cwd: repoRoot,
-  stdio: "inherit",
-});
-
-const satelliteArgs = [
-  "build",
-  "-p",
-  "assisstant-desktop",
   "--bin",
   "assistant-satellite",
-  "--locked",
-];
-if (requestedProfile === "release") satelliteArgs.push("--release");
-execFileSync("cargo", satelliteArgs, {
-  cwd: repoRoot,
-  stdio: "inherit",
-});
-
-const satelliteRemoteArgs = [
-  "build",
-  "-p",
-  "assisstant-desktop",
   "--bin",
   "assistant-satellite-remote",
-  "--locked",
-];
-if (requestedProfile === "release") satelliteRemoteArgs.push("--release");
-execFileSync("cargo", satelliteRemoteArgs, {
-  cwd: repoRoot,
-  stdio: "inherit",
-});
-
-const ttsArgs = [
-  "build",
-  "-p",
-  "assisstant-desktop",
   "--bin",
   "assistant-tts",
   "--locked",
 ];
-if (requestedProfile === "release") ttsArgs.push("--release");
-execFileSync("cargo", ttsArgs, {
+if (requestedProfile === "release") desktopHelperArgs.push("--release");
+execFileSync("cargo", desktopHelperArgs, {
   cwd: repoRoot,
   stdio: "inherit",
+  env: desktopHelperEnv,
 });
 
 // Sherpa stays in DLLs to isolate its bundled protobuf from SentencePiece's.
