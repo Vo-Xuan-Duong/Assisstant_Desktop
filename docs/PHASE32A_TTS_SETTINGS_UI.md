@@ -28,7 +28,7 @@ Quick Voice panel
        v
 bounded Tauri TTS settings service
        |
-       |- enumerate installed SAPI voice tokens
+       |- blocking worker -> enumerate installed SAPI voice tokens
        `- load/save existing tts.conf
                  |
                  v
@@ -37,7 +37,9 @@ bounded Tauri TTS settings service
           on next utterance
 ```
 
-There is only one TTS preference file. The UI, `assistant tts ...` CLI, and SAPI runtime all use the same `default_voice_preferences_path()` resolution and `tts.conf` format.
+The desktop UI and `WindowsSapiTts` runtime resolve preferences through the same `default_voice_preferences_path()` helper, so they operate on the same runtime `tts.conf`. The `assistant tts ...` CLI has an equivalent default `%LOCALAPPDATA%` resolver and therefore points to that same file during normal use, while intentionally retaining its explicit `--data-dir` override for management workflows.
+
+SAPI enumeration is executed on a Tokio blocking worker instead of the Tauri/WebView command thread. This keeps COM initialization on a dedicated worker thread and avoids inheriting an incompatible COM apartment from the UI host.
 
 ## Desktop UX
 
@@ -90,7 +92,7 @@ The existing Satellite tab remains read-only.
 
 ## Local acceptance
 
-Validate on the target Windows installation:
+Validate on the target Windows installation using the normal/default application-data path unless explicitly testing a CLI `--data-dir` override:
 
 1. **Voice -> TTS** lists the same installed voices as `assistant tts voices`.
 2. Existing `assistant tts show` preferences are reflected in the selectors.
