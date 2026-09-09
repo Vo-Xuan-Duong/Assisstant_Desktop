@@ -43,6 +43,7 @@
 }
 
 .satellite-diagnostics-panel header,
+.satellite-management-row,
 .satellite-device-list-heading,
 .satellite-device-row {
   display: flex;
@@ -72,7 +73,9 @@
 }
 
 .satellite-diagnostics-actions button,
-.satellite-diagnostics-tabs button {
+.satellite-diagnostics-tabs button,
+.satellite-management-row button,
+.satellite-device-meta button {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   padding: 5px 8px;
@@ -83,7 +86,9 @@
 }
 
 .satellite-diagnostics-actions button:disabled,
-.satellite-diagnostics-tabs button:disabled {
+.satellite-diagnostics-tabs button:disabled,
+.satellite-management-row button:disabled,
+.satellite-device-meta button:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -120,6 +125,7 @@
 }
 
 .satellite-diagnostics-grid span,
+.satellite-management-row span,
 .satellite-device-meta span,
 .satellite-device-list-heading span {
   display: block;
@@ -136,6 +142,31 @@
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.satellite-management-row {
+  margin-top: 8px;
+  border-radius: 10px;
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.satellite-management-row > div {
+  min-width: 0;
+}
+
+.satellite-management-row strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+}
+
+.satellite-management-row span {
+  line-height: 1.35;
+}
+
+.satellite-management-row button {
+  flex: 0 0 auto;
 }
 
 .satellite-diagnostics-warning,
@@ -209,6 +240,22 @@
 
 .satellite-device-meta .is-revoked {
   color: rgba(255, 166, 166, 0.9);
+}
+
+.satellite-device-meta button {
+  margin-top: 4px;
+  padding: 3px 7px;
+  font-size: 9px;
+}
+
+.satellite-device-meta button.is-revoke {
+  border-color: rgba(255, 126, 126, 0.2);
+  color: rgba(255, 184, 184, 0.92);
+}
+
+.satellite-device-meta button.is-allow {
+  border-color: rgba(151, 235, 185, 0.2);
+  color: rgba(177, 241, 203, 0.92);
 }
 
 .satellite-device-empty {
@@ -285,6 +332,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .satellite-management-row,
   .satellite-device-row {
     align-items: flex-start;
     flex-direction: column;

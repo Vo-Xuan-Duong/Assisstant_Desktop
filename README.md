@@ -63,7 +63,7 @@ Implemented in source:
 - bounded SpeechRecognizer fallback/retry;
 - read-only Android STT engine/confidence/alternatives/latency diagnostics;
 - completed desktop-turn timing through AI/tool/TTS completion;
-- desktop Quick **Voice** panel with read-only Satellite diagnostics and bounded TTS settings;
+- desktop Quick **Voice** panel with Satellite diagnostics, bounded listener/device management, and bounded TTS settings;
 - `VI`, `EN`, `Auto` response-language propagation;
 - selectable installed Windows SAPI voices for Vietnamese and English through CLI or Quick UI;
 - locale/default SAPI fallback;
@@ -215,7 +215,7 @@ The Quick surface includes a compact **Voice** panel with two tabs.
 
 ### Satellite
 
-The **Satellite** tab remains read-only and is backed by the existing `assistant_readiness` command. It can display:
+The **Satellite** tab is backed by the existing `assistant_readiness` snapshot and displays:
 
 ```text
 listener enabled/disabled
@@ -228,11 +228,20 @@ device id/name/first seen/last seen/revoked state
 state warnings
 ```
 
-The tab deliberately does **not** receive or decrypt the pairing token. Pairing rotation, revoke/allow, firewall and Tailscale mutations remain in the authoritative desktop CLI.
+Phase 32B adds only two bounded write paths to this tab:
+
+```text
+Bật listener / Tắt listener
+Thu hồi / Cho phép lại one known device
+```
+
+The listener control is locked when `ASSISTANT_VOICE_SATELLITE_TOKEN` is active or when Tailscale managed state owns the listener lifecycle. Per-device revoke uses the existing authoritative marker files, so a connected revoked phone is rejected/closed by the normal trust poll.
+
+The tab still does **not** receive or decrypt the pairing token. Pairing creation/rotation/revoke, bind changes, firewall mutation and Tailscale lifecycle remain in the authoritative desktop CLI. The WebView cannot supply an arbitrary path, host, port, executable, shell argument or pairing credential.
 
 Voice Satellite is optional for overall desktop readiness: a disabled/unpaired satellite is not a blocking failure for text Assistant/MCP operation.
 
-See [`docs/PHASE26B_SATELLITE_DIAGNOSTICS_UI.md`](docs/PHASE26B_SATELLITE_DIAGNOSTICS_UI.md).
+See [`docs/PHASE26B_SATELLITE_DIAGNOSTICS_UI.md`](docs/PHASE26B_SATELLITE_DIAGNOSTICS_UI.md) and [`docs/PHASE32B_SATELLITE_MANAGEMENT_UI.md`](docs/PHASE32B_SATELLITE_MANAGEMENT_UI.md).
 
 ### TTS
 
@@ -278,6 +287,8 @@ assistant satellite revoke-device <device-id>
 assistant satellite allow-device <device-id>
 ```
 
+The same per-device allow/revoke operation is available through **Quick -> Voice -> Satellite**. Pairing-token management remains CLI-only.
+
 ## Credential protection
 
 ### Android
@@ -292,7 +303,7 @@ New/rewritten `satellite.json` files store the token as a current-user Windows D
 "token": "dpapi:<hex-ciphertext>"
 ```
 
-The runtime decrypts it before WebSocket authentication. Legacy plaintext remains readable and migrates to DPAPI on the next mutating satellite command.
+The runtime decrypts it before WebSocket authentication. Legacy plaintext remains readable. The CLI migrates it on normal mutating workflows; Phase 32B also migrates a legacy token when the graphical listener is enabled.
 
 Check with:
 
@@ -570,8 +581,11 @@ Do not equate source completion with device verification. Validate locally:
 - QR scans on the target phone;
 - Android Keystore migration/persistence works;
 - Windows DPAPI round-trip and restart work;
-- trusted-device revoke works while connected;
 - Quick **Voice -> Satellite** shows correct non-secret state and never exposes the pairing token;
+- Quick listener disable/enable preserves normal persisted pairing and applies after hot reload;
+- listener control is locked/rejected under environment-token override and managed Tailscale mode;
+- Quick per-device revoke closes/rejects only that device while other trusted devices remain usable;
+- Quick allow restores that device without rotating the shared pairing token;
 - malformed satellite state is surfaced as warnings rather than crashing Quick;
 - Quick **Voice -> TTS** lists the same installed voices as `assistant tts voices`;
 - Quick VI/EN selections are reflected by `assistant tts show` and apply on the next matching response when both use the normal/default application-data path;
@@ -600,12 +614,11 @@ Per project policy, repository implementation does not run remote GitHub Actions
 
 ## Remaining roadmap
 
-The core functional MVP is implemented in source through **Phase 31A**, with Phase 26B/28B/29B/32A product polish also implemented. Remaining work is primarily local acceptance and optional higher-complexity capabilities:
+The core functional MVP is implemented in source through **Phase 31A**, with Phase 26B/28B/29B/32A/32B product polish also implemented. Remaining work is primarily local acceptance and optional higher-complexity capabilities:
 
 - local Windows/Android/Tailscale acceptance testing and release packaging validation;
 - optional notification/headset/hardware activation surfaces if they prove useful;
 - optional domain/app-name normalization after real recognition data demonstrates a concrete need;
-- optional carefully bounded Satellite management UI beyond the current read-only diagnostics;
 - **Phase 31B** automatic acoustic full duplex only after a real AEC/reference-audio architecture exists.
 
 Automatic acoustic barge-in will not be enabled by pretending RMS VAD can distinguish user speech from the desktop speaker.
@@ -625,3 +638,4 @@ Authoritative roadmap: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
 - [`docs/PHASE30_TAILSCALE_REMOTE.md`](docs/PHASE30_TAILSCALE_REMOTE.md)
 - [`docs/PHASE31_CONVERSATIONAL_VOICE.md`](docs/PHASE31_CONVERSATIONAL_VOICE.md)
 - [`docs/PHASE32A_TTS_SETTINGS_UI.md`](docs/PHASE32A_TTS_SETTINGS_UI.md)
+- [`docs/PHASE32B_SATELLITE_MANAGEMENT_UI.md`](docs/PHASE32B_SATELLITE_MANAGEMENT_UI.md)

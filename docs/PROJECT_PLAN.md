@@ -107,7 +107,9 @@ Context    Antigravity/Gemini
          Windows SAPI
 
 Quick Voice UI
-  |- Satellite -> read-only readiness/device diagnostics
+  |- Satellite -> readiness/device diagnostics
+  |               + bounded listener enable/disable
+  |               + bounded known-device revoke/allow
   |- TTS -> bounded installed SAPI voice selection for VI/EN
   `- pairing secret never enters the WebView
 ```
@@ -219,7 +221,7 @@ Delivered by extending the existing `assistant_readiness` payload with a non-sec
 - device id/name/first-seen/last-seen/revoked metadata;
 - warnings for malformed files, legacy credential storage, environment overrides and remote-state drift.
 
-The Quick surface originally exposed a compact read-only **Satellite** panel. Phase 32A keeps that view read-only and folds it into the unified **Voice** panel.
+The Quick surface originally exposed a compact read-only **Satellite** panel. Phase 32A folds it into the unified **Voice** panel, and Phase 32B later adds only bounded listener/device controls while preserving the non-secret snapshot.
 
 Security boundary:
 
@@ -234,8 +236,6 @@ Quick Voice -> Satellite tab
 
 pairing token --------X------> WebView
 ```
-
-Mutating Satellite operations remain in `assistant satellite ...`.
 
 A disabled/unpaired satellite is `optional_missing`, not a blocking failure for text Assistant/MCP operation.
 
@@ -318,7 +318,7 @@ Delivered:
 - stale-connection generation protection;
 - reconnect disabled on auth failure/device revoke;
 - no automatic replay of sent commands;
-- accepted-command request-ID deduplication;
+- accepted command request-ID deduplication;
 - bounded recognizer busy retry;
 - on-device recognizer -> system recognizer fallback;
 - recovery status separated from terminal recognition errors;
@@ -491,6 +491,48 @@ Satellite mutations remain CLI-only in this phase.
 
 See [`PHASE32A_TTS_SETTINGS_UI.md`](PHASE32A_TTS_SETTINGS_UI.md).
 
+## 16B. Phase 32B — Bounded Satellite management UI — COMPLETE IN SOURCE; LOCAL VALIDATION REQUIRED
+
+Goal: expose only reversible, narrow Satellite controls in the Quick product surface while keeping credential/network authority in the CLI.
+
+Delivered:
+
+- **Bật listener / Tắt listener** against the runtime's persisted Satellite settings;
+- enable requires an existing valid persisted pairing token;
+- enabling a legacy plaintext pairing token migrates it to current-user DPAPI;
+- graphical listener mutation is rejected when `ASSISTANT_VOICE_SATELLITE_TOKEN` is active;
+- graphical listener mutation is rejected while Tailscale managed state owns listener/restore lifecycle;
+- per-known-device **Thu hồi / Cho phép lại** controls;
+- device ID is bounded and validated again in Rust;
+- unknown device IDs are rejected;
+- revoke creates the authoritative marker without rewriting a registry that an active connection may be updating;
+- allow clears a legacy registry `revoked=true` flag before removing the authoritative marker, so failure remains fail-closed;
+- successful UI mutations refresh the readiness snapshot;
+- pairing token, bind, firewall and Tailscale command authority remain outside the WebView.
+
+Security boundary:
+
+```text
+WebView
+  -> enabled: bool
+  OR
+  -> existing device_id + revoked: bool
+        |
+        v
+bounded Tauri commands
+        |
+        +-- satellite.json enabled flag
+        `-- satellite-revoked marker / legacy registry flag
+
+pair/create/rotate token ----------------X
+arbitrary bind host:port ----------------X
+netsh/firewall --------------------------X
+Tailscale lifecycle ---------------------X
+arbitrary path/shell args ---------------X
+```
+
+See [`PHASE32B_SATELLITE_MANAGEMENT_UI.md`](PHASE32B_SATELLITE_MANAGEMENT_UI.md).
+
 ## 17. Response behavior
 
 Vietnamese:
@@ -546,7 +588,10 @@ Satellite/Voice UI invariants:
 - launcher shortcut cannot bypass pairing/microphone/cancel checks;
 - conversational mode does not lower desktop permission boundaries;
 - TTS UI can persist only `vi`/`en` plus an exact installed SAPI token ID or automatic fallback;
-- TTS UI cannot choose an arbitrary settings path or execute shell/registry commands.
+- TTS UI cannot choose an arbitrary settings path or execute shell/registry commands;
+- Satellite UI can toggle only the persisted listener state and known-device revoke state;
+- Satellite UI cannot pair/rotate/revoke the shared credential, edit bind, run firewall commands, or manage Tailscale lifecycle;
+- listener UI refuses to compete with environment-token override or Tailscale managed state.
 
 ## 19. Cost/privacy model
 
@@ -622,6 +667,17 @@ Before release readiness, validate on target Windows + Android hardware.
 43. **Tự động theo locale** clears the explicit language preference and restores fallback behavior.
 44. malformed/stale TTS settings surface an error/warning without crashing Quick or silently rewriting invalid configuration.
 
+### Phase 32B Satellite UI
+
+45. Quick can disable a normally paired local listener while preserving pairing.
+46. Quick can re-enable that listener without re-pairing.
+47. enable is rejected when no valid persisted pairing exists.
+48. environment-token override locks/rejects listener mutation.
+49. Tailscale managed state locks/rejects listener mutation.
+50. revoking one connected device closes/rejects that device while another trusted device remains usable.
+51. allowing the device restores access without rotating the shared token.
+52. pairing token, bind, firewall and Tailscale lifecycle remain unavailable to the WebView.
+
 ## 21. Definition of feature-complete MVP
 
 Core feature-complete source now includes:
@@ -629,9 +685,10 @@ Core feature-complete source now includes:
 - Android preferred voice input;
 - safe Windows Assistant Core/Antigravity/MCP control;
 - pairing/trust/credential protection;
-- read-only product diagnostics without secret exposure;
+- non-secret product diagnostics;
 - VI/EN responses and selectable TTS;
 - bounded Quick UI for VI/EN installed SAPI voice preferences;
+- bounded Quick UI for Satellite listener enable/disable and known-device revoke/allow;
 - Stop/reconnect/deduplication;
 - read-only recognition/turn diagnostics;
 - Quick Settings + launcher shortcut activation;
@@ -652,14 +709,13 @@ Automatic acoustic full duplex remains outside the current release-readiness cla
 - fix any device-specific integration issues found by that validation;
 - validate Windows packaging/NSIS/startup behavior;
 - validate Tailscale remote mode over mobile data;
-- validate installed VI/EN SAPI voices, the Phase 32A TTS UI, and Android recognizer behavior.
+- validate installed VI/EN SAPI voices, Phase 32A TTS UI, Phase 32B Satellite controls, and Android recognizer behavior.
 
 ### Optional product improvements
 
 - notification activation if a persistent notification is actually desired;
 - headset/hardware-button activation where Android/device policy permits it;
-- domain/app-name normalization only after collected recognition diagnostics show repeatable errors;
-- carefully bounded Satellite management UI beyond the current read-only diagnostics, without exposing pairing secrets or weakening the desktop authority boundary.
+- domain/app-name normalization only after collected recognition diagnostics show repeatable errors.
 
 ### Deferred research
 

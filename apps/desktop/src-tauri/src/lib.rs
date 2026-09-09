@@ -8,6 +8,7 @@ mod resource_installer;
 mod resource_manifest;
 mod resource_registry;
 mod runtime_paths;
+mod satellite_management;
 mod tts_settings;
 mod wake_desktop;
 
@@ -1052,6 +1053,8 @@ pub fn run() {
             assistant_save_antigravity_settings,
             assistant_launch_antigravity_auth,
             assistant_readiness,
+            satellite_management::assistant_satellite_set_enabled,
+            satellite_management::assistant_satellite_set_device_revoked,
             tts_settings::assistant_tts_settings,
             tts_settings::assistant_tts_set_voice,
             assistant_resources,
