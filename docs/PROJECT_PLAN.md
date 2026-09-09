@@ -458,7 +458,7 @@ is the supported behavior.
 
 ## 16A. Phase 32A — Desktop TTS settings UI — COMPLETE IN SOURCE; LOCAL VALIDATION REQUIRED
 
-Goal: move the common VI/EN SAPI voice-selection workflow into the Quick product surface while reusing the same `tts.conf` and keeping the WebView bounded.
+Goal: move the common VI/EN SAPI voice-selection workflow into the Quick product surface while reusing the runtime `tts.conf` and keeping the WebView bounded.
 
 Delivered:
 
@@ -469,7 +469,8 @@ Delivered:
 - **Tự động theo locale** clears an explicit preference;
 - exact installed token IDs are validated before persistence;
 - stale removed voice selections are surfaced to the user;
-- the same `default_voice_preferences_path()` / `tts.conf` is used by UI, CLI and runtime;
+- desktop UI and `WindowsSapiTts` share `default_voice_preferences_path()`; the CLI's normal default resolver targets the same `%LOCALAPPDATA%` file while retaining its explicit `--data-dir` override;
+- SAPI enumeration/update work runs on blocking worker threads so COM initialization does not inherit the Tauri UI apartment;
 - changes apply on the next utterance because `WindowsSapiTts` reloads preferences per spoken response;
 - Quick auto-dismiss remains held while the Voice panel is open.
 
@@ -617,7 +618,7 @@ Before release readiness, validate on target Windows + Android hardware.
 ### Phase 32A TTS UI
 
 41. Quick **Voice -> TTS** lists the same installed voices as `assistant tts voices`.
-42. selecting VI/EN in Quick is reflected by `assistant tts show` and the next matching spoken response.
+42. selecting VI/EN in Quick is reflected by `assistant tts show` and the next matching spoken response when both use the normal/default application-data path.
 43. **Tự động theo locale** clears the explicit language preference and restores fallback behavior.
 44. malformed/stale TTS settings surface an error/warning without crashing Quick or silently rewriting invalid configuration.
 
