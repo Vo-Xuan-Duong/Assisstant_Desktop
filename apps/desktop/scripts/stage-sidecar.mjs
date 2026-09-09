@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+} from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -142,19 +148,67 @@ const ttsDestination = path.join(
 );
 copyFileSync(ttsSource, ttsDestination);
 
-const runtimeDir = path.join(targetDir, requestedProfile);
-const runtimeDlls = readdirSync(runtimeDir).filter((name) =>
-  /^(sherpa-onnx|onnxruntime).*\.dll$/i.test(name),
-);
-if (!runtimeDlls.some((name) => name === "sherpa-onnx-c-api.dll")) {
-  throw new Error("Sherpa runtime DLLs were not produced by the native build.");
+function lockedPackageVersion(packageName) {
+  const lockfile = readFileSync(path.join(repoRoot, "Cargo.lock"), "utf8");
+  for (const block of lockfile.split(/\r?\n\[\[package\]\]\r?\n/)) {
+    const name = block.match(/^name = "([^"]+)"$/m)?.[1];
+    if (name !== packageName) continue;
+    const version = block.match(/^version = "([^"]+)"$/m)?.[1];
+    if (!version) {
+      throw new Error(`Cargo.lock entry for ${packageName} has no version.`);
+    }
+    return version;
+  }
+  throw new Error(`Cargo.lock does not contain package ${packageName}.`);
 }
-for (const name of runtimeDlls) {
-  copyFileSync(path.join(runtimeDir, name), path.join(binariesDir, name));
+
+function collectSherpaRuntimeDlls(directory) {
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory)
+    .filter((name) => /^(sherpa-onnx|onnxruntime).*\.dll$/i.test(name))
+    .map((name) => path.join(directory, name));
+}
+
+function hasRequiredSherpaRuntime(files) {
+  const names = new Set(files.map((file) => path.basename(file).toLowerCase()));
+  return names.has("sherpa-onnx-c-api.dll") && names.has("onnxruntime.dll");
+}
+
+const runtimeDir = path.join(targetDir, requestedProfile);
+let runtimeDllSources = collectSherpaRuntimeDlls(runtimeDir);
+if (!hasRequiredSherpaRuntime(runtimeDllSources)) {
+  const sherpaVersion = lockedPackageVersion("sherpa-onnx-sys");
+  const archivePlatform =
+    targetTriple === "x86_64-pc-windows-msvc"
+      ? "win-x64"
+      : targetTriple === "aarch64-pc-windows-msvc"
+        ? "win-arm64"
+        : null;
+  if (!archivePlatform) {
+    throw new Error(`Unsupported Windows target for Sherpa runtime staging: ${targetTriple}`);
+  }
+  const prebuiltLibDir = path.join(
+    targetDir,
+    "sherpa-onnx-prebuilt",
+    `sherpa-onnx-v${sherpaVersion}-${archivePlatform}-shared-MT-Release-lib`,
+    "lib",
+  );
+  runtimeDllSources = collectSherpaRuntimeDlls(prebuiltLibDir);
+}
+if (!hasRequiredSherpaRuntime(runtimeDllSources)) {
+  throw new Error(
+    "Sherpa runtime DLLs were not produced by the native build or its locked prebuilt cache.",
+  );
+}
+
+const testDepsDir = path.join(runtimeDir, "deps");
+mkdirSync(testDepsDir, { recursive: true });
+for (const runtimeDllSource of runtimeDllSources) {
+  const name = path.basename(runtimeDllSource);
+  copyFileSync(runtimeDllSource, path.join(binariesDir, name));
   // Test executables live in deps. Windows searches the executable directory
   // before System32, which can contain an incompatible onnxruntime.dll.
-  mkdirSync(path.join(runtimeDir, "deps"), { recursive: true });
-  copyFileSync(path.join(runtimeDir, name), path.join(runtimeDir, "deps", name));
+  copyFileSync(runtimeDllSource, path.join(testDepsDir, name));
 }
 
 console.log(`Staged assistant-mcp sidecar: ${destination}`);
@@ -163,3 +217,6 @@ console.log(`Staged assistant core management CLI: ${assistantCoreDestination}`)
 console.log(`Staged satellite management helper: ${satelliteDestination}`);
 console.log(`Staged remote satellite helper: ${satelliteRemoteDestination}`);
 console.log(`Staged TTS management helper: ${ttsDestination}`);
+console.log(
+  `Staged Sherpa runtime DLLs: ${runtimeDllSources.map((file) => path.basename(file)).join(", ")}`,
+);
