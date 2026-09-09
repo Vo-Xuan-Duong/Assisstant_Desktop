@@ -248,7 +248,9 @@ one exact SAPI voice currently installed for the Windows user
 
 The frontend sends only `vi`/`en` plus either `null` or an exact currently-enumerated SAPI token ID. Arbitrary paths, registry commands, and shell arguments are not accepted.
 
-The UI, `assistant tts ...` CLI, and `WindowsSapiTts` runtime all use the same `tts.conf`. Changes therefore apply from the next spoken response without restarting the desktop runtime.
+The desktop UI and `WindowsSapiTts` runtime use the same `default_voice_preferences_path()` resolver. The `assistant tts ...` CLI's normal/default resolver points to the same `%LOCALAPPDATA%\com.voduong.assisstantdesktop\settings\tts.conf`, while its explicit `--data-dir` option can intentionally target another application-data root. UI changes apply from the next spoken response without restarting the desktop runtime.
+
+SAPI enumeration/update work is moved to blocking worker threads so COM initialization does not inherit the Tauri UI apartment.
 
 See [`docs/PHASE32A_TTS_SETTINGS_UI.md`](docs/PHASE32A_TTS_SETTINGS_UI.md).
 
@@ -408,7 +410,7 @@ assistant tts clear en
 assistant tts clear all
 ```
 
-Or use **Quick -> Voice -> TTS** for the same VI/EN preference file.
+Or use **Quick -> Voice -> TTS** for the same normal/default VI/EN preference file.
 
 Preferences use stable SAPI token IDs and apply on the next utterance. Explicitly selected voices are preserved; automatic mode uses locale-aware SAPI fallback.
 
@@ -572,7 +574,7 @@ Do not equate source completion with device verification. Validate locally:
 - Quick **Voice -> Satellite** shows correct non-secret state and never exposes the pairing token;
 - malformed satellite state is surfaced as warnings rather than crashing Quick;
 - Quick **Voice -> TTS** lists the same installed voices as `assistant tts voices`;
-- Quick VI/EN selections are reflected by `assistant tts show` and apply on the next matching response;
+- Quick VI/EN selections are reflected by `assistant tts show` and apply on the next matching response when both use the normal/default application-data path;
 - TTS **Tự động theo locale** clears the explicit preference and restores fallback;
 - malformed/stale TTS settings surface an error/warning without crashing Quick;
 - firewall rule is exactly Private + LocalSubnet;
