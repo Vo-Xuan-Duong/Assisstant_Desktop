@@ -63,7 +63,7 @@ Implemented in source:
 - bounded SpeechRecognizer fallback/retry;
 - read-only Android STT engine/confidence/alternatives/latency diagnostics;
 - completed desktop-turn timing through AI/tool/TTS completion;
-- desktop Quick **Voice** panel with Satellite diagnostics, bounded listener/device management, and bounded TTS settings;
+- desktop Quick **Control** panel with Satellite diagnostics/management, bounded TTS settings, and read-only System self-check;
 - `VI`, `EN`, `Auto` response-language propagation;
 - selectable installed Windows SAPI voices for Vietnamese and English through CLI or Quick UI;
 - locale/default SAPI fallback;
@@ -209,9 +209,15 @@ Persistent data is stored under:
 
 The desktop normally hot-reloads satellite settings in about one second.
 
-## Desktop Voice panel
+## Desktop Control panel
 
-The Quick surface includes a compact **Voice** panel with two tabs.
+The Quick surface includes a compact **Control** panel with three tabs:
+
+```text
+Satellite
+TTS
+System
+```
 
 ### Satellite
 
@@ -263,6 +269,22 @@ SAPI enumeration/update work is moved to blocking worker threads so COM initiali
 
 See [`docs/PHASE32A_TTS_SETTINGS_UI.md`](docs/PHASE32A_TTS_SETTINGS_UI.md).
 
+### System
+
+Phase 33A reuses the existing `assistant_readiness` report as a read-only local self-check dashboard. It shows:
+
+```text
+overall runtime readiness
+ready / optional / blocking counts
+all runtime checks sorted with blocking items first
+check detail
+relevant local path already present in the readiness DTO
+```
+
+The System tab does not execute tests, processes, shell commands, network probes, microphone capture, Firewall changes or Tailscale changes. It is intentionally a **runtime self-check**, not a release certification. Hardware/device behavior still belongs to the local acceptance matrix.
+
+See [`docs/PHASE33A_LOCAL_VALIDATION_DASHBOARD.md`](docs/PHASE33A_LOCAL_VALIDATION_DASHBOARD.md).
+
 ## Pairing and device trust
 
 Authentication is layered:
@@ -287,7 +309,7 @@ assistant satellite revoke-device <device-id>
 assistant satellite allow-device <device-id>
 ```
 
-The same per-device allow/revoke operation is available through **Quick -> Voice -> Satellite**. Pairing-token management remains CLI-only.
+The same per-device allow/revoke operation is available through **Quick -> Control -> Satellite**. Pairing-token management remains CLI-only.
 
 ## Credential protection
 
@@ -421,7 +443,7 @@ assistant tts clear en
 assistant tts clear all
 ```
 
-Or use **Quick -> Voice -> TTS** for the same normal/default VI/EN preference file.
+Or use **Quick -> Control -> TTS** for the same normal/default VI/EN preference file.
 
 Preferences use stable SAPI token IDs and apply on the next utterance. Explicitly selected voices are preserved; automatic mode uses locale-aware SAPI fallback.
 
@@ -476,7 +498,7 @@ Therefore the project does **not** keep SpeechRecognizer active while desktop TT
 
 A future full-duplex implementation needs a real reference-aware media topology, for example:
 
-- route capture and response playback through one endpoint that owns the echo reference;
+- route capture and response playback through one endpoint that owns an echo reference;
 - stream synchronized desktop TTS reference audio to the phone and process raw capture before recognition;
 - use one WebRTC-like media session with AEC/NS/AGC before STT.
 
@@ -581,13 +603,16 @@ Do not equate source completion with device verification. Validate locally:
 - QR scans on the target phone;
 - Android Keystore migration/persistence works;
 - Windows DPAPI round-trip and restart work;
-- Quick **Voice -> Satellite** shows correct non-secret state and never exposes the pairing token;
+- Quick **Control -> System** renders the existing readiness checks and sorts Blocking -> Optional -> Ready;
+- System summary counts match the rendered readiness rows and **Làm mới** reflects real local configuration changes;
+- System self-check exposes no pairing credential and is not treated as release certification;
+- Quick **Control -> Satellite** shows correct non-secret state and never exposes the pairing token;
 - Quick listener disable/enable preserves normal persisted pairing and applies after hot reload;
 - listener control is locked/rejected under environment-token override and managed Tailscale mode;
 - Quick per-device revoke closes/rejects only that device while other trusted devices remain usable;
 - Quick allow restores that device without rotating the shared pairing token;
 - malformed satellite state is surfaced as warnings rather than crashing Quick;
-- Quick **Voice -> TTS** lists the same installed voices as `assistant tts voices`;
+- Quick **Control -> TTS** lists the same installed voices as `assistant tts voices`;
 - Quick VI/EN selections are reflected by `assistant tts show` and apply on the next matching response when both use the normal/default application-data path;
 - TTS **Tự động theo locale** clears the explicit preference and restores fallback;
 - malformed/stale TTS settings surface an error/warning without crashing Quick;
@@ -614,9 +639,10 @@ Per project policy, repository implementation does not run remote GitHub Actions
 
 ## Remaining roadmap
 
-The core functional MVP is implemented in source through **Phase 31A**, with Phase 26B/28B/29B/32A/32B product polish also implemented. Remaining work is primarily local acceptance and optional higher-complexity capabilities:
+The core functional MVP is implemented in source through **Phase 31A**, with Phase 26B/28B/29B/32A/32B/33A product polish also implemented. Remaining work is primarily local acceptance and optional higher-complexity capabilities:
 
 - local Windows/Android/Tailscale acceptance testing and release packaging validation;
+- optional persisted manual acceptance tracking if a release checklist inside the app proves useful;
 - optional notification/headset/hardware activation surfaces if they prove useful;
 - optional domain/app-name normalization after real recognition data demonstrates a concrete need;
 - **Phase 31B** automatic acoustic full duplex only after a real AEC/reference-audio architecture exists.
@@ -639,3 +665,4 @@ Authoritative roadmap: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
 - [`docs/PHASE31_CONVERSATIONAL_VOICE.md`](docs/PHASE31_CONVERSATIONAL_VOICE.md)
 - [`docs/PHASE32A_TTS_SETTINGS_UI.md`](docs/PHASE32A_TTS_SETTINGS_UI.md)
 - [`docs/PHASE32B_SATELLITE_MANAGEMENT_UI.md`](docs/PHASE32B_SATELLITE_MANAGEMENT_UI.md)
+- [`docs/PHASE33A_LOCAL_VALIDATION_DASHBOARD.md`](docs/PHASE33A_LOCAL_VALIDATION_DASHBOARD.md)

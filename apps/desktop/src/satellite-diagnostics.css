@@ -322,13 +322,125 @@
   line-height: 1.35;
 }
 
+.system-readiness-panel {
+  min-height: 92px;
+}
+
+.system-readiness-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.system-readiness-summary > div {
+  min-width: 0;
+  border-radius: 9px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.system-readiness-summary span {
+  display: block;
+  color: rgba(255, 255, 255, 0.46);
+  font-size: 9px;
+}
+
+.system-readiness-summary strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+.system-readiness-note {
+  margin: 7px 1px 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.system-readiness-list {
+  margin: 7px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.system-readiness-row {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 8px;
+  padding: 7px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.system-readiness-status {
+  align-self: start;
+  border-radius: 999px;
+  padding: 3px 5px;
+  text-align: center;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.system-readiness-row > div {
+  min-width: 0;
+}
+
+.system-readiness-row strong {
+  display: block;
+  font-size: 10px;
+}
+
+.system-readiness-row p {
+  margin: 2px 0 0;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.system-readiness-row code {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readiness-ready {
+  color: rgba(177, 241, 203, 0.94);
+}
+
+.system-readiness-status.readiness-ready {
+  background: rgba(88, 196, 128, 0.12);
+}
+
+.readiness-optional_missing {
+  color: rgba(255, 226, 151, 0.95);
+}
+
+.system-readiness-status.readiness-optional_missing {
+  background: rgba(218, 165, 32, 0.12);
+}
+
+.readiness-blocking {
+  color: rgba(255, 181, 181, 0.95);
+}
+
+.system-readiness-status.readiness-blocking {
+  background: rgba(220, 70, 70, 0.13);
+}
+
 @media (max-width: 620px) {
   .satellite-diagnostics {
     right: 76px;
   }
 
   .satellite-diagnostics-grid,
-  .tts-settings-list {
+  .tts-settings-list,
+  .system-readiness-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

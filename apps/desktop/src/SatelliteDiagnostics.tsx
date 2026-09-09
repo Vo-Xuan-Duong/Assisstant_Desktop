@@ -9,6 +9,8 @@ import {
 } from "./api";
 import { setQuickAutoDismissHold } from "./quickLifecycle";
 import type {
+  ReadinessCheck,
+  ReadinessLevel,
   RuntimeReadinessReport,
   SapiVoiceInfo,
   SatelliteDeviceSnapshot,
@@ -18,7 +20,7 @@ import type {
 import "./satellite-diagnostics.css";
 
 const PANEL_HOLD_SOURCE = "satellite-diagnostics";
-type VoicePanelTab = "satellite" | "tts";
+type VoicePanelTab = "satellite" | "tts" | "system";
 
 function formatUnix(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "Chưa có";
@@ -26,6 +28,89 @@ function formatUnix(value: number): string {
     dateStyle: "short",
     timeStyle: "short",
   }).format(new Date(value * 1000));
+}
+
+function readinessLabel(level: ReadinessLevel): string {
+  switch (level) {
+    case "ready":
+      return "Ready";
+    case "optional_missing":
+      return "Optional";
+    case "blocking":
+      return "Blocking";
+  }
+}
+
+function readinessRank(level: ReadinessLevel): number {
+  switch (level) {
+    case "blocking":
+      return 0;
+    case "optional_missing":
+      return 1;
+    case "ready":
+      return 2;
+  }
+}
+
+function SystemReadinessPanel({
+  report,
+  loading,
+  error,
+}: {
+  report: RuntimeReadinessReport | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (error) {
+    return <p className="satellite-diagnostics-error">Không thể đọc self-check: {error}</p>;
+  }
+  if (!report) {
+    return loading
+      ? <p className="satellite-device-empty">Đang kiểm tra runtime…</p>
+      : <p className="satellite-device-empty">Chưa có dữ liệu self-check.</p>;
+  }
+
+  const checks = [...report.checks].sort((left, right) => {
+    const rank = readinessRank(left.level) - readinessRank(right.level);
+    return rank !== 0 ? rank : left.label.localeCompare(right.label);
+  });
+  const ready = checks.filter((check) => check.level === "ready").length;
+  const optional = checks.filter((check) => check.level === "optional_missing").length;
+  const blocking = checks.filter((check) => check.level === "blocking").length;
+
+  return (
+    <div className="system-readiness-panel" role="tabpanel">
+      <div className="system-readiness-summary">
+        <div>
+          <span>Overall</span>
+          <strong className={`readiness-${report.overall}`}>{readinessLabel(report.overall)}</strong>
+        </div>
+        <div><span>Ready</span><strong>{ready}</strong></div>
+        <div><span>Optional</span><strong>{optional}</strong></div>
+        <div><span>Blocking</span><strong>{blocking}</strong></div>
+      </div>
+
+      <p className="system-readiness-note">
+        Self-check này chỉ phản ánh trạng thái runtime có thể kiểm tra tự động. QR, microphone,
+        Android, Tailscale qua mobile data và installer vẫn phải được xác nhận trên thiết bị thật.
+      </p>
+
+      <ul className="system-readiness-list">
+        {checks.map((check: ReadinessCheck) => (
+          <li className="system-readiness-row" key={check.id}>
+            <span className={`system-readiness-status readiness-${check.level}`}>
+              {readinessLabel(check.level)}
+            </span>
+            <div>
+              <strong>{check.label}</strong>
+              <p>{check.detail}</p>
+              {check.path ? <code title={check.path}>{check.path}</code> : null}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 interface DeviceRowProps {
@@ -253,6 +338,11 @@ export default function SatelliteDiagnostics() {
     : satellite?.remote_managed
       ? satellite.enabled ? "Enabled (managed)" : "Disabled (managed)"
       : satellite?.enabled ? "Enabled" : "Disabled";
+  const panelTitle = tab === "satellite"
+    ? "Trạng thái kết nối"
+    : tab === "tts"
+      ? "Giọng đọc Windows"
+      : "Kiểm tra hệ thống";
 
   return (
     <div className={`satellite-diagnostics ${open ? "is-open" : ""}`}>
@@ -261,18 +351,18 @@ export default function SatelliteDiagnostics() {
           type="button"
           className="satellite-diagnostics-trigger"
           onClick={show}
-          title="Voice, TTS và Android Satellite"
-          aria-label="Mở cài đặt Voice và Android Satellite"
+          title="Assistant controls và local validation"
+          aria-label="Mở Assistant controls và local validation"
         >
-          <span aria-hidden="true">🔊</span>
-          <span>Voice</span>
+          <span aria-hidden="true">⚙</span>
+          <span>Control</span>
         </button>
       ) : (
-        <section className="satellite-diagnostics-panel" aria-label="Voice and Satellite settings">
+        <section className="satellite-diagnostics-panel" aria-label="Assistant control panel">
           <header>
             <div>
-              <p>VOICE &amp; SATELLITE</p>
-              <h2>{tab === "satellite" ? "Trạng thái kết nối" : "Giọng đọc Windows"}</h2>
+              <p>ASSISTANT CONTROL</p>
+              <h2>{panelTitle}</h2>
             </div>
             <div className="satellite-diagnostics-actions">
               <button type="button" disabled={refreshing || ttsSaving || Boolean(satelliteSaving)} onClick={refresh}>
@@ -282,7 +372,7 @@ export default function SatelliteDiagnostics() {
             </div>
           </header>
 
-          <div className="satellite-diagnostics-tabs" role="tablist" aria-label="Voice settings sections">
+          <div className="satellite-diagnostics-tabs" role="tablist" aria-label="Assistant control sections">
             <button
               type="button"
               role="tab"
@@ -300,6 +390,15 @@ export default function SatelliteDiagnostics() {
               onClick={() => setTab("tts")}
             >
               TTS
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "system"}
+              className={tab === "system" ? "is-active" : ""}
+              onClick={() => setTab("system")}
+            >
+              System
             </button>
           </div>
 
@@ -390,7 +489,7 @@ export default function SatelliteDiagnostics() {
                 <p className="satellite-device-empty">Đang đọc trạng thái…</p>
               ) : null}
             </>
-          ) : (
+          ) : tab === "tts" ? (
             <div className="tts-settings-panel" role="tabpanel">
               {ttsError ? <p className="satellite-diagnostics-error">Không thể cập nhật TTS: {ttsError}</p> : null}
               {tts ? (
@@ -421,6 +520,8 @@ export default function SatelliteDiagnostics() {
                 <p className="satellite-device-empty">Đang đọc Windows SAPI voices…</p>
               ) : null}
             </div>
+          ) : (
+            <SystemReadinessPanel report={report} loading={loading} error={error} />
           )}
         </section>
       )}
