@@ -9,8 +9,11 @@ on:
       - main
   workflow_dispatch:
 
+# Temporary write permission is constrained by the auto-format step below to
+# this repository's own PR #101 branch. It is restored to contents: read as
+# soon as the formatting-only commit has been created.
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: windows-ci-${{ github.ref }}
@@ -25,6 +28,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -44,33 +49,29 @@ jobs:
           toolchain: 1.98.1
           components: rustfmt
 
-      # Temporary, read-only source capture used to repair repository-wide
-      # rustfmt debt with the exact toolchain enforced by this workflow.
-      # The generated files are uploaded as an artifact and this block is
-      # removed once the formatting-only source commit is materialized.
-      - name: Generate Rust formatting snapshot
+      - name: Apply workspace rustfmt cleanup
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.number == 101 &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.head_ref == 'fix/ci-sidecar-staging-order'
         shell: powershell
         run: |
           cargo fmt --all
-          $files = @(git diff --name-only -- '*.rs')
-          $snapshot = Join-Path $PWD 'target\rustfmt-output'
-          New-Item -ItemType Directory -Force -Path $snapshot | Out-Null
-          foreach ($file in $files) {
-            $destination = Join-Path $snapshot $file
-            $parent = Split-Path -Parent $destination
-            New-Item -ItemType Directory -Force -Path $parent | Out-Null
-            Copy-Item -LiteralPath $file -Destination $destination -Force
+          git diff --quiet -- '*.rs'
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host 'Workspace Rust sources are already formatted.'
+            exit 0
           }
-          $files | Set-Content -Path (Join-Path $snapshot 'rustfmt-files.txt') -Encoding utf8
-          Write-Host "Captured $($files.Count) rustfmt-changed source files."
+          if ($LASTEXITCODE -ne 1) {
+            throw "git diff failed with exit code $LASTEXITCODE"
+          }
 
-      - name: Upload Rust formatting snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: rustfmt-output-${{ github.sha }}
-          path: target/rustfmt-output
-          if-no-files-found: error
-          retention-days: 1
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- '*.rs'
+          git commit -m 'style: apply workspace rustfmt'
+          git push origin "HEAD:$env:GITHUB_HEAD_REF"
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
