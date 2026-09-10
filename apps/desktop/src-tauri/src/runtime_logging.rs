@@ -20,9 +20,7 @@ const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 /// not a useful operational surface. This writer keeps stderr for local/dev use
 /// and mirrors the same formatted records into a bounded per-user log file.
 pub fn init() {
-    let filter = || {
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
-    };
+    let filter = || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let persistent = resolve_log_path().and_then(RotatingLogWriter::open);
     match persistent {
@@ -99,15 +97,15 @@ struct RotatingLogWriter {
 impl RotatingLogWriter {
     fn open(path: PathBuf) -> io::Result<Self> {
         let parent = path.parent().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "runtime log path has no parent")
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "runtime log path has no parent",
+            )
         })?;
         fs::create_dir_all(parent)?;
 
         let backup = parent.join(LOG_BACKUP_NAME);
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
         let bytes = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
         let mut state = RotatingLogState {
             file: Some(file),
@@ -212,7 +210,10 @@ impl RotatingLogState {
             .create(true)
             .append(true)
             .open(&self.path)?;
-        self.bytes = file.metadata().map(|metadata| metadata.len()).unwrap_or(self.bytes);
+        self.bytes = file
+            .metadata()
+            .map(|metadata| metadata.len())
+            .unwrap_or(self.bytes);
         self.file = Some(file);
         Ok(())
     }

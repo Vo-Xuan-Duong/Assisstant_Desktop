@@ -1,4 +1,7 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -111,16 +114,21 @@ fn validated_persisted_token(raw: Option<&str>) -> Result<String, String> {
         let token = unprotect_text_for_current_user(raw)
             .map_err(|error| format!("cannot decrypt the satellite pairing token: {error}"))?;
         if token.trim().len() < 16 {
-            return Err("Satellite pairing token is invalid; pair the device again from the CLI.".into());
+            return Err(
+                "Satellite pairing token is invalid; pair the device again from the CLI.".into(),
+            );
         }
         return Ok(raw.to_owned());
     }
 
     if raw.len() < 16 {
-        return Err("Satellite pairing token is invalid; pair the device again from the CLI.".into());
+        return Err(
+            "Satellite pairing token is invalid; pair the device again from the CLI.".into(),
+        );
     }
-    protect_text_for_current_user(raw)
-        .map_err(|error| format!("cannot migrate satellite pairing token to Windows DPAPI: {error}"))
+    protect_text_for_current_user(raw).map_err(|error| {
+        format!("cannot migrate satellite pairing token to Windows DPAPI: {error}")
+    })
 }
 
 fn set_device_revoked(app_data: &Path, raw_id: &str, revoked: bool) -> Result<(), String> {
@@ -208,8 +216,7 @@ fn replace_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::create_dir_all(parent)
         .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     let temp: PathBuf = path.with_extension(format!("tmp-{}", std::process::id()));
-    fs::write(&temp, bytes)
-        .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
+    fs::write(&temp, bytes).map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
     if path.exists() {
         fs::remove_file(path).map_err(|error| {
             let _ = fs::remove_file(&temp);

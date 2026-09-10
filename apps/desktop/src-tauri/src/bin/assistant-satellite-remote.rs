@@ -145,7 +145,10 @@ fn tailscale_show(settings_path: &Path, remote_state_path: &Path) -> CliResult<(
     println!("  managed        {}", remote.is_some());
     println!("  backend_bind   {}", settings.bind);
     println!("  paired         {}", settings.token.is_some());
-    println!("  tailscale_ip   {}", ip.as_deref().unwrap_or("unavailable"));
+    println!(
+        "  tailscale_ip   {}",
+        ip.as_deref().unwrap_or("unavailable")
+    );
     if let Some(state) = &remote {
         println!("  serve_port     {}", state.port);
         println!("  restore_bind   {}", state.previous_bind);
@@ -161,10 +164,14 @@ fn tailscale_show(settings_path: &Path, remote_state_path: &Path) -> CliResult<(
     }
 
     if remote.is_some() && !is_loopback_bind(&settings.bind) {
-        println!("warning: managed Tailscale remote state exists but the satellite backend is no longer bound to loopback");
+        println!(
+            "warning: managed Tailscale remote state exists but the satellite backend is no longer bound to loopback"
+        );
     }
     if env::var_os(TOKEN_ENV).is_some() {
-        println!("warning: {TOKEN_ENV} is set; persisted remote bind changes are not authoritative while that override is active");
+        println!(
+            "warning: {TOKEN_ENV} is set; persisted remote bind changes are not authoritative while that override is active"
+        );
     }
     Ok(())
 }
@@ -285,7 +292,9 @@ fn tailscale_pair(
     println!();
     println!("Scan this QR on the Android phone after Tailscale is connected to the same tailnet:");
     println!("{rendered}");
-    println!("Scanning imports the endpoint/token only; Android still requires the normal explicit Connect action.");
+    println!(
+        "Scanning imports the endpoint/token only; Android still requires the normal explicit Connect action."
+    );
     println!("Do not share the QR outside the trusted pairing flow.");
     Ok(())
 }
@@ -310,7 +319,9 @@ fn tailscale_disable(settings_path: &Path, remote_state_path: &Path) -> CliResul
         save_settings(settings_path, &settings)?;
         println!("Restored satellite bind to {}.", settings.bind);
         if user_disabled_listener {
-            println!("Satellite was explicitly disabled while remote mode was active; keeping it disabled.");
+            println!(
+                "Satellite was explicitly disabled while remote mode was active; keeping it disabled."
+            );
         } else {
             println!("Restored satellite enabled state to {}.", settings.enabled);
         }
@@ -327,7 +338,9 @@ fn tailscale_disable(settings_path: &Path, remote_state_path: &Path) -> CliResul
             remote_state_path.display()
         )
     })?;
-    println!("Tailscale remote satellite disabled. No Funnel/public exposure was configured by this integration.");
+    println!(
+        "Tailscale remote satellite disabled. No Funnel/public exposure was configured by this integration."
+    );
     Ok(())
 }
 
@@ -341,7 +354,10 @@ fn tailscale_ipv4() -> CliResult<String> {
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
-        .ok_or_else(|| "Tailscale did not report an IPv4 address; make sure this PC is connected to a tailnet".to_owned())?;
+        .ok_or_else(|| {
+            "Tailscale did not report an IPv4 address; make sure this PC is connected to a tailnet"
+                .to_owned()
+        })?;
     let ip = address
         .parse::<Ipv4Addr>()
         .map_err(|_| format!("Tailscale returned an invalid IPv4 address: {address}"))?;
@@ -455,9 +471,9 @@ fn validate_pairing_host(value: &str) -> CliResult<String> {
             "pairing host must contain 1..={MAX_PAIRING_HOST_CHARS} characters"
         ));
     }
-    let ip = value
-        .parse::<Ipv4Addr>()
-        .map_err(|_| "Tailscale remote pairing currently requires the PC's Tailscale IPv4 address".to_owned())?;
+    let ip = value.parse::<Ipv4Addr>().map_err(|_| {
+        "Tailscale remote pairing currently requires the PC's Tailscale IPv4 address".to_owned()
+    })?;
     if ip.is_unspecified() || ip.is_loopback() {
         return Err("pairing host cannot be loopback/unspecified".into());
     }
@@ -507,8 +523,8 @@ fn load_settings(path: &Path) -> CliResult<SatelliteSettings> {
     if !path.exists() {
         return Ok(SatelliteSettings::default());
     }
-    let bytes = fs::read(path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let mut settings: SatelliteSettings = serde_json::from_slice(&bytes)
         .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
     if let Some(value) = settings.token.take() {
@@ -558,8 +574,8 @@ fn load_remote_state(path: &Path) -> CliResult<Option<TailscaleRemoteState>> {
     if !path.exists() {
         return Ok(None);
     }
-    let bytes = fs::read(path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let state: TailscaleRemoteState = serde_json::from_slice(&bytes)
         .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
     if state.version != REMOTE_STATE_VERSION {
@@ -570,7 +586,10 @@ fn load_remote_state(path: &Path) -> CliResult<Option<TailscaleRemoteState>> {
         ));
     }
     if state.port == 0 {
-        return Err(format!("invalid Tailscale remote port in {}", path.display()));
+        return Err(format!(
+            "invalid Tailscale remote port in {}",
+            path.display()
+        ));
     }
     Ok(Some(state))
 }
@@ -588,14 +607,12 @@ fn save_json_atomic<T: Serialize>(path: &Path, value: &T, label: &str) -> CliRes
     let temp = path.with_extension(format!("json.tmp-{}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|error| format!("cannot serialize {label}: {error}"))?;
-    fs::write(&temp, bytes)
-        .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
+    fs::write(&temp, bytes).map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
     if path.exists() {
         fs::remove_file(path)
             .map_err(|error| format!("cannot replace {}: {error}", path.display()))?;
     }
-    fs::rename(&temp, path)
-        .map_err(|error| format!("cannot promote {}: {error}", path.display()))
+    fs::rename(&temp, path).map_err(|error| format!("cannot promote {}: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -613,9 +630,6 @@ mod tests {
     fn tailscale_pairing_accepts_cgnat_ipv4() {
         let token = "0123456789abcdef".repeat(4);
         let uri = pairing_uri("100.101.102.103", 8765, &token).unwrap();
-        assert_eq!(
-            uri,
-            format!("assd://p?h=100.101.102.103&p=8765&t={token}")
-        );
+        assert_eq!(uri, format!("assd://p?h=100.101.102.103&p=8765&t={token}"));
     }
 }

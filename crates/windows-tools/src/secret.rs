@@ -5,8 +5,7 @@ use windows::{
     Win32::{
         Foundation::{HLOCAL, LocalFree},
         Security::Cryptography::{
-            CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData,
-            CryptUnprotectData,
+            CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
         },
     },
     core::PCWSTR,

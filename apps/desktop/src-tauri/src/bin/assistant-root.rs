@@ -28,15 +28,15 @@ fn run() -> Result<ExitStatus, String> {
 
     if command.is_some_and(|value| value == OsStr::new("satellite")) {
         let index = command_index.expect("satellite command index must exist");
-        if args.get(index + 1).is_some_and(|value| value == OsStr::new("remote")) {
+        if args
+            .get(index + 1)
+            .is_some_and(|value| value == OsStr::new("remote"))
+        {
             let mut forwarded = args;
             forwarded.remove(index + 1);
             forwarded.remove(index);
             return run_cli(
-                resolve_cli(
-                    SATELLITE_REMOTE_OVERRIDE_ENV,
-                    "assistant-satellite-remote",
-                )?,
+                resolve_cli(SATELLITE_REMOTE_OVERRIDE_ENV, "assistant-satellite-remote")?,
                 &forwarded,
                 "satellite remote CLI",
             );
@@ -64,7 +64,9 @@ fn run() -> Result<ExitStatus, String> {
     let status = run_cli(core, &args, "management CLI")?;
     if status.success()
         && command.is_some_and(|value| {
-            value == OsStr::new("help") || value == OsStr::new("--help") || value == OsStr::new("-h")
+            value == OsStr::new("help")
+                || value == OsStr::new("--help")
+                || value == OsStr::new("-h")
         })
     {
         print_extension_help_hint();
@@ -150,9 +152,12 @@ fn resolve_cli(override_env: &str, stem: &str) -> Result<PathBuf, String> {
 
     let current = env::current_exe()
         .map_err(|error| format!("cannot resolve assistant executable path: {error}"))?;
-    let directory = current
-        .parent()
-        .ok_or_else(|| format!("assistant executable has no parent directory: {}", current.display()))?;
+    let directory = current.parent().ok_or_else(|| {
+        format!(
+            "assistant executable has no parent directory: {}",
+            current.display()
+        )
+    })?;
 
     for candidate in exact_candidates(directory, &current, stem) {
         if candidate.is_file() && !same_path(&candidate, &current) {
@@ -162,7 +167,12 @@ fn resolve_cli(override_env: &str, stem: &str) -> Result<PathBuf, String> {
 
     let prefix = format!("{stem}-");
     let mut matches = fs::read_dir(directory)
-        .map_err(|error| format!("cannot inspect {} for `{stem}` sidecar: {error}", directory.display()))?
+        .map_err(|error| {
+            format!(
+                "cannot inspect {} for `{stem}` sidecar: {error}",
+                directory.display()
+            )
+        })?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| {

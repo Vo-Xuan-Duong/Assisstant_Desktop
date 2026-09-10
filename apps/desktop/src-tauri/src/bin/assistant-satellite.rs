@@ -96,12 +96,8 @@ fn run() -> CliResult<()> {
         "revoke" => revoke(&settings_path),
         "bind" => set_bind(&settings_path, &args[1..]),
         "devices" => list_devices(&devices_path, &revoked_dir),
-        "revoke-device" => {
-            set_device_revoked(&devices_path, &revoked_dir, &args[1..], true)
-        }
-        "allow-device" => {
-            set_device_revoked(&devices_path, &revoked_dir, &args[1..], false)
-        }
+        "revoke-device" => set_device_revoked(&devices_path, &revoked_dir, &args[1..], true),
+        "allow-device" => set_device_revoked(&devices_path, &revoked_dir, &args[1..], false),
         "firewall" => firewall_command(&settings_path, &args[1..]),
         other => Err(format!("unknown satellite command `{other}`")),
     }
@@ -180,9 +176,7 @@ fn doctor(path: &Path, devices_path: &Path, revoked_dir: &Path) -> CliResult<()>
     let trusted = registry
         .devices
         .iter()
-        .filter(|device| {
-            !device.revoked && !revocation_marker(revoked_dir, &device.id).is_file()
-        })
+        .filter(|device| !device.revoked && !revocation_marker(revoked_dir, &device.id).is_file())
         .count();
     let revoked = registry.devices.len().saturating_sub(trusted);
     let (host, port) = split_bind(&settings.bind)?;
@@ -200,16 +194,24 @@ fn doctor(path: &Path, devices_path: &Path, revoked_dir: &Path) -> CliResult<()>
     println!("  wildcard_listener    {wildcard}");
 
     if storage == "legacy-plaintext" {
-        println!("  warning              pairing token is still plaintext; run `assistant satellite enable` (or another mutating command) to migrate it to current-user DPAPI");
+        println!(
+            "  warning              pairing token is still plaintext; run `assistant satellite enable` (or another mutating command) to migrate it to current-user DPAPI"
+        );
     }
     if wildcard {
-        println!("  network              listener can accept traffic on multiple interfaces; keep the firewall Private+LocalSubnet-only");
+        println!(
+            "  network              listener can accept traffic on multiple interfaces; keep the firewall Private+LocalSubnet-only"
+        );
     }
     if env::var_os("ASSISTANT_VOICE_SATELLITE_TOKEN").is_some() {
-        println!("  override             ASSISTANT_VOICE_SATELLITE_TOKEN is set and takes precedence over persisted pairing");
+        println!(
+            "  override             ASSISTANT_VOICE_SATELLITE_TOKEN is set and takes precedence over persisted pairing"
+        );
     }
     println!("  firewall             inspect with `assistant satellite firewall show`");
-    println!("  remote_access        use a private overlay such as Tailscale; never port-forward this listener directly to the Internet");
+    println!(
+        "  remote_access        use a private overlay such as Tailscale; never port-forward this listener directly to the Internet"
+    );
     Ok(())
 }
 
@@ -277,20 +279,30 @@ fn pair(path: &Path, args: &[String]) -> CliResult<()> {
     println!("  token  {token}");
     println!("  store  Windows DPAPI (current user)");
     println!("  file   {}", path.display());
-    println!("If Assisstant Desktop is running, the listener should reload this pairing automatically within about one second.");
+    println!(
+        "If Assisstant Desktop is running, the listener should reload this pairing automatically within about one second."
+    );
 
     if let Some((host, port, uri, qr)) = qr_output {
         println!("  phone  ws://{host}:{port}");
         println!("  uri    {uri}");
         println!();
-        println!("Scan this QR with the Android camera/QR scanner. Windows Terminal or another ANSI-capable terminal is recommended:");
+        println!(
+            "Scan this QR with the Android camera/QR scanner. Windows Terminal or another ANSI-capable terminal is recommended:"
+        );
         println!("{qr}");
-        println!("Scanning only imports the pairing data; the Android app still requires an explicit Connect tap.");
+        println!(
+            "Scanning only imports the pairing data; the Android app still requires an explicit Connect tap."
+        );
     } else {
-        println!("Enter the PC ws:// address and token in the Android app, or use `assistant-satellite pair --qr` next time.");
+        println!(
+            "Enter the PC ws:// address and token in the Android app, or use `assistant-satellite pair --qr` next time."
+        );
     }
 
-    println!("Treat the token and QR as local credentials; do not publish them in logs/screenshots.");
+    println!(
+        "Treat the token and QR as local credentials; do not publish them in logs/screenshots."
+    );
     Ok(())
 }
 
@@ -347,7 +359,10 @@ fn validate_pairing_host(value: &str) -> CliResult<String> {
 
     if let Ok(ip) = value.parse::<Ipv4Addr>() {
         if ip.is_unspecified() || ip.is_loopback() {
-            return Err("pairing host must be reachable from the Android phone, not loopback/unspecified".into());
+            return Err(
+                "pairing host must be reachable from the Android phone, not loopback/unspecified"
+                    .into(),
+            );
         }
         return Ok(ip.to_string());
     }
@@ -374,8 +389,15 @@ fn pairing_uri(host: &str, port: u16, token: &str) -> CliResult<String> {
 
 fn set_enabled(path: &Path, enabled: bool) -> CliResult<()> {
     let mut settings = load_settings(path)?;
-    if enabled && settings.token.as_deref().is_none_or(|token| token.len() < 16) {
-        return Err("satellite has no valid pairing token; run `assistant-satellite pair` first".into());
+    if enabled
+        && settings
+            .token
+            .as_deref()
+            .is_none_or(|token| token.len() < 16)
+    {
+        return Err(
+            "satellite has no valid pairing token; run `assistant-satellite pair` first".into(),
+        );
     }
     settings.enabled = enabled;
     save_settings(path, &settings)?;
@@ -391,7 +413,9 @@ fn revoke(path: &Path) -> CliResult<()> {
     settings.enabled = false;
     settings.token = None;
     save_settings(path, &settings)?;
-    println!("Satellite pairing revoked. A running desktop normally closes the active satellite session within about one second.");
+    println!(
+        "Satellite pairing revoked. A running desktop normally closes the active satellite session within about one second."
+    );
     Ok(())
 }
 
@@ -453,7 +477,9 @@ fn firewall_command(settings_path: &Path, args: &[String]) -> CliResult<()> {
                 "remoteip=localsubnet",
                 "enable=yes",
             ])?;
-            println!("Installed Windows Firewall rule for TCP {port}, Private profile, LocalSubnet only.");
+            println!(
+                "Installed Windows Firewall rule for TCP {port}, Private profile, LocalSubnet only."
+            );
             Ok(())
         }
         "remove" => {
@@ -572,7 +598,9 @@ fn set_device_revoked(
         device.revoked = true;
         save_device_registry(path, &registry)?;
         println!("Revoked satellite device `{device_id}` ({name}).");
-        println!("An active connection from this device should be closed by the desktop within about one second.");
+        println!(
+            "An active connection from this device should be closed by the desktop within about one second."
+        );
     } else {
         if marker.exists() {
             fs::remove_file(&marker)
@@ -685,8 +713,8 @@ fn load_settings(path: &Path) -> CliResult<SatelliteSettings> {
     if !path.exists() {
         return Ok(SatelliteSettings::default());
     }
-    let bytes = fs::read(path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let mut settings: SatelliteSettings = serde_json::from_slice(&bytes)
         .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
     if let Some(value) = settings.token.take() {
@@ -712,8 +740,8 @@ fn credential_storage(path: &Path) -> CliResult<&'static str> {
     if !path.exists() {
         return Ok("not-configured");
     }
-    let bytes = fs::read(path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let settings: SatelliteSettings = serde_json::from_slice(&bytes)
         .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
     match settings.token.as_deref().map(str::trim) {
@@ -731,7 +759,12 @@ fn save_settings(path: &Path, settings: &SatelliteSettings) -> CliResult<()> {
         .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
 
     let mut persisted = settings.clone();
-    if let Some(token) = settings.token.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(token) = settings
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         persisted.token = Some(protect_text_for_current_user(token).map_err(|error| {
             format!("cannot protect satellite pairing token with Windows DPAPI: {error}")
         })?);
@@ -742,8 +775,7 @@ fn save_settings(path: &Path, settings: &SatelliteSettings) -> CliResult<()> {
     let temp = path.with_extension(format!("json.tmp-{}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(&persisted)
         .map_err(|error| format!("cannot serialize satellite settings: {error}"))?;
-    fs::write(&temp, bytes)
-        .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
+    fs::write(&temp, bytes).map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
     if path.exists() {
         fs::remove_file(path)
             .map_err(|error| format!("cannot replace {}: {error}", path.display()))?;
@@ -757,8 +789,8 @@ fn load_device_registry(path: &Path) -> CliResult<DeviceRegistry> {
     if !path.exists() {
         return Ok(DeviceRegistry::default());
     }
-    let bytes = fs::read(path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     serde_json::from_slice(&bytes)
         .map_err(|error| format!("cannot parse {}: {error}", path.display()))
 }
@@ -773,8 +805,7 @@ fn save_device_registry(path: &Path, registry: &DeviceRegistry) -> CliResult<()>
     let temp = path.with_extension(format!("json.tmp-{}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(registry)
         .map_err(|error| format!("cannot serialize satellite device registry: {error}"))?;
-    fs::write(&temp, bytes)
-        .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
+    fs::write(&temp, bytes).map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
     if path.exists() {
         fs::remove_file(path)
             .map_err(|error| format!("cannot replace {}: {error}", path.display()))?;
@@ -792,10 +823,7 @@ mod tests {
     fn pairing_uri_is_compact_and_query_safe() {
         let token = "0123456789abcdef".repeat(4);
         let uri = pairing_uri("192.168.1.20", 8765, &token).expect("valid pairing URI");
-        assert_eq!(
-            uri,
-            format!("assd://p?h=192.168.1.20&p=8765&t={token}")
-        );
+        assert_eq!(uri, format!("assd://p?h=192.168.1.20&p=8765&t={token}"));
     }
 
     #[test]

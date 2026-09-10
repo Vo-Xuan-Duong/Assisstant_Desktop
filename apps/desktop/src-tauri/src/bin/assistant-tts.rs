@@ -30,7 +30,10 @@ fn run() -> CliResult<()> {
             Ok(())
         }
         Some("voices") => command_voices(args.iter().skip(1).any(|arg| arg == "--json")),
-        Some("show") => command_show(&settings_path, args.iter().skip(1).any(|arg| arg == "--json")),
+        Some("show") => command_show(
+            &settings_path,
+            args.iter().skip(1).any(|arg| arg == "--json"),
+        ),
         Some("set") => command_set(&settings_path, &args[1..]),
         Some("clear") => command_clear(&settings_path, &args[1..]),
         Some(other) => Err(format!(
@@ -124,11 +127,17 @@ fn command_show(settings_path: &PathBuf, output_json: bool) -> CliResult<()> {
     println!("  Settings   {}", settings_path.display());
     println!(
         "  Vietnamese {}",
-        preferences.vietnamese_voice_id.as_deref().unwrap_or("automatic")
+        preferences
+            .vietnamese_voice_id
+            .as_deref()
+            .unwrap_or("automatic")
     );
     println!(
         "  English    {}",
-        preferences.english_voice_id.as_deref().unwrap_or("automatic")
+        preferences
+            .english_voice_id
+            .as_deref()
+            .unwrap_or("automatic")
     );
     Ok(())
 }
@@ -140,7 +149,8 @@ fn command_set(settings_path: &PathBuf, args: &[String]) -> CliResult<()> {
     let language = normalize_language(&args[0])?;
     let installed = voices()?;
     let voice = resolve_voice(&installed, &args[1])?;
-    let mut preferences = load_voice_preferences(settings_path).map_err(|error| error.to_string())?;
+    let mut preferences =
+        load_voice_preferences(settings_path).map_err(|error| error.to_string())?;
 
     match language {
         "vi" => preferences.vietnamese_voice_id = Some(voice.id.clone()),
@@ -170,7 +180,8 @@ fn command_clear(settings_path: &PathBuf, args: &[String]) -> CliResult<()> {
     if args.len() != 1 {
         return Err("usage: assistant tts clear <vi|en|all>".into());
     }
-    let mut preferences = load_voice_preferences(settings_path).map_err(|error| error.to_string())?;
+    let mut preferences =
+        load_voice_preferences(settings_path).map_err(|error| error.to_string())?;
     match args[0].to_ascii_lowercase().as_str() {
         "vi" | "vietnamese" => preferences.vietnamese_voice_id = None,
         "en" | "english" => preferences.english_voice_id = None,
@@ -178,7 +189,9 @@ fn command_clear(settings_path: &PathBuf, args: &[String]) -> CliResult<()> {
         _ => return Err("language must be `vi`, `en`, or `all`".into()),
     }
     save_voice_preferences(settings_path, &preferences).map_err(|error| error.to_string())?;
-    println!("TTS voice preference cleared; locale/default fallback applies on the next utterance.");
+    println!(
+        "TTS voice preference cleared; locale/default fallback applies on the next utterance."
+    );
     Ok(())
 }
 

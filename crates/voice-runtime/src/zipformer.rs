@@ -31,11 +31,12 @@ pub struct ZipformerConfig {
 impl ZipformerConfig {
     pub fn new(model_path_or_dir: impl Into<PathBuf>) -> Self {
         let path = model_path_or_dir.into();
-        let model_dir = if path.file_name().and_then(|name| name.to_str()) == Some(ZIPFORMER_ENCODER_FILE) {
-            path.parent().map(Path::to_path_buf).unwrap_or(path)
-        } else {
-            path
-        };
+        let model_dir =
+            if path.file_name().and_then(|name| name.to_str()) == Some(ZIPFORMER_ENCODER_FILE) {
+                path.parent().map(Path::to_path_buf).unwrap_or(path)
+            } else {
+                path
+            };
         Self {
             model_dir,
             language: Some("vi".into()),
@@ -125,7 +126,9 @@ impl ZipformerRecognizer {
         native.decoding_method = Some("greedy_search".into());
 
         let recognizer = OfflineRecognizer::create(&native).ok_or_else(|| {
-            SttError::Backend("sherpa-onnx could not create the Vietnamese Zipformer recognizer".into())
+            SttError::Backend(
+                "sherpa-onnx could not create the Vietnamese Zipformer recognizer".into(),
+            )
         })?;
 
         Ok(Self {

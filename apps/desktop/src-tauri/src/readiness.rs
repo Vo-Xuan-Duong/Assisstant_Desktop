@@ -348,7 +348,8 @@ fn satellite_snapshot(state: &DesktopState) -> SatelliteReadinessSnapshot {
     let mut warnings = Vec::new();
 
     let settings = read_json_or_default::<SatelliteSettingsFile>(&settings_path, &mut warnings);
-    let registry = read_json_or_default::<SatelliteDeviceRegistryFile>(&devices_path, &mut warnings);
+    let registry =
+        read_json_or_default::<SatelliteDeviceRegistryFile>(&devices_path, &mut warnings);
     let remote = read_optional_json::<SatelliteRemoteStateFile>(&remote_path, &mut warnings);
 
     let mut devices = registry
@@ -448,7 +449,8 @@ fn satellite_check(state: &DesktopState, snapshot: &SatelliteReadinessSnapshot) 
         "lan/local"
     };
     let detail = if !snapshot.enabled {
-        "Android Voice Satellite đang tắt; desktop text/Quick và fallback voice vẫn hoạt động.".to_owned()
+        "Android Voice Satellite đang tắt; desktop text/Quick và fallback voice vẫn hoạt động."
+            .to_owned()
     } else if !snapshot.paired {
         "Android Voice Satellite đang bật nhưng chưa có pairing token hợp lệ.".to_owned()
     } else if let Some(warning) = snapshot.warnings.first() {

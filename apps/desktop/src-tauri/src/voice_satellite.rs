@@ -454,9 +454,12 @@ fn config_from_app(app: &AppHandle) -> Result<Option<SatelliteConfig>, String> {
 }
 
 async fn run_server(app: AppHandle, config: SatelliteConfig) -> Result<(), String> {
-    let listener = TcpListener::bind(&config.bind)
-        .await
-        .map_err(|error| format!("cannot bind voice satellite server to {}: {error}", config.bind))?;
+    let listener = TcpListener::bind(&config.bind).await.map_err(|error| {
+        format!(
+            "cannot bind voice satellite server to {}: {error}",
+            config.bind
+        )
+    })?;
     let mut connections = tokio::task::JoinSet::new();
 
     info!(
@@ -649,11 +652,8 @@ async fn authenticate(
         return Err("voice satellite pairing token was rejected".to_owned());
     }
 
-    let (device_id, device_name) = satellite_devices::record_authenticated_device(
-        app,
-        &device_id,
-        device_name.as_deref(),
-    )?;
+    let (device_id, device_name) =
+        satellite_devices::record_authenticated_device(app, &device_id, device_name.as_deref())?;
     info!(
         device_id = %device_id,
         device = %device_name,
@@ -739,7 +739,11 @@ async fn handle_command(
                 socket,
                 &ServerMessage::Error {
                     id: Some(id),
-                    code: if cancelled { "cancelled" } else { "assistant_error" },
+                    code: if cancelled {
+                        "cancelled"
+                    } else {
+                        "assistant_error"
+                    },
                     message: &error,
                 },
             )
@@ -824,7 +828,10 @@ async fn complete_satellite_prompt(
         .lock()
         .map(|guard| *guard)
         .unwrap_or(None);
-    let context = state.context.collect_for_window(prompt, source_window).await;
+    let context = state
+        .context
+        .collect_for_window(prompt, source_window)
+        .await;
     for warning in &context.warnings {
         warn!(%warning, "desktop context source was unavailable for satellite command");
     }
@@ -861,11 +868,7 @@ fn response_policy(language: ResponseLanguage) -> &'static str {
     }
 }
 
-async fn speak_response(
-    app: &AppHandle,
-    text: &str,
-    language: TtsLanguage,
-) -> Result<(), String> {
+async fn speak_response(app: &AppHandle, text: &str, language: TtsLanguage) -> Result<(), String> {
     let state = app.state::<DesktopState>();
     let wake = app.state::<WakeService>();
 
@@ -904,7 +907,10 @@ async fn cancel_active_interaction(app: &AppHandle) -> bool {
             let generation = voice_runtime::cancellation::cancel_current();
             match state.core.cancel_listening().await {
                 Ok(()) => {
-                    debug!(generation, "cancelled listening from Android satellite control channel");
+                    debug!(
+                        generation,
+                        "cancelled listening from Android satellite control channel"
+                    );
                     true
                 }
                 Err(error) => {
@@ -937,7 +943,10 @@ async fn cancel_active_interaction(app: &AppHandle) -> bool {
             }
         }
         phase => {
-            debug!(?phase, "ignored Android satellite cancel in non-cancellable phase");
+            debug!(
+                ?phase,
+                "ignored Android satellite cancel in non-cancellable phase"
+            );
             false
         }
     }
@@ -1022,11 +1031,9 @@ fn sha1_digest(input: &[u8]) -> [u8; 20] {
             ]);
         }
         for index in 16..80 {
-            words[index] = (words[index - 3]
-                ^ words[index - 8]
-                ^ words[index - 14]
-                ^ words[index - 16])
-                .rotate_left(1);
+            words[index] =
+                (words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16])
+                    .rotate_left(1);
         }
 
         let mut a = h0;
@@ -1070,8 +1077,7 @@ fn sha1_digest(input: &[u8]) -> [u8; 20] {
 }
 
 fn base64_encode(input: &[u8]) -> String {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
         let a = chunk[0];
@@ -1119,8 +1125,14 @@ mod tests {
 
     #[test]
     fn pairing_token_comparison_rejects_mismatch() {
-        assert!(constant_time_equal(b"0123456789abcdef", b"0123456789abcdef"));
-        assert!(!constant_time_equal(b"0123456789abcdef", b"0123456789abcdeg"));
+        assert!(constant_time_equal(
+            b"0123456789abcdef",
+            b"0123456789abcdef"
+        ));
+        assert!(!constant_time_equal(
+            b"0123456789abcdef",
+            b"0123456789abcdeg"
+        ));
         assert!(!constant_time_equal(b"short", b"different-length"));
     }
 
@@ -1148,7 +1160,9 @@ mod tests {
 
     #[test]
     fn cancellation_error_detection_accepts_both_spellings() {
-        assert!(is_cancellation_error("text-to-speech request was cancelled"));
+        assert!(is_cancellation_error(
+            "text-to-speech request was cancelled"
+        ));
         assert!(is_cancellation_error("request canceled"));
         assert!(!is_cancellation_error("device unavailable"));
     }

@@ -210,11 +210,7 @@ fn draw_alignment(
     }
 }
 
-fn draw_format_bits(
-    modules: &mut [Vec<bool>],
-    function: &mut [Vec<bool>],
-    mask: u8,
-) {
+fn draw_format_bits(modules: &mut [Vec<bool>], function: &mut [Vec<bool>], mask: u8) {
     // Error correction level L uses format value 01.
     let data = (1_u16 << 3) | u16::from(mask);
     let mut remainder = data;
@@ -234,22 +230,10 @@ fn draw_format_bits(
     }
 
     for index in 0..=7 {
-        set_function(
-            modules,
-            function,
-            SIZE - 1 - index,
-            8,
-            bit(bits, index),
-        );
+        set_function(modules, function, SIZE - 1 - index, 8, bit(bits, index));
     }
     for index in 8..=14 {
-        set_function(
-            modules,
-            function,
-            8,
-            SIZE - 15 + index,
-            bit(bits, index),
-        );
+        set_function(modules, function, 8, SIZE - 15 + index, bit(bits, index));
     }
 
     // Fixed dark module.
@@ -297,10 +281,7 @@ fn place_codewords(
                 if function[y][x] || bit_index >= total_bits {
                     continue;
                 }
-                modules[y][x] = ((codewords[bit_index >> 3]
-                    >> (7 - (bit_index & 7)))
-                    & 1)
-                    != 0;
+                modules[y][x] = ((codewords[bit_index >> 3] >> (7 - (bit_index & 7))) & 1) != 0;
                 bit_index += 1;
             }
         }
