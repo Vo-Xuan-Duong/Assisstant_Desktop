@@ -44,6 +44,34 @@ jobs:
           toolchain: 1.98.1
           components: rustfmt
 
+      # Temporary, read-only source capture used to repair repository-wide
+      # rustfmt debt with the exact toolchain enforced by this workflow.
+      # The generated files are uploaded as an artifact and this block is
+      # removed once the formatting-only source commit is materialized.
+      - name: Generate Rust formatting snapshot
+        shell: powershell
+        run: |
+          cargo fmt --all
+          $files = @(git diff --name-only -- '*.rs')
+          $snapshot = Join-Path $PWD 'target\rustfmt-output'
+          New-Item -ItemType Directory -Force -Path $snapshot | Out-Null
+          foreach ($file in $files) {
+            $destination = Join-Path $snapshot $file
+            $parent = Split-Path -Parent $destination
+            New-Item -ItemType Directory -Force -Path $parent | Out-Null
+            Copy-Item -LiteralPath $file -Destination $destination -Force
+          }
+          $files | Set-Content -Path (Join-Path $snapshot 'rustfmt-files.txt') -Encoding utf8
+          Write-Host "Captured $($files.Count) rustfmt-changed source files."
+
+      - name: Upload Rust formatting snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustfmt-output-${{ github.sha }}
+          path: target/rustfmt-output
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
