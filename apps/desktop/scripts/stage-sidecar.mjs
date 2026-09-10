@@ -1,11 +1,17 @@
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
+  createWriteStream,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
 } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -188,6 +194,47 @@ function hasRequiredSherpaRuntime(files) {
   return names.has("sherpa-onnx-c-api.dll") && names.has("onnxruntime.dll");
 }
 
+function resolveRepoRelativePath(value) {
+  return path.isAbsolute(value) ? value : path.resolve(repoRoot, value);
+}
+
+function copyFileUnlessSame(sourcePath, destinationPath) {
+  // This script is Windows-only, so normalize case when comparing paths.
+  if (path.resolve(sourcePath).toLowerCase() === path.resolve(destinationPath).toLowerCase()) {
+    return;
+  }
+  copyFileSync(sourcePath, destinationPath);
+}
+
+async function downloadFile(url, destinationPath) {
+  const temporaryPath = `${destinationPath}.${process.pid}.part`;
+  rmSync(temporaryPath, { force: true });
+
+  console.log(`Downloading locked Sherpa runtime: ${url}`);
+  try {
+    const response = await fetch(url, {
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Assisstant-Desktop-sidecar-stager",
+      },
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+
+    await pipeline(Readable.fromWeb(response.body), createWriteStream(temporaryPath));
+    if (!existsSync(temporaryPath) || statSync(temporaryPath).size === 0) {
+      throw new Error("Downloaded Sherpa runtime archive is empty.");
+    }
+
+    rmSync(destinationPath, { force: true });
+    renameSync(temporaryPath, destinationPath);
+  } catch (error) {
+    rmSync(temporaryPath, { force: true });
+    throw new Error(`Unable to download Sherpa runtime from ${url}.`, { cause: error });
+  }
+}
+
 const runtimeDir = path.join(targetDir, requestedProfile);
 const sherpaVersion = lockedPackageVersion("sherpa-onnx-sys");
 const archivePlatform =
@@ -199,43 +246,126 @@ const archivePlatform =
 if (!archivePlatform) {
   throw new Error(`Unsupported Windows target for Sherpa runtime staging: ${targetTriple}`);
 }
-const lockedPrebuiltDir = path.join(
-  targetDir,
-  "sherpa-onnx-prebuilt",
-  `sherpa-onnx-v${sherpaVersion}-${archivePlatform}-shared-MT-Release-lib`,
-);
+
+const archiveName =
+  `sherpa-onnx-v${sherpaVersion}-${archivePlatform}-shared-MT-Release-lib.tar.bz2`;
+const archiveStem = archiveName.slice(0, -".tar.bz2".length);
+const prebuiltRoot = path.join(targetDir, "sherpa-onnx-prebuilt");
+const lockedPrebuiltDir = path.join(prebuiltRoot, archiveStem);
+const sherpaReleaseUrl =
+  `https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaVersion}/${archiveName}`;
+const configuredSherpaLibDir = process.env.SHERPA_ONNX_LIB_DIR?.trim();
+const configuredSherpaArchiveDir = process.env.SHERPA_ONNX_ARCHIVE_DIR?.trim();
+
+function runtimeFromExplicitLibOverride() {
+  if (!configuredSherpaLibDir) return null;
+
+  const configuredPath = resolveRepoRelativePath(configuredSherpaLibDir);
+  const files = collectSherpaRuntimeDllsRecursive(configuredPath);
+  if (!hasRequiredSherpaRuntime(files)) {
+    throw new Error(
+      `SHERPA_ONNX_LIB_DIR is set to ${configuredPath}, but it does not contain ` +
+        "sherpa-onnx-c-api.dll and onnxruntime.dll. Refusing to mix runtime sources.",
+    );
+  }
+  return files;
+}
 
 function resolveSherpaRuntimeDlls() {
+  const explicitFiles = runtimeFromExplicitLibOverride();
+  if (explicitFiles) return explicitFiles;
+
+  // Prefer the exact locked crate cache before the profile directory so a
+  // stale DLL from a previous Sherpa version cannot win when both exist.
+  const prebuiltDlls = collectSherpaRuntimeDllsRecursive(lockedPrebuiltDir);
+  if (hasRequiredSherpaRuntime(prebuiltDlls)) return prebuiltDlls;
+
+  // Keep local/offline development working when sherpa-onnx-sys already
+  // copied the correct runtime beside the freshly built executable.
   const profileDlls = collectSherpaRuntimeDlls(runtimeDir);
   if (hasRequiredSherpaRuntime(profileDlls)) return profileDlls;
 
-  // sherpa-onnx-sys owns this cache and may place runtime DLLs below different
-  // subdirectories across crate releases. Stay scoped to the exact locked
-  // version/platform cache instead of assuming a specific `lib`/`bin` layout.
-  return collectSherpaRuntimeDllsRecursive(lockedPrebuiltDir);
+  return [];
+}
+
+function extractSherpaArchive(archivePath) {
+  mkdirSync(prebuiltRoot, { recursive: true });
+  rmSync(lockedPrebuiltDir, { recursive: true, force: true });
+
+  try {
+    execFileSync("tar", ["-xjf", archivePath, "-C", prebuiltRoot], {
+      cwd: repoRoot,
+      stdio: "inherit",
+    });
+  } catch (error) {
+    rmSync(lockedPrebuiltDir, { recursive: true, force: true });
+    throw new Error(
+      `Failed to extract Sherpa runtime archive ${archivePath}. ` +
+        "Ensure the Windows tar executable supports bzip2 archives.",
+      { cause: error },
+    );
+  }
+
+  const files = collectSherpaRuntimeDllsRecursive(lockedPrebuiltDir);
+  if (!hasRequiredSherpaRuntime(files)) {
+    rmSync(lockedPrebuiltDir, { recursive: true, force: true });
+    throw new Error(
+      `Sherpa runtime archive ${archivePath} did not contain the required Windows DLLs ` +
+        `under ${archiveStem}.`,
+    );
+  }
+  return files;
+}
+
+async function materializeLockedSherpaRuntime() {
+  if (configuredSherpaArchiveDir) {
+    const archiveDirectory = resolveRepoRelativePath(configuredSherpaArchiveDir);
+    const archivePath = path.join(archiveDirectory, archiveName);
+    if (!existsSync(archivePath)) {
+      throw new Error(
+        `SHERPA_ONNX_ARCHIVE_DIR is set to ${archiveDirectory}, but ${archiveName} is missing. ` +
+          "Refusing to fall back to the network while an explicit archive source is configured.",
+      );
+    }
+    return extractSherpaArchive(archivePath);
+  }
+
+  mkdirSync(prebuiltRoot, { recursive: true });
+  const cachedArchivePath = path.join(prebuiltRoot, archiveName);
+
+  if (existsSync(cachedArchivePath)) {
+    try {
+      return extractSherpaArchive(cachedArchivePath);
+    } catch (error) {
+      console.warn(
+        `Cached Sherpa archive is unusable; replacing only ${archiveName}: ${error.message}`,
+      );
+      rmSync(cachedArchivePath, { force: true });
+    }
+  }
+
+  await downloadFile(sherpaReleaseUrl, cachedArchivePath);
+  try {
+    return extractSherpaArchive(cachedArchivePath);
+  } catch (error) {
+    // Do not leave a bad archive in cache and repeatedly fail future builds.
+    rmSync(cachedArchivePath, { force: true });
+    throw error;
+  }
 }
 
 let runtimeDllSources = resolveSherpaRuntimeDlls();
 if (!hasRequiredSherpaRuntime(runtimeDllSources)) {
-  // Rust CI caches may restore the compiled sherpa-onnx-sys artifact without
-  // restoring its downloaded runtime DLLs. In that case Cargo considers the
-  // build script fresh and never materializes the DLLs on the new runner.
-  // Clean only this dependency and rebuild voice-runtime so the locked crate's
-  // build script runs again. This fallback is skipped whenever DLLs exist.
+  // Cargo's compiled-artifact cache and sherpa-onnx-sys' downloaded runtime
+  // cache have different lifecycles. Materialize the exact release asset from
+  // Cargo.lock instead of forcing Cargo to rebuild an otherwise fresh crate.
   console.log(
-    `Sherpa runtime DLLs are absent; rematerializing sherpa-onnx-sys ${sherpaVersion} runtime.`,
+    `Sherpa runtime DLLs are absent; materializing locked runtime ${sherpaVersion} for ${archivePlatform}.`,
   );
-  execFileSync("cargo", ["clean", "-p", "sherpa-onnx-sys"], {
-    cwd: repoRoot,
-    stdio: "inherit",
-  });
-  execFileSync("cargo", voiceArgs, { cwd: repoRoot, stdio: "inherit" });
-  runtimeDllSources = resolveSherpaRuntimeDlls();
+  runtimeDllSources = await materializeLockedSherpaRuntime();
 }
 if (!hasRequiredSherpaRuntime(runtimeDllSources)) {
-  throw new Error(
-    "Sherpa runtime DLLs were not produced after rematerializing the locked sherpa-onnx-sys build.",
-  );
+  throw new Error(`Unable to resolve required Sherpa runtime DLLs for ${sherpaVersion}.`);
 }
 
 const uniqueRuntimeDlls = new Map();
@@ -247,13 +377,16 @@ for (const runtimeDllSource of runtimeDllSources) {
 }
 
 const testDepsDir = path.join(runtimeDir, "deps");
+mkdirSync(runtimeDir, { recursive: true });
 mkdirSync(testDepsDir, { recursive: true });
 for (const runtimeDllSource of uniqueRuntimeDlls.values()) {
   const name = path.basename(runtimeDllSource);
-  copyFileSync(runtimeDllSource, path.join(binariesDir, name));
+  copyFileUnlessSame(runtimeDllSource, path.join(binariesDir, name));
+  // Tauri's dev executable is emitted into the profile directory.
+  copyFileUnlessSame(runtimeDllSource, path.join(runtimeDir, name));
   // Test executables live in deps. Windows searches the executable directory
   // before System32, which can contain an incompatible onnxruntime.dll.
-  copyFileSync(runtimeDllSource, path.join(testDepsDir, name));
+  copyFileUnlessSame(runtimeDllSource, path.join(testDepsDir, name));
 }
 
 console.log(`Staged assistant-mcp sidecar: ${destination}`);
