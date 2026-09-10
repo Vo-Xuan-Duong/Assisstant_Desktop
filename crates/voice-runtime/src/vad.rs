@@ -277,7 +277,10 @@ mod tests {
 
         // Below the 0.012 start threshold, but above the 0.0075 continuation
         // threshold: this should reset the silence run instead of ending speech.
-        assert!(matches!(vad.push(chunk(0.009, 700)), VadEvent::SpeechContinues));
+        assert!(matches!(
+            vad.push(chunk(0.009, 700)),
+            VadEvent::SpeechContinues
+        ));
 
         let event = vad.push(chunk(0.0, 700));
         assert!(matches!(event, VadEvent::UtteranceReady(_)));
@@ -288,10 +291,15 @@ mod tests {
         let mut vad = UtteranceSegmenter::default();
         assert!(matches!(vad.push(chunk(0.1, 150)), VadEvent::SpeechStarted));
 
-        let first = vad.active_snapshot().expect("speech should have an active snapshot");
+        let first = vad
+            .active_snapshot()
+            .expect("speech should have an active snapshot");
         assert!(first.duration_seconds() >= 0.12);
 
-        assert!(matches!(vad.push(chunk(0.1, 200)), VadEvent::SpeechContinues));
+        assert!(matches!(
+            vad.push(chunk(0.1, 200)),
+            VadEvent::SpeechContinues
+        ));
         let second = vad.active_snapshot().expect("speech should remain active");
         assert!(second.samples.len() > first.samples.len());
 

@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 default-run = "assisstant-desktop"
+autobins = false
 
 [features]
 default = []
@@ -30,12 +31,20 @@ name = "assistant"
 path = "src/bin/assistant.rs"
 
 [[bin]]
+name = "assistant-root"
+path = "src/bin/assistant-root.rs"
+
+[[bin]]
 name = "assistant-satellite"
 path = "src/bin/assistant-satellite.rs"
 
 [[bin]]
 name = "assistant-satellite-remote"
 path = "src/bin/assistant-satellite-remote.rs"
+
+[[bin]]
+name = "assistant-tts"
+path = "src/bin/assistant-tts.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.6", features = [] }

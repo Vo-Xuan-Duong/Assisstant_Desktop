@@ -406,11 +406,7 @@ impl TextToSpeech for WindowsSapiTts {
         WindowsSapiTts::speak_with_language(self, text, TtsLanguage::Auto).await
     }
 
-    async fn speak_with_language(
-        &self,
-        text: &str,
-        language: TtsLanguage,
-    ) -> Result<(), TtsError> {
+    async fn speak_with_language(&self, text: &str, language: TtsLanguage) -> Result<(), TtsError> {
         WindowsSapiTts::speak_with_language(self, text, language).await
     }
 
@@ -584,8 +580,8 @@ fn find_voice_token(
         .map_err(|error| TtsError::Backend(error.to_string()))?
         .max(0);
     for index in 0..count {
-        let token = unsafe { voices.Item(index) }
-            .map_err(|error| TtsError::Backend(error.to_string()))?;
+        let token =
+            unsafe { voices.Item(index) }.map_err(|error| TtsError::Backend(error.to_string()))?;
         let id = unsafe { token.Id() }
             .map_err(|error| TtsError::Backend(error.to_string()))?
             .to_string();
@@ -614,9 +610,7 @@ fn run_speech(
         language_markup(&text, language)
     };
     let text = BSTR::from(markup);
-    let speak_flags = SpeechVoiceSpeakFlags(
-        SVSFlagsAsync.0 | SVSFPurgeBeforeSpeak.0 | SVSFIsXML.0,
-    );
+    let speak_flags = SpeechVoiceSpeakFlags(SVSFlagsAsync.0 | SVSFPurgeBeforeSpeak.0 | SVSFIsXML.0);
     if let Err(error) = unsafe { voice.Speak(&text, speak_flags) } {
         let _ = result.send(Err(TtsError::Backend(error.to_string())));
         return true;
@@ -760,12 +754,13 @@ mod tests {
 
     #[test]
     fn language_markup_uses_windows_sapi_langids() {
-        assert!(language_markup("Xin chào", TtsLanguage::Vietnamese).starts_with(
-            "<lang langid=\"42A\">"
-        ));
-        assert!(language_markup("Hello", TtsLanguage::English).starts_with(
-            "<lang langid=\"409\">"
-        ));
+        assert!(
+            language_markup("Xin chào", TtsLanguage::Vietnamese)
+                .starts_with("<lang langid=\"42A\">")
+        );
+        assert!(
+            language_markup("Hello", TtsLanguage::English).starts_with("<lang langid=\"409\">")
+        );
     }
 
     #[test]
@@ -782,8 +777,14 @@ mod tests {
             vietnamese_voice_id: Some("vi-id".into()),
             english_voice_id: Some("en-id".into()),
         };
-        assert_eq!(preferences.preferred_id(TtsLanguage::Vietnamese), Some("vi-id"));
-        assert_eq!(preferences.preferred_id(TtsLanguage::English), Some("en-id"));
+        assert_eq!(
+            preferences.preferred_id(TtsLanguage::Vietnamese),
+            Some("vi-id")
+        );
+        assert_eq!(
+            preferences.preferred_id(TtsLanguage::English),
+            Some("en-id")
+        );
         assert_eq!(preferences.preferred_id(TtsLanguage::Auto), None);
     }
 

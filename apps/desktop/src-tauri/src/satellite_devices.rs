@@ -64,7 +64,9 @@ pub fn record_authenticated_device(
         });
     }
 
-    registry.devices.sort_by(|left, right| left.id.cmp(&right.id));
+    registry
+        .devices
+        .sort_by(|left, right| left.id.cmp(&right.id));
     save_registry(&path, &registry)?;
     Ok((id, name))
 }
@@ -118,7 +120,11 @@ fn normalize_device_id(raw: &str) -> Result<String, String> {
 
 fn normalize_device_name(raw: Option<&str>) -> String {
     let name = raw.unwrap_or("Android device").trim();
-    let name = if name.is_empty() { "Android device" } else { name };
+    let name = if name.is_empty() {
+        "Android device"
+    } else {
+        name
+    };
     let sanitized = name
         .chars()
         .filter(|ch| !ch.is_control())
@@ -161,17 +167,19 @@ fn load_registry(path: &Path) -> Result<DeviceRegistry, String> {
 }
 
 fn save_registry(path: &Path, registry: &DeviceRegistry) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("satellite device registry path has no parent: {}", path.display()))?;
+    let parent = path.parent().ok_or_else(|| {
+        format!(
+            "satellite device registry path has no parent: {}",
+            path.display()
+        )
+    })?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
 
     let bytes = serde_json::to_vec_pretty(registry)
         .map_err(|error| format!("cannot serialize satellite device registry: {error}"))?;
     let temp = path.with_extension(format!("json.tmp-{}", std::process::id()));
-    fs::write(&temp, bytes)
-        .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
+    fs::write(&temp, bytes).map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
     if path.exists() {
         fs::remove_file(path)
             .map_err(|error| format!("cannot replace {}: {error}", path.display()))?;

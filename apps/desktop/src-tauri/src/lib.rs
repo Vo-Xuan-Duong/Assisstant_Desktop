@@ -20,7 +20,10 @@ use antigravity_settings::{
 };
 
 #[cfg(feature = "voice-whisper")]
-use std::{path::PathBuf, time::{Duration, Instant}};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use antigravity_bridge::{AntigravityClient, AntigravityConfig, CliHealth};
 use assistant_common::{AssistantEvent, AssistantState, SessionId, ToolRisk, UserRequest};
@@ -41,9 +44,9 @@ use tauri::{
 #[cfg(windows)]
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tokio::sync::RwLock;
 #[cfg(feature = "voice-whisper")]
 use tokio::sync::{Mutex as AsyncMutex, watch};
-use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use tracing_subscriber::EnvFilter;
 use voice_runtime::tts::{TextToSpeech, WindowsSapiTts};
@@ -274,7 +277,9 @@ async fn complete_prompt(prompt: &str, state: &DesktopState) -> Result<String, S
         debug!(%tool_name, "handling deterministic read-only request locally");
         return state
             .core
-            .handle_local_safe_tool(tool_name, || execute_local_safe_intent(intent, source_window))
+            .handle_local_safe_tool(tool_name, || {
+                execute_local_safe_intent(intent, source_window)
+            })
             .await
             .map_err(|error| error.to_string());
     }
@@ -626,7 +631,8 @@ async fn capture_one_utterance(
                     debug!("discarded short voice utterance");
                 }
                 VadEvent::SpeechStarted | VadEvent::SpeechContinues => {
-                    let due = !emitted_partial || last_partial_at.elapsed() >= PARTIAL_TRANSCRIPT_INTERVAL;
+                    let due = !emitted_partial
+                        || last_partial_at.elapsed() >= PARTIAL_TRANSCRIPT_INTERVAL;
                     if due {
                         if let Some(snapshot) = segmenter.active_snapshot() {
                             if snapshot.duration_seconds() >= PARTIAL_TRANSCRIPT_MIN_SECONDS {

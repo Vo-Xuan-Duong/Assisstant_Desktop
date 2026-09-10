@@ -1,4 +1,8 @@
-use std::{collections::HashSet, path::{Path, PathBuf}, sync::Arc};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use reqwest::{Client, redirect::Policy};
 use serde::Serialize;
@@ -8,9 +12,7 @@ use tokio::{fs, io::AsyncWriteExt, sync::Mutex};
 use uuid::Uuid;
 
 use super::{
-    resource_manifest::{
-        ResourceInstallManifest, ResourcePackageKind, STT_RESOURCE_ID, manifest,
-    },
+    resource_manifest::{ResourceInstallManifest, ResourcePackageKind, STT_RESOURCE_ID, manifest},
     resource_registry::ResourceRegistry,
 };
 
@@ -114,7 +116,8 @@ impl ResourceInstaller {
 
         let result = match manifest.package_kind {
             ResourcePackageKind::MultiFile if manifest.id == STT_RESOURCE_ID => {
-                self.install_zipformer_bundle(app, &manifest, resources).await
+                self.install_zipformer_bundle(app, &manifest, resources)
+                    .await
             }
             ResourcePackageKind::SingleFile => {
                 let expected_sha256 = manifest
@@ -361,7 +364,13 @@ impl ResourceInstaller {
                     "downloading",
                     completed_before.saturating_add(downloaded),
                     manifest.expected_bytes,
-                    format!("Downloading and hashing {}...", destination.file_name().and_then(|v| v.to_str()).unwrap_or("model file")),
+                    format!(
+                        "Downloading and hashing {}...",
+                        destination
+                            .file_name()
+                            .and_then(|v| v.to_str())
+                            .unwrap_or("model file")
+                    ),
                 );
             }
         }
@@ -403,12 +412,12 @@ impl ResourceInstaller {
             .await
             .map_err(|error| format!("tokens download request failed: {error}"))?;
         if !response.status().is_success() {
-            return Err(format!(
-                "tokens server returned HTTP {}",
-                response.status()
-            ));
+            return Err(format!("tokens server returned HTTP {}", response.status()));
         }
-        if response.content_length().is_some_and(|length| length > max_bytes) {
+        if response
+            .content_length()
+            .is_some_and(|length| length > max_bytes)
+        {
             return Err("tokens.txt exceeds the bounded download limit".into());
         }
 

@@ -19,7 +19,9 @@ pub fn generation() -> u64 {
 }
 
 fn signal_change() {
-    let sequence = EVENT_SEQUENCE.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+    let sequence = EVENT_SEQUENCE
+        .fetch_add(1, Ordering::AcqRel)
+        .wrapping_add(1);
     EVENTS.send_replace(sequence);
 }
 

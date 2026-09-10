@@ -12,7 +12,6 @@ use tauri::{AppHandle, Manager};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    task::JoinHandle,
     time::{interval, timeout},
 };
 use tracing::{debug, warn};
@@ -21,8 +20,7 @@ use uuid::Uuid;
 use crate::{
     DesktopState,
     antigravity_settings::{AntigravitySettings, launch_cli_login},
-    autostart_enabled, hide_quick_window, quick_panel,
-    resource_api,
+    autostart_enabled, hide_quick_window, quick_panel, resource_api,
     resource_registry::RuntimeResourceSnapshot,
     runtime_paths::RuntimePaths,
     set_autostart_enabled, show_quick_window,
@@ -87,8 +85,8 @@ impl ManagementResponse {
 pub struct ManagementIpc {
     endpoint_path: PathBuf,
     secret: String,
-    server_task: JoinHandle<()>,
-    settings_task: JoinHandle<()>,
+    server_task: tauri::async_runtime::JoinHandle<()>,
+    settings_task: tauri::async_runtime::JoinHandle<()>,
 }
 
 impl ManagementIpc {
@@ -326,11 +324,9 @@ async fn conversation_reset(app: &AppHandle) -> Result<Value, String> {
     let state = app.state::<DesktopState>();
     state.client.reset().await;
     *state.session_id.write().await = SessionId::new();
-    state
-        .core
-        .recover()
-        .await
-        .map_err(|error| format!("cannot recover Assistant Core after conversation reset: {error}"))?;
+    state.core.recover().await.map_err(|error| {
+        format!("cannot recover Assistant Core after conversation reset: {error}")
+    })?;
     Ok(json!({
         "reset": true,
         "conversation_id": state.client.conversation_id().await,
@@ -532,7 +528,10 @@ async fn apply_wake_file(app: &AppHandle, bytes: Option<&[u8]>) -> Result<(), St
     let status = wake.status();
     if status.enabled != preferences.enabled {
         wake.set_enabled(preferences.enabled).await?;
-        debug!(enabled = preferences.enabled, "hot-reloaded wake enabled state from terminal management");
+        debug!(
+            enabled = preferences.enabled,
+            "hot-reloaded wake enabled state from terminal management"
+        );
     }
     Ok(())
 }
@@ -566,7 +565,9 @@ fn write_endpoint_atomic(path: &Path, endpoint: &ManagementEndpoint) -> Result<(
     if had_existing {
         if let Err(error) = fs::rename(path, &backup) {
             let _ = fs::remove_file(&temporary);
-            return Err(format!("cannot stage previous management endpoint: {error}"));
+            return Err(format!(
+                "cannot stage previous management endpoint: {error}"
+            ));
         }
     }
     if let Err(error) = fs::rename(&temporary, path) {

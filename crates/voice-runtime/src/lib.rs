@@ -1,6 +1,6 @@
+pub mod cancellation;
 #[cfg(feature = "wake-sherpa")]
 pub mod sherpa_wake;
-pub mod cancellation;
 pub mod stt;
 pub mod tts;
 pub mod vad;
@@ -140,10 +140,7 @@ impl MicrophoneStream {
         Self::open_default_inner(config, false)
     }
 
-    fn open_default_inner(
-        config: MicrophoneConfig,
-        cancellable: bool,
-    ) -> Result<Self, VoiceError> {
+    fn open_default_inner(config: MicrophoneConfig, cancellable: bool) -> Result<Self, VoiceError> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()

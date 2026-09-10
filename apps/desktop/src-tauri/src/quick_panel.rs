@@ -237,10 +237,7 @@ fn position_window(
         .min(available_width)
         .max(QUICK_MIN_WIDTH.min(available_width));
 
-    let max_available_height = bounds
-        .height
-        .saturating_sub(QUICK_BOTTOM_MARGIN)
-        .max(1);
+    let max_available_height = bounds.height.saturating_sub(QUICK_BOTTOM_MARGIN).max(1);
     let max_height = QUICK_MAX_HEIGHT.min(max_available_height);
     let min_height = QUICK_DEFAULT_HEIGHT.min(max_height);
     let height = requested_height.max(min_height).min(max_height);

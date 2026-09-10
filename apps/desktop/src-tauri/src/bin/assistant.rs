@@ -264,12 +264,15 @@ impl StatusSnapshot {
         let wake_preferences = load_json_or_default::<WakePreferences>(&paths.wake_settings)?;
         let antigravity_binary = resolve_antigravity_binary();
         let antigravity_available = command_available(&antigravity_binary);
-        let (runtime_ipc, runtime_pid) = match ManagementClient::discover(paths)
-            .and_then(|client| client.call("runtime.ping", Value::Null).map(|_| client.endpoint.pid))
-        {
-            Ok(pid) => (true, Some(pid)),
-            Err(_) => (false, None),
-        };
+        let (runtime_ipc, runtime_pid) =
+            match ManagementClient::discover(paths).and_then(|client| {
+                client
+                    .call("runtime.ping", Value::Null)
+                    .map(|_| client.endpoint.pid)
+            }) {
+                Ok(pid) => (true, Some(pid)),
+                Err(_) => (false, None),
+            };
 
         Ok(Self {
             app_data: paths.root.display().to_string(),
@@ -370,8 +373,10 @@ impl ManagementClient {
             .parse()
             .map_err(|_| "management endpoint host is invalid".to_owned())?;
         let address = SocketAddr::new(ip, self.endpoint.port);
-        let mut stream = TcpStream::connect_timeout(&address, MANAGEMENT_TIMEOUT)
-            .map_err(|error| format!("cannot connect to background runtime at {address}: {error}"))?;
+        let mut stream =
+            TcpStream::connect_timeout(&address, MANAGEMENT_TIMEOUT).map_err(|error| {
+                format!("cannot connect to background runtime at {address}: {error}")
+            })?;
         stream
             .set_read_timeout(Some(response_timeout))
             .map_err(|error| format!("cannot configure management read timeout: {error}"))?;
@@ -441,10 +446,17 @@ fn command_status(paths: &AppPaths, output_json: bool) -> CliResult<()> {
     }
 
     println!("Assisstant Desktop");
-    println!("  Runtime process {}", runtime_name(snapshot.runtime_process));
+    println!(
+        "  Runtime process {}",
+        runtime_name(snapshot.runtime_process)
+    );
     println!(
         "  Runtime IPC     {}{}",
-        if snapshot.runtime_ipc { "ready" } else { "unavailable" },
+        if snapshot.runtime_ipc {
+            "ready"
+        } else {
+            "unavailable"
+        },
         snapshot
             .runtime_pid
             .map(|pid| format!(" (pid {pid})"))
@@ -452,7 +464,11 @@ fn command_status(paths: &AppPaths, output_json: bool) -> CliResult<()> {
     );
     println!(
         "  Runtime log     {} ({})",
-        if snapshot.log_available { "ready" } else { "not-created" },
+        if snapshot.log_available {
+            "ready"
+        } else {
+            "not-created"
+        },
         snapshot.log_file
     );
     println!(
@@ -470,7 +486,11 @@ fn command_status(paths: &AppPaths, output_json: bool) -> CliResult<()> {
     );
     println!(
         "  Wake            {}",
-        if snapshot.wake_enabled { "enabled" } else { "disabled" }
+        if snapshot.wake_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
     );
     println!(
         "  STT             {}/{} {}",
@@ -494,7 +514,10 @@ fn command_paths(paths: &AppPaths) -> CliResult<()> {
     println!("management         {}", paths.management_endpoint.display());
     println!("log_dir            {}", paths.log_dir.display());
     println!("log_file           {}", paths.log_file.display());
-    println!("ai_settings        {}", paths.antigravity_settings.display());
+    println!(
+        "ai_settings        {}",
+        paths.antigravity_settings.display()
+    );
     println!("wake_settings      {}", paths.wake_settings.display());
     println!("permission_policy  {}", paths.permission_policy.display());
     println!("stt_model          {}", paths.stt_model_dir.display());
@@ -602,7 +625,10 @@ fn command_ai(paths: &AppPaths, args: &[String]) -> CliResult<()> {
             println!("binary  {binary}");
             println!("status  {}", ready_name(command_available(&binary)));
             println!("model   {}", settings.model.as_deref().unwrap_or("default"));
-            println!("effort  {}", settings.effort.as_deref().unwrap_or("default"));
+            println!(
+                "effort  {}",
+                settings.effort.as_deref().unwrap_or("default")
+            );
             Ok(())
         }
         "models" => {
@@ -696,7 +722,10 @@ fn command_wake(paths: &AppPaths, args: &[String]) -> CliResult<()> {
             }
             println!("source   persisted config");
             println!("enabled  {}", preferences.enabled);
-            println!("phrase   {}", preferences.phrase.as_deref().unwrap_or("default"));
+            println!(
+                "phrase   {}",
+                preferences.phrase.as_deref().unwrap_or("default")
+            );
             println!("file     {}", paths.wake_settings.display());
             Ok(())
         }
@@ -800,7 +829,8 @@ fn command_permissions(paths: &AppPaths, args: &[String]) -> CliResult<()> {
     let subcommand = args.first().map(String::as_str).unwrap_or("list");
     match subcommand {
         "list" => {
-            let policy = load_json_or_default::<PermissionOverrideSnapshot>(&paths.permission_policy)?;
+            let policy =
+                load_json_or_default::<PermissionOverrideSnapshot>(&paths.permission_policy)?;
             print_permission_policy(&policy);
         }
         "set" => {
@@ -821,7 +851,8 @@ fn command_permissions(paths: &AppPaths, args: &[String]) -> CliResult<()> {
                 ));
             }
 
-            let mut policy = load_json_or_default::<PermissionOverrideSnapshot>(&paths.permission_policy)?;
+            let mut policy =
+                load_json_or_default::<PermissionOverrideSnapshot>(&paths.permission_policy)?;
             policy.set(definition.name, decision);
             save_json_atomic(&paths.permission_policy, &policy)?;
             println!(
@@ -842,13 +873,20 @@ fn command_permissions(paths: &AppPaths, args: &[String]) -> CliResult<()> {
                 .find(|item| item.name == tool_name)
                 .ok_or_else(|| format!("unknown tool `{tool_name}`"))?;
             if !matches!(definition.risk, ToolRisk::Moderate) {
-                return Err(format!("`{}` does not support a runtime override", definition.name));
+                return Err(format!(
+                    "`{}` does not support a runtime override",
+                    definition.name
+                ));
             }
 
-            let mut policy = load_json_or_default::<PermissionOverrideSnapshot>(&paths.permission_policy)?;
+            let mut policy =
+                load_json_or_default::<PermissionOverrideSnapshot>(&paths.permission_policy)?;
             policy.clear(definition.name);
             save_json_atomic(&paths.permission_policy, &policy)?;
-            println!("{} override cleared (revision {})", definition.name, policy.revision);
+            println!(
+                "{} override cleared (revision {})",
+                definition.name, policy.revision
+            );
             println!("The baseline policy applies to subsequent tool authorizations.");
         }
         other => return Err(format!("unknown permissions command `{other}`")),
@@ -884,7 +922,12 @@ fn command_doctor(paths: &AppPaths) -> CliResult<()> {
         Err(error) => doctor_line("wake settings", false, &error, &mut failures),
     }
     match load_json_or_default::<PermissionOverrideSnapshot>(&paths.permission_policy) {
-        Ok(_) => doctor_line("permission policy", true, "valid JSON/default", &mut failures),
+        Ok(_) => doctor_line(
+            "permission policy",
+            true,
+            "valid JSON/default",
+            &mut failures,
+        ),
         Err(error) => doctor_line("permission policy", false, &error, &mut failures),
     }
 
@@ -897,8 +940,8 @@ fn command_doctor(paths: &AppPaths) -> CliResult<()> {
     );
 
     let wake = wake_resource(paths);
-    let wake_preferences = load_json_or_default::<WakePreferences>(&paths.wake_settings)
-        .unwrap_or_default();
+    let wake_preferences =
+        load_json_or_default::<WakePreferences>(&paths.wake_settings).unwrap_or_default();
     doctor_line(
         "wake resources",
         !wake_preferences.enabled || wake.ready,
@@ -945,7 +988,9 @@ fn parse_decision(value: &str) -> CliResult<PermissionDecision> {
         "allow" => Ok(PermissionDecision::Allow),
         "ask" => Ok(PermissionDecision::Ask),
         "deny" => Ok(PermissionDecision::Deny),
-        _ => Err(format!("invalid decision `{value}`; expected allow, ask, or deny")),
+        _ => Err(format!(
+            "invalid decision `{value}`; expected allow, ask, or deny"
+        )),
     }
 }
 
@@ -1048,7 +1093,8 @@ where
     if !path.is_file() {
         return Ok(T::default());
     }
-    let bytes = fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     serde_json::from_slice(&bytes)
         .map_err(|error| format!("cannot parse {}: {error}", path.display()))
 }
@@ -1183,8 +1229,11 @@ fn command_available(binary: &str) -> bool {
 fn runtime_running() -> Option<bool> {
     windows_tools::apps::list_running().ok().map(|apps| {
         apps.into_iter().any(|app| {
-            app.executable.eq_ignore_ascii_case("assisstant-desktop.exe")
-                || app.executable.eq_ignore_ascii_case("Assisstant Desktop.exe")
+            app.executable
+                .eq_ignore_ascii_case("assisstant-desktop.exe")
+                || app
+                    .executable
+                    .eq_ignore_ascii_case("Assisstant Desktop.exe")
         })
     })
 }
@@ -1207,7 +1256,12 @@ fn doctor_line(label: &str, ok: bool, detail: &str, failures: &mut usize) {
     if !ok {
         *failures += 1;
     }
-    println!("[{}] {:<20} {}", if ok { "OK" } else { "!!" }, label, detail);
+    println!(
+        "[{}] {:<20} {}",
+        if ok { "OK" } else { "!!" },
+        label,
+        detail
+    );
 }
 
 fn ready_name(value: bool) -> &'static str {
@@ -1303,16 +1357,30 @@ fn render_tui_header(page: TuiPage) {
 
 fn render_tui_dashboard(status: &StatusSnapshot) {
     println!("SYSTEM STATUS\n");
-    println!("  Runtime process  {}", runtime_name(status.runtime_process));
+    println!(
+        "  Runtime process  {}",
+        runtime_name(status.runtime_process)
+    );
     println!(
         "  Management IPC  {}",
-        if status.runtime_ipc { "ready" } else { "unavailable" }
+        if status.runtime_ipc {
+            "ready"
+        } else {
+            "unavailable"
+        }
     );
     println!(
         "  Runtime log     {}",
-        if status.log_available { "ready" } else { "not-created" }
+        if status.log_available {
+            "ready"
+        } else {
+            "not-created"
+        }
     );
-    println!("  Antigravity      {}", ready_name(status.antigravity_available));
+    println!(
+        "  Antigravity      {}",
+        ready_name(status.antigravity_available)
+    );
     println!(
         "  STT              {}/{} {}",
         status.stt.present,
@@ -1321,7 +1389,11 @@ fn render_tui_dashboard(status: &StatusSnapshot) {
     );
     println!(
         "  Wake             {}",
-        if status.wake_enabled { "enabled" } else { "disabled" }
+        if status.wake_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
     );
     println!(
         "  Wake model       {}/{} {}",
@@ -1338,7 +1410,9 @@ fn render_tui_dashboard(status: &StatusSnapshot) {
         status.ai_effort.as_deref().unwrap_or("default")
     );
     println!("\nDATA\n  {}", status.app_data);
-    println!("\nLive: assistant runtime status | assistant startup show | assistant overlay show | assistant logs -f");
+    println!(
+        "\nLive: assistant runtime status | assistant startup show | assistant overlay show | assistant logs -f"
+    );
 }
 
 fn render_tui_resources(status: &StatusSnapshot) {
