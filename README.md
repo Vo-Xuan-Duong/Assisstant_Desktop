@@ -71,7 +71,9 @@ Implemented in source:
 - Tailscale Serve tailnet-only remote satellite transport;
 - safe conversational follow-up mode that only reopens the microphone after desktop TTS finishes;
 - sherpa-onnx Vietnamese Zipformer retained as desktop fallback STT;
-- existing desktop wake-word runtime retained for the fallback path.
+- existing desktop wake-word runtime retained for the fallback path;
+- persisted **Release** acceptance panel with the 58-item manual checklist and combined runtime gate;
+- Windows CI, Android CI, and a dispatch-only Windows release-candidate workflow.
 
 Source implementation is intentionally ahead of target-device verification. Windows/Android/Tailscale runtime validation is performed locally before release readiness is declared.
 
@@ -635,14 +637,15 @@ Do not equate source completion with device verification. Validate locally:
 - fallback Zipformer/wake still work;
 - NSIS/startup/release packaging is validated on the target Windows installation.
 
-Per project policy, repository implementation does not run remote GitHub Actions, native builds/tests, installers, microphones, Tailscale mutations, or model downloads.
+GitHub Actions is now an allowed source/build validation gate: Windows CI and Android CI may run remotely. Physical-device acceptance, installer execution on the target machine, microphone tests, Tailscale mutations, and model downloads remain local/manual validation work.
 
 ## Remaining roadmap
 
-The core functional MVP is implemented in source through **Phase 31A**, with Phase 26B/28B/29B/32A/32B/33A product polish also implemented. Remaining work is primarily local acceptance and optional higher-complexity capabilities:
+The current MVP is implemented in source through **Phase 33B**, including the persisted 58-item local Release acceptance gate. Repository-side Windows/Android CI and a dispatch-only Windows release-candidate workflow are also implemented. Remaining work is primarily target-device acceptance and repository/release operations:
 
-- local Windows/Android/Tailscale acceptance testing and release packaging validation;
-- optional persisted manual acceptance tracking if a release checklist inside the app proves useful;
+- run the 58-item Windows/Android/Tailscale acceptance matrix on real target hardware;
+- validate NSIS install/startup and signed-public packaging on the intended Windows machine before publication;
+- enable `main` branch protection with the stable Windows and Android CI check names after this hardening PR is merged;
 - optional notification/headset/hardware activation surfaces if they prove useful;
 - optional domain/app-name normalization after real recognition data demonstrates a concrete need;
 - **Phase 31B** automatic acoustic full duplex only after a real AEC/reference-audio architecture exists.
@@ -666,3 +669,6 @@ Authoritative roadmap: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md).
 - [`docs/PHASE32A_TTS_SETTINGS_UI.md`](docs/PHASE32A_TTS_SETTINGS_UI.md)
 - [`docs/PHASE32B_SATELLITE_MANAGEMENT_UI.md`](docs/PHASE32B_SATELLITE_MANAGEMENT_UI.md)
 - [`docs/PHASE33A_LOCAL_VALIDATION_DASHBOARD.md`](docs/PHASE33A_LOCAL_VALIDATION_DASHBOARD.md)
+- [`docs/PHASE33B_RELEASE_ACCEPTANCE.md`](docs/PHASE33B_RELEASE_ACCEPTANCE.md)
+- [`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md)
+- [`docs/CI_RELEASE_AUTOMATION.md`](docs/CI_RELEASE_AUTOMATION.md)

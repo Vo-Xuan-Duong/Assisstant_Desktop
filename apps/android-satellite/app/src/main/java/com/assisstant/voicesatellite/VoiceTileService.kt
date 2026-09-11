@@ -1,5 +1,6 @@
 package com.assisstant.voicesatellite
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Build
@@ -19,7 +20,7 @@ class VoiceTileService : TileService() {
         }
     }
 
-    @Suppress("DEPRECATION")
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     override fun onClick() {
         super.onClick()
         val intent = Intent(this, MainActivity::class.java)
@@ -35,6 +36,8 @@ class VoiceTileService : TileService() {
             )
             startActivityAndCollapse(pendingIntent)
         } else {
+            // The PendingIntent overload was added in API 34. Older Android versions
+            // require the Intent overload; the SDK guard keeps it off API 34+.
             startActivityAndCollapse(intent)
         }
     }

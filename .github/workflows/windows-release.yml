@@ -1,0 +1,235 @@
+name: Windows Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag matching the desktop version, for example v0.1.0"
+        required: true
+        type: string
+      mode:
+        description: "Build mode"
+        required: true
+        default: unsigned-candidate
+        type: choice
+        options:
+          - unsigned-candidate
+          - signed-public
+      create_draft_release:
+        description: "Create a draft GitHub Release from a signed main build"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Windows release candidate
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      ASSISTANT_WINDOWS_CERT_SHA1: ${{ secrets.ASSISTANT_WINDOWS_CERT_SHA1 }}
+      ASSISTANT_WINDOWS_TIMESTAMP_URL: ${{ secrets.ASSISTANT_WINDOWS_TIMESTAMP_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate release request
+        shell: powershell
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+          RELEASE_MODE: ${{ inputs.mode }}
+          CREATE_DRAFT_RELEASE: ${{ inputs.create_draft_release }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $desktop = Get-Content 'apps/desktop/package.json' -Raw | ConvertFrom-Json
+          $expectedTag = "v$($desktop.version)"
+          $requestedTag = [string]$env:REQUESTED_TAG
+          if ($requestedTag -ne $expectedTag) {
+            throw "release_tag must match the desktop version. Expected '$expectedTag', received '$requestedTag'."
+          }
+
+          if ($env:CREATE_DRAFT_RELEASE -eq 'true') {
+            if ($env:RELEASE_MODE -ne 'signed-public') {
+              throw 'Draft GitHub Releases may only be created from signed-public builds.'
+            }
+            if ($env:GITHUB_REF_NAME -ne 'main') {
+              throw "Draft GitHub Releases must be created from main, not '$($env:GITHUB_REF_NAME)'."
+            }
+          }
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          components: rustfmt
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-release
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Import Windows signing certificate
+        if: inputs.mode == 'signed-public'
+        shell: powershell
+        env:
+          CERT_PFX_BASE64: ${{ secrets.ASSISTANT_WINDOWS_CERT_PFX_BASE64 }}
+          CERT_PFX_PASSWORD: ${{ secrets.ASSISTANT_WINDOWS_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:CERT_PFX_BASE64)) {
+            throw 'ASSISTANT_WINDOWS_CERT_PFX_BASE64 secret is required for signed-public builds.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:CERT_PFX_PASSWORD)) {
+            throw 'ASSISTANT_WINDOWS_CERT_PASSWORD secret is required for signed-public builds.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ASSISTANT_WINDOWS_CERT_SHA1)) {
+            throw 'ASSISTANT_WINDOWS_CERT_SHA1 secret is required for signed-public builds.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ASSISTANT_WINDOWS_TIMESTAMP_URL)) {
+            throw 'ASSISTANT_WINDOWS_TIMESTAMP_URL secret is required for signed-public builds.'
+          }
+
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'assistant-code-signing.pfx'
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CERT_PFX_BASE64))
+          $password = ConvertTo-SecureString $env:CERT_PFX_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation 'Cert:\CurrentUser\My' -Password $password -Exportable:$false
+          if (-not $certificate) {
+            throw 'Code-signing certificate import failed.'
+          }
+
+          $actualThumbprint = ($certificate.Thumbprint -replace '\s', '')
+          $expectedThumbprint = ($env:ASSISTANT_WINDOWS_CERT_SHA1 -replace '\s', '')
+          if ($actualThumbprint -ine $expectedThumbprint) {
+            $actualPath = "Cert:\CurrentUser\My\$actualThumbprint"
+            if (Test-Path $actualPath) {
+              Remove-Item $actualPath -Force
+            }
+            if (Test-Path $pfxPath) {
+              Remove-Item $pfxPath -Force
+            }
+            throw 'Imported certificate thumbprint does not match ASSISTANT_WINDOWS_CERT_SHA1.'
+          }
+          Remove-Item $pfxPath -Force
+
+      - name: Build unsigned release candidate
+        if: inputs.mode == 'unsigned-candidate'
+        shell: powershell
+        run: pnpm desktop:release:build
+
+      - name: Build signed public release candidate
+        if: inputs.mode == 'signed-public'
+        shell: powershell
+        run: pnpm desktop:release:build:public
+
+      - name: Create SHA-256 manifest
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundleRoot = Join-Path $env:GITHUB_WORKSPACE 'target\release\bundle'
+          if (-not (Test-Path $bundleRoot -PathType Container)) {
+            throw "Tauri bundle directory was not produced: $bundleRoot"
+          }
+          $artifacts = Get-ChildItem $bundleRoot -Recurse -File |
+            Where-Object { $_.Extension -in @('.exe', '.msi') }
+          if (-not $artifacts) {
+            throw 'No Windows installer artifacts were produced.'
+          }
+
+          $manifest = Join-Path $bundleRoot 'SHA256SUMS.txt'
+          $lines = foreach ($artifact in $artifacts) {
+            $hash = (Get-FileHash $artifact.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            $relative = [IO.Path]::GetRelativePath($bundleRoot, $artifact.FullName).Replace('\\', '/')
+            "$hash  $relative"
+          }
+          Set-Content -Path $manifest -Value $lines -Encoding utf8
+
+      - name: Upload Windows bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: assisstant-desktop-${{ inputs.release_tag }}-${{ inputs.mode }}
+          path: target/release/bundle/**
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove imported signing certificate
+        if: always() && inputs.mode == 'signed-public'
+        shell: powershell
+        run: |
+          $thumbprint = ([string]$env:ASSISTANT_WINDOWS_CERT_SHA1) -replace '\s', ''
+          if ($thumbprint -match '^[0-9A-Fa-f]{40}$') {
+            $path = "Cert:\CurrentUser\My\$thumbprint"
+            if (Test-Path $path) {
+              Remove-Item $path -Force
+            }
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'assistant-code-signing.pfx'
+          if (Test-Path $pfxPath) {
+            Remove-Item $pfxPath -Force
+          }
+
+  draft-release:
+    name: Create draft GitHub Release
+    if: inputs.create_draft_release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download signed release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: assisstant-desktop-${{ inputs.release_tag }}-${{ inputs.mode }}
+          path: release-bundle
+
+      - name: Create immutable draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_MODE" != "signed-public" || "$GITHUB_REF_NAME" != "main" ]]; then
+            echo "Draft releases require a signed-public build from main." >&2
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to replace it automatically." >&2
+            exit 1
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "Assisstant Desktop $RELEASE_TAG" \
+            --generate-notes
+
+          while IFS= read -r -d '' file; do
+            gh release upload "$RELEASE_TAG" "$file" --repo "$GITHUB_REPOSITORY"
+          done < <(find release-bundle -type f \( -name '*.exe' -o -name '*.msi' -o -name 'SHA256SUMS.txt' \) -print0)

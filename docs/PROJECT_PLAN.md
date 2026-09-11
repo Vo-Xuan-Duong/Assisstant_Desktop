@@ -32,7 +32,7 @@ The phone is not another AI brain and never receives direct MCP, Win32, shell, o
 11. Recognition confidence/alternatives are diagnostics and must not silently change a Windows command.
 12. The desktop diagnostics WebView must never receive/decrypt the pairing token.
 13. Automatic acoustic barge-in must not be claimed without a real echo-reference/AEC-capable architecture.
-14. Source completion is not target-device verification; native validation is performed locally by the user.
+14. Source completion is not target-device verification; GitHub Actions may validate source/build contracts, while target hardware/device acceptance remains local.
 15. Automated readiness status must not be presented as release certification.
 
 ## 3. Locked technology stack
@@ -576,6 +576,42 @@ microphone execution ---------X
 
 See [`PHASE33A_LOCAL_VALIDATION_DASHBOARD.md`](PHASE33A_LOCAL_VALIDATION_DASHBOARD.md).
 
+## 16D. Phase 33B — Persisted local release acceptance gate — COMPLETE IN SOURCE; LOCAL VALIDATION REQUIRED
+
+Goal: make the fixed 58-item target-device acceptance matrix directly trackable in the product without granting the WebView new native authority.
+
+Delivered:
+
+- compact **Release** panel backed by frontend-local versioned persistence;
+- fixed catalog of all 58 required acceptance checks;
+- per-check `pending | passed | failed | blocked` status;
+- malformed persisted schema/status/timestamp data fails visibly instead of being silently rewritten;
+- `pending` removes the stored item and reset removes the versioned checklist key;
+- combined release gate incorporates the existing runtime readiness report;
+- runtime Blocking, storage/readiness errors, or manual Failed/Blocked results produce a blocked gate;
+- remaining Pending checks keep the gate pending;
+- only 58/58 Passed with runtime readiness not blocking produces Ready;
+- no new Tauri command, shell/process execution, generic file read, credential access, firewall/Tailscale authority, or Sensitive-action approval path.
+
+The checklist is evidence tracking, not automated proof that a physical test occurred.
+
+See [`PHASE33B_RELEASE_ACCEPTANCE.md`](PHASE33B_RELEASE_ACCEPTANCE.md) and [`RELEASE_READINESS.md`](RELEASE_READINESS.md).
+
+## 16E. Repository CI and release hardening — COMPLETE IN SOURCE; TARGET RELEASE VALIDATION STILL REQUIRED
+
+Repository automation now provides:
+
+- Windows CI for deterministic assets/native preparation, MCP/helper sidecar staging, Rust formatting/tests, frontend build, full desktop feature compilation, and release-contract verification;
+- Android CI pinned to JDK 17 / Gradle 9.6.0 / Android 17 API 37 packages, running lint, pairing-payload JVM tests, debug APK assembly, and artifact upload;
+- a `workflow_dispatch`-only Windows release workflow with unsigned-candidate and signed-public modes;
+- SHA-256 installer manifests;
+- ephemeral CurrentUser PFX import/cleanup for signed-public mode;
+- draft GitHub Release creation only for a signed-public `main` build, with write permission isolated to the draft-release job.
+
+CI validates source/build contracts. It does not replace the 58 physical acceptance checks or installed NSIS validation.
+
+See [`CI_RELEASE_AUTOMATION.md`](CI_RELEASE_AUTOMATION.md).
+
 ## 17. Response behavior
 
 Vietnamese:
@@ -744,6 +780,8 @@ Core feature-complete source now includes:
 - bounded Quick UI for VI/EN installed SAPI voice preferences;
 - bounded Quick UI for Satellite listener enable/disable and known-device revoke/allow;
 - read-only Quick System self-check backed by the existing readiness engine;
+- persisted Quick Release acceptance tracking for the fixed 58-item matrix and combined runtime/manual gate;
+- Windows/Android repository CI plus bounded manual Windows release-candidate automation;
 - Stop/reconnect/deduplication;
 - read-only recognition/turn diagnostics;
 - Quick Settings + launcher shortcut activation;
@@ -769,7 +807,7 @@ Automatic acoustic full duplex remains outside the current release-readiness cla
 
 ### Optional product improvements
 
-- persisted manual acceptance tracking if an in-app release checklist proves useful after real local validation begins;
+- `main` branch protection with Windows and Android CI as required checks after the hardening workflows are merged;
 - notification activation if a persistent notification is actually desired;
 - headset/hardware-button activation where Android/device policy permits it;
 - domain/app-name normalization only after collected recognition diagnostics show repeatable errors.
@@ -780,6 +818,6 @@ Automatic acoustic full duplex remains outside the current release-readiness cla
 
 ## 23. Validation policy
 
-Repository development remains source-first.
+Repository development remains source-first, but GitHub Actions is an allowed source/build gate.
 
-Do not run/require remote GitHub Actions, native builds/tests, installer runs, microphone execution, Tailscale mutations, or model downloads during implementation phases. The user validates them locally on target hardware.
+Windows CI and Android CI may run on pull requests and `main` to validate formatting, unit tests, compilation, packaging contracts, and debug artifacts. The dispatch-only Windows release workflow may build candidates when explicitly invoked. Physical Android/Windows acceptance, installer execution on the target machine, microphone/wake behavior, Tailscale mutations/mobile-data checks, and model downloads remain local/manual validation work. CI success must never be presented as equivalent to 58/58 target-device acceptance.
