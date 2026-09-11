@@ -94,6 +94,7 @@
 }
 
 .release-checklist-actions button:disabled,
+.release-checklist-toolbar button:disabled,
 .acceptance-status:disabled {
   opacity: 0.5;
   cursor: default;
@@ -140,6 +141,8 @@
 }
 
 .release-gate-note,
+.release-evidence-note,
+.release-evidence-success,
 .release-checklist-error,
 .release-checklist-empty {
   margin: 8px 0 0;
@@ -152,6 +155,16 @@
 .release-gate-note {
   background: rgba(138, 180, 248, 0.08);
   color: rgba(220, 232, 255, 0.82);
+}
+
+.release-evidence-note {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.64);
+}
+
+.release-evidence-success {
+  background: rgba(80, 180, 120, 0.11);
+  color: rgba(177, 244, 202, 0.95);
 }
 
 .release-checklist-error {
