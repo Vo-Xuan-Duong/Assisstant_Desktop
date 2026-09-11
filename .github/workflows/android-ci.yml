@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -53,7 +53,6 @@ jobs:
       - name: Install locked Android SDK packages
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
           sdkmanager \
             "platform-tools" \
             "platforms;android-37" \
