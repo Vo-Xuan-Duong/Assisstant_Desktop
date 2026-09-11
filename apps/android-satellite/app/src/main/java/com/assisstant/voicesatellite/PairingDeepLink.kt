@@ -12,21 +12,40 @@ data class PairingImport(
 )
 
 object PairingDeepLink {
-    fun parse(uri: Uri?): Result<PairingImport> = runCatching {
-        require(uri != null) { "Pairing QR không có dữ liệu." }
-        require(uri.scheme.equals(PAIRING_SCHEME, ignoreCase = true)) {
+    fun parse(uri: Uri?): Result<PairingImport> {
+        if (uri == null) {
+            return Result.failure(IllegalArgumentException("Pairing QR không có dữ liệu."))
+        }
+
+        return parseParts(
+            scheme = uri.scheme,
+            endpoint = uri.host,
+            desktopHost = uri.getQueryParameter("h"),
+            portRaw = uri.getQueryParameter("p"),
+            tokenRaw = uri.getQueryParameter("t"),
+        )
+    }
+
+    internal fun parseParts(
+        scheme: String?,
+        endpoint: String?,
+        desktopHost: String?,
+        portRaw: String?,
+        tokenRaw: String?,
+    ): Result<PairingImport> = runCatching {
+        require(scheme.equals(PAIRING_SCHEME, ignoreCase = true)) {
             "Pairing QR không đúng định dạng Assistant."
         }
-        require(uri.host.equals(PAIRING_HOST, ignoreCase = true)) {
+        require(endpoint.equals(PAIRING_HOST, ignoreCase = true)) {
             "Pairing QR không đúng endpoint Assistant."
         }
 
-        val host = uri.getQueryParameter("h")?.trim().orEmpty()
-        val portRaw = uri.getQueryParameter("p")?.trim().orEmpty()
-        val token = uri.getQueryParameter("t")?.trim().orEmpty()
+        val host = desktopHost?.trim().orEmpty()
+        val portText = portRaw?.trim().orEmpty()
+        val token = tokenRaw?.trim().orEmpty()
 
         require(isValidHost(host)) { "Địa chỉ desktop trong QR không hợp lệ." }
-        val port = portRaw.toIntOrNull()
+        val port = portText.toIntOrNull()
         require(port != null && port in 1..65535) { "Cổng desktop trong QR không hợp lệ." }
         require(token.length == 64 && token.all { it.isHexDigit() }) {
             "Pairing token trong QR không hợp lệ."
