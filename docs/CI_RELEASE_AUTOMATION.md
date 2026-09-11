@@ -32,13 +32,14 @@ Workflow:
 .github/workflows/android-ci.yml
 ```
 
-The Android project currently uses Android Gradle Plugin 9.4.0 and API 37. CI therefore pins:
+The Android project currently uses Android Gradle Plugin 9.4.0 and Android 17 / API 37. CI pins the compatible toolchain and the concrete SDK package names exposed to command-line builds:
 
 ```text
 JDK 17
 Gradle 9.6.0
-Android platform 37
-Android Build Tools 36.0.0
+Android command-line tools 15859902
+Android platform package platforms;android-37.0
+Android Build Tools 37.0.0
 ```
 
 The workflow runs for Android source changes and can also be dispatched manually. It performs:
