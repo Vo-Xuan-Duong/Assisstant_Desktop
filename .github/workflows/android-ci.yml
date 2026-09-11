@@ -49,14 +49,17 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 15859902
+          packages: platform-tools
 
       - name: Install locked Android SDK packages
         shell: bash
         run: |
           sdkmanager \
             "platform-tools" \
-            "platforms;android-37" \
-            "build-tools;36.0.0"
+            "platforms;android-37.0" \
+            "build-tools;37.0.0"
 
       - name: Set up Gradle 9.6.0
         uses: gradle/actions/setup-gradle@v4
