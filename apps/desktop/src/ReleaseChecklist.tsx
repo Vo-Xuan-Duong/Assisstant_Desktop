@@ -10,6 +10,11 @@ import {
   type AcceptanceSnapshot,
   type AcceptanceStatus,
 } from "./acceptanceChecklist";
+import {
+  buildReleaseEvidence,
+  releaseEvidenceFilename,
+  serializeReleaseEvidence,
+} from "./releaseEvidence";
 import { setQuickAutoDismissHold } from "./quickLifecycle";
 import type { RuntimeReadinessReport } from "./types";
 import "./release-checklist.css";
@@ -60,9 +65,15 @@ export default function ReleaseChecklist() {
   const [readiness, setReadiness] = useState<RuntimeReadinessReport | null>(null);
   const [checklistError, setChecklistError] = useState<string | null>(null);
   const [readinessError, setReadinessError] = useState<string | null>(null);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [evidenceNotice, setEvidenceNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [filter, setFilter] = useState<StatusFilter>("all");
+
+  const gate = combinedGate(checklist, readiness, readinessError, checklistError);
+  const runtimeBlocking = readiness?.checks.filter((check) => check.level === "blocking").length ?? 0;
+  const canExportEvidence = Boolean(checklist && readiness && !checklistError && !readinessError);
 
   const loadLocal = useCallback(() => {
     try {
@@ -76,6 +87,8 @@ export default function ReleaseChecklist() {
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setEvidenceError(null);
+    setEvidenceNotice(null);
     loadLocal();
     setReadinessError(null);
     try {
@@ -119,6 +132,8 @@ export default function ReleaseChecklist() {
     if (savingId) return;
     setSavingId(item.id);
     setChecklistError(null);
+    setEvidenceError(null);
+    setEvidenceNotice(null);
     try {
       setChecklist(setAcceptanceStatus(item.id, status));
     } catch (cause) {
@@ -130,12 +145,41 @@ export default function ReleaseChecklist() {
 
   const resetAll = () => {
     if (!window.confirm("Đặt lại toàn bộ 58 acceptance checks về Pending?")) return;
+    setEvidenceError(null);
+    setEvidenceNotice(null);
     try {
       setChecklist(resetAcceptanceChecklist());
       setChecklistError(null);
       setFilter("all");
     } catch (cause) {
       setChecklistError(String(cause));
+    }
+  };
+
+  const exportEvidence = () => {
+    setEvidenceError(null);
+    setEvidenceNotice(null);
+    if (!checklist || !readiness || checklistError || readinessError) {
+      setEvidenceError("Không thể xuất evidence khi checklist hoặc runtime readiness chưa hợp lệ.");
+      return;
+    }
+
+    try {
+      const evidence = buildReleaseEvidence(checklist, readiness, gate);
+      const filename = releaseEvidenceFilename(evidence.generatedAtUnix);
+      const blob = new Blob([serializeReleaseEvidence(evidence)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setEvidenceNotice(`Đã xuất ${filename} · Gate ${gateLabel(gate)}.`);
+    } catch (cause) {
+      setEvidenceError(String(cause));
     }
   };
 
@@ -155,9 +199,6 @@ export default function ReleaseChecklist() {
     }
     return [...grouped.entries()];
   }, [visibleItems]);
-
-  const gate = combinedGate(checklist, readiness, readinessError, checklistError);
-  const runtimeBlocking = readiness?.checks.filter((check) => check.level === "blocking").length ?? 0;
 
   return (
     <div className={`release-checklist ${open ? "is-open" : ""}`}>
@@ -203,6 +244,10 @@ export default function ReleaseChecklist() {
             Android, installer, Firewall hay Tailscale test. Gate chỉ Ready khi 58 mục bắt buộc đã Passed
             và runtime self-check hiện không có Blocking.
           </p>
+          <p className="release-evidence-note">
+            Evidence JSON chỉ xuất trạng thái acceptance/readiness. Pairing credential, device identifier/name,
+            runtime path và check detail được loại khỏi file để giảm rủi ro khi chia sẻ report.
+          </p>
 
           {checklistError ? (
             <p className="release-checklist-error">
@@ -212,6 +257,10 @@ export default function ReleaseChecklist() {
           {readinessError ? (
             <p className="release-checklist-error">Không thể đọc runtime readiness: {readinessError}</p>
           ) : null}
+          {evidenceError ? (
+            <p className="release-checklist-error">Không thể xuất release evidence: {evidenceError}</p>
+          ) : null}
+          {evidenceNotice ? <p className="release-evidence-success">{evidenceNotice}</p> : null}
 
           <div className="release-checklist-toolbar">
             <label>
@@ -225,6 +274,13 @@ export default function ReleaseChecklist() {
               </select>
             </label>
             <span>{visibleItems.length} mục đang hiển thị</span>
+            <button
+              type="button"
+              disabled={!canExportEvidence || loading || Boolean(savingId)}
+              onClick={exportEvidence}
+            >
+              Xuất evidence JSON
+            </button>
             <button type="button" className="release-reset-button" onClick={resetAll}>Reset checklist</button>
           </div>
 
