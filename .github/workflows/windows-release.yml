@@ -22,7 +22,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: windows-release-${{ github.ref }}
@@ -131,7 +131,6 @@ jobs:
         run: pnpm desktop:release:build:public
 
       - name: Create SHA-256 manifest
-        id: bundle
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -152,7 +151,6 @@ jobs:
             "$hash  $relative"
           }
           Set-Content -Path $manifest -Value $lines -Encoding utf8
-          "bundle_root=$bundleRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload Windows bundle artifact
         uses: actions/upload-artifact@v4
@@ -161,29 +159,6 @@ jobs:
           path: target/release/bundle/**
           if-no-files-found: error
           retention-days: 14
-
-      - name: Create draft GitHub Release
-        if: inputs.create_draft_release
-        shell: powershell
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $tag = '${{ inputs.release_tag }}'
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            throw "GitHub Release '$tag' already exists. Refusing to replace it automatically."
-          }
-
-          gh release create $tag --draft --target $env:GITHUB_SHA --title "Assisstant Desktop $tag" --generate-notes
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to create draft GitHub Release.' }
-
-          $files = Get-ChildItem 'target\release\bundle' -Recurse -File |
-            Where-Object { $_.Extension -in @('.exe', '.msi') -or $_.Name -eq 'SHA256SUMS.txt' }
-          foreach ($file in $files) {
-            gh release upload $tag $file.FullName
-            if ($LASTEXITCODE -ne 0) { throw "Failed to upload $($file.Name) to draft release." }
-          }
 
       - name: Remove imported signing certificate
         if: always() && inputs.mode == 'signed-public'
@@ -200,3 +175,46 @@ jobs:
           if (Test-Path $pfxPath) {
             Remove-Item $pfxPath -Force
           }
+
+  draft-release:
+    name: Create draft GitHub Release
+    if: inputs.create_draft_release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download signed release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: assisstant-desktop-${{ inputs.release_tag }}-${{ inputs.mode }}
+          path: release-bundle
+
+      - name: Create immutable draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.mode }}" != "signed-public" || "${GITHUB_REF_NAME}" != "main" ]]; then
+            echo "Draft releases require a signed-public build from main." >&2
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to replace it automatically." >&2
+            exit 1
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "Assisstant Desktop $RELEASE_TAG" \
+            --generate-notes
+
+          while IFS= read -r -d '' file; do
+            gh release upload "$RELEASE_TAG" "$file" --repo "$GITHUB_REPOSITORY"
+          done < <(find release-bundle -type f \( -name '*.exe' -o -name '*.msi' -o -name 'SHA256SUMS.txt' \) -print0)
