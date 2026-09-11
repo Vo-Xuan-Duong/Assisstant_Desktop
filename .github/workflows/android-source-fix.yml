@@ -1,0 +1,59 @@
+name: Temporary Android source import fix
+
+on:
+  push:
+    branches:
+      - chore/release-hardening
+    paths:
+      - ".github/workflows/android-source-fix.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.repository == 'Vo-Xuan-Duong/Assisstant_Desktop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: chore/release-hardening
+
+      - name: Apply exact Compose import fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('apps/android-satellite/app/src/main/java/com/assisstant/voicesatellite/MainActivity.kt')
+          text = path.read_text(encoding='utf-8')
+
+          anchor = 'import androidx.activity.ComponentActivity\n'
+          set_content = 'import androidx.activity.compose.setContent\n'
+          if set_content not in text:
+              if anchor not in text:
+                  raise SystemExit('ComponentActivity import anchor is missing')
+              text = text.replace(anchor, anchor + set_content, 1)
+
+          weight_import = 'import androidx.compose.foundation.layout.weight\n'
+          if weight_import not in text:
+              raise SystemExit('Expected obsolete weight import is missing')
+          text = text.replace(weight_import, '', 1)
+
+          path.write_text(text, encoding='utf-8')
+
+      - name: Commit source fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --quiet -- apps/android-satellite/app/src/main/java/com/assisstant/voicesatellite/MainActivity.kt && {
+            echo 'No source changes were produced.' >&2
+            exit 1
+          }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/android-satellite/app/src/main/java/com/assisstant/voicesatellite/MainActivity.kt
+          git commit -m 'fix: correct Android Compose activity imports'
+          git push origin HEAD:chore/release-hardening
