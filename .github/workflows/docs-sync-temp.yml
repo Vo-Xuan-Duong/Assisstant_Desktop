@@ -1,0 +1,104 @@
+name: Temporary project status docs sync
+
+on:
+  push:
+    branches:
+      - chore/release-hardening
+    paths:
+      - ".github/workflows/docs-sync-temp.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  sync-docs:
+    if: github.repository == 'Vo-Xuan-Duong/Assisstant_Desktop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout release-hardening branch
+        uses: actions/checkout@v4
+        with:
+          ref: chore/release-hardening
+
+      - name: Synchronize current project status
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_exact(path: Path, old: str, new: str) -> None:
+              text = path.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'Expected block not found in {path}: {old[:120]!r}')
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          readme = Path('README.md')
+          replace_exact(
+              readme,
+              '- existing desktop wake-word runtime retained for the fallback path.\n',
+              '- existing desktop wake-word runtime retained for the fallback path;\n'
+              '- persisted **Release** acceptance panel with the 58-item manual checklist and combined runtime gate;\n'
+              '- Windows CI, Android CI, and a dispatch-only Windows release-candidate workflow.\n',
+          )
+
+          replace_exact(
+              readme,
+              'Per project policy, repository implementation does not run remote GitHub Actions, native builds/tests, installers, microphones, Tailscale mutations, or model downloads.\n',
+              'GitHub Actions is now an allowed source/build validation gate: Windows CI and Android CI may run remotely. Physical-device acceptance, installer execution on the target machine, microphone tests, Tailscale mutations, and model downloads remain local/manual validation work.\n',
+          )
+
+          old_roadmap = '''The core functional MVP is implemented in source through **Phase 31A**, with Phase 26B/28B/29B/32A/32B/33A product polish also implemented. Remaining work is primarily local acceptance and optional higher-complexity capabilities:\n\n- local Windows/Android/Tailscale acceptance testing and release packaging validation;\n- optional persisted manual acceptance tracking if a release checklist inside the app proves useful;\n- optional notification/headset/hardware activation surfaces if they prove useful;\n- optional domain/app-name normalization after real recognition data demonstrates a concrete need;\n- **Phase 31B** automatic acoustic full duplex only after a real AEC/reference-audio architecture exists.\n'''
+          new_roadmap = '''The current MVP is implemented in source through **Phase 33B**, including the persisted 58-item local Release acceptance gate. Repository-side Windows/Android CI and a dispatch-only Windows release-candidate workflow are also implemented. Remaining work is primarily target-device acceptance and repository/release operations:\n\n- run the 58-item Windows/Android/Tailscale acceptance matrix on real target hardware;\n- validate NSIS install/startup and signed-public packaging on the intended Windows machine before publication;\n- enable `main` branch protection with the stable Windows and Android CI check names after this hardening PR is merged;\n- optional notification/headset/hardware activation surfaces if they prove useful;\n- optional domain/app-name normalization after real recognition data demonstrates a concrete need;\n- **Phase 31B** automatic acoustic full duplex only after a real AEC/reference-audio architecture exists.\n'''
+          replace_exact(readme, old_roadmap, new_roadmap)
+
+          replace_exact(
+              readme,
+              '- [`docs/PHASE33A_LOCAL_VALIDATION_DASHBOARD.md`](docs/PHASE33A_LOCAL_VALIDATION_DASHBOARD.md)\n',
+              '- [`docs/PHASE33A_LOCAL_VALIDATION_DASHBOARD.md`](docs/PHASE33A_LOCAL_VALIDATION_DASHBOARD.md)\n'
+              '- [`docs/PHASE33B_RELEASE_ACCEPTANCE.md`](docs/PHASE33B_RELEASE_ACCEPTANCE.md)\n'
+              '- [`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md)\n'
+              '- [`docs/CI_RELEASE_AUTOMATION.md`](docs/CI_RELEASE_AUTOMATION.md)\n',
+          )
+
+          plan = Path('docs/PROJECT_PLAN.md')
+          replace_exact(
+              plan,
+              '14. Source completion is not target-device verification; native validation is performed locally by the user.\n',
+              '14. Source completion is not target-device verification; GitHub Actions may validate source/build contracts, while target hardware/device acceptance remains local.\n',
+          )
+
+          phase33b = '''## 16D. Phase 33B — Persisted local release acceptance gate — COMPLETE IN SOURCE; LOCAL VALIDATION REQUIRED\n\nGoal: make the fixed 58-item target-device acceptance matrix directly trackable in the product without granting the WebView new native authority.\n\nDelivered:\n\n- compact **Release** panel backed by frontend-local versioned persistence;\n- fixed catalog of all 58 required acceptance checks;\n- per-check `pending | passed | failed | blocked` status;\n- malformed persisted schema/status/timestamp data fails visibly instead of being silently rewritten;\n- `pending` removes the stored item and reset removes the versioned checklist key;\n- combined release gate incorporates the existing runtime readiness report;\n- runtime Blocking, storage/readiness errors, or manual Failed/Blocked results produce a blocked gate;\n- remaining Pending checks keep the gate pending;\n- only 58/58 Passed with runtime readiness not blocking produces Ready;\n- no new Tauri command, shell/process execution, generic file read, credential access, firewall/Tailscale authority, or Sensitive-action approval path.\n\nThe checklist is evidence tracking, not automated proof that a physical test occurred.\n\nSee [`PHASE33B_RELEASE_ACCEPTANCE.md`](PHASE33B_RELEASE_ACCEPTANCE.md) and [`RELEASE_READINESS.md`](RELEASE_READINESS.md).\n\n## 16E. Repository CI and release hardening — COMPLETE IN SOURCE; TARGET RELEASE VALIDATION STILL REQUIRED\n\nRepository automation now provides:\n\n- Windows CI for deterministic assets/native preparation, MCP/helper sidecar staging, Rust formatting/tests, frontend build, full desktop feature compilation, and release-contract verification;\n- Android CI pinned to JDK 17 / Gradle 9.6.0 / Android 17 API 37 packages, running lint, pairing-payload JVM tests, debug APK assembly, and artifact upload;\n- a `workflow_dispatch`-only Windows release workflow with unsigned-candidate and signed-public modes;\n- SHA-256 installer manifests;\n- ephemeral CurrentUser PFX import/cleanup for signed-public mode;\n- draft GitHub Release creation only for a signed-public `main` build, with write permission isolated to the draft-release job.\n\nCI validates source/build contracts. It does not replace the 58 physical acceptance checks or installed NSIS validation.\n\nSee [`CI_RELEASE_AUTOMATION.md`](CI_RELEASE_AUTOMATION.md).\n\n'''
+          replace_exact(plan, '## 17. Response behavior\n', phase33b + '## 17. Response behavior\n')
+
+          replace_exact(
+              plan,
+              '- read-only Quick System self-check backed by the existing readiness engine;\n',
+              '- read-only Quick System self-check backed by the existing readiness engine;\n'
+              '- persisted Quick Release acceptance tracking for the fixed 58-item matrix and combined runtime/manual gate;\n'
+              '- Windows/Android repository CI plus bounded manual Windows release-candidate automation;\n',
+          )
+
+          replace_exact(
+              plan,
+              '- persisted manual acceptance tracking if an in-app release checklist proves useful after real local validation begins;\n',
+              '- `main` branch protection with Windows and Android CI as required checks after the hardening workflows are merged;\n',
+          )
+
+          old_policy = '''Repository development remains source-first.\n\nDo not run/require remote GitHub Actions, native builds/tests, installer runs, microphone execution, Tailscale mutations, or model downloads during implementation phases. The user validates them locally on target hardware.\n'''
+          new_policy = '''Repository development remains source-first, but GitHub Actions is an allowed source/build gate.\n\nWindows CI and Android CI may run on pull requests and `main` to validate formatting, unit tests, compilation, packaging contracts, and debug artifacts. The dispatch-only Windows release workflow may build candidates when explicitly invoked. Physical Android/Windows acceptance, installer execution on the target machine, microphone/wake behavior, Tailscale mutations/mobile-data checks, and model downloads remain local/manual validation work. CI success must never be presented as equivalent to 58/58 target-device acceptance.\n'''
+          replace_exact(plan, old_policy, new_policy)
+
+      - name: Commit documentation sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --quiet -- README.md docs/PROJECT_PLAN.md && {
+            echo 'No documentation changes were produced.' >&2
+            exit 1
+          }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md docs/PROJECT_PLAN.md
+          git commit -m 'docs: sync project status through release hardening'
+          git push origin HEAD:chore/release-hardening
