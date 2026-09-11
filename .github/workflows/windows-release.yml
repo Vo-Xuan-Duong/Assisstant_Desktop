@@ -43,17 +43,21 @@ jobs:
 
       - name: Validate release request
         shell: powershell
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+          RELEASE_MODE: ${{ inputs.mode }}
+          CREATE_DRAFT_RELEASE: ${{ inputs.create_draft_release }}
         run: |
           $ErrorActionPreference = 'Stop'
           $desktop = Get-Content 'apps/desktop/package.json' -Raw | ConvertFrom-Json
           $expectedTag = "v$($desktop.version)"
-          $requestedTag = '${{ inputs.release_tag }}'
+          $requestedTag = [string]$env:REQUESTED_TAG
           if ($requestedTag -ne $expectedTag) {
             throw "release_tag must match the desktop version. Expected '$expectedTag', received '$requestedTag'."
           }
 
-          if ('${{ inputs.create_draft_release }}' -eq 'true') {
-            if ('${{ inputs.mode }}' -ne 'signed-public') {
+          if ($env:CREATE_DRAFT_RELEASE -eq 'true') {
+            if ($env:RELEASE_MODE -ne 'signed-public') {
               throw 'Draft GitHub Releases may only be created from signed-public builds.'
             }
             if ($env:GITHUB_REF_NAME -ne 'main') {
@@ -115,7 +119,17 @@ jobs:
           if (-not $certificate) {
             throw 'Code-signing certificate import failed.'
           }
-          if (($certificate.Thumbprint -replace '\s', '') -ine ($env:ASSISTANT_WINDOWS_CERT_SHA1 -replace '\s', '')) {
+
+          $actualThumbprint = ($certificate.Thumbprint -replace '\s', '')
+          $expectedThumbprint = ($env:ASSISTANT_WINDOWS_CERT_SHA1 -replace '\s', '')
+          if ($actualThumbprint -ine $expectedThumbprint) {
+            $actualPath = "Cert:\CurrentUser\My\$actualThumbprint"
+            if (Test-Path $actualPath) {
+              Remove-Item $actualPath -Force
+            }
+            if (Test-Path $pfxPath) {
+              Remove-Item $pfxPath -Force
+            }
             throw 'Imported certificate thumbprint does not match ASSISTANT_WINDOWS_CERT_SHA1.'
           }
           Remove-Item $pfxPath -Force
@@ -197,9 +211,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
-          if [[ "${{ inputs.mode }}" != "signed-public" || "${GITHUB_REF_NAME}" != "main" ]]; then
+          if [[ "$RELEASE_MODE" != "signed-public" || "$GITHUB_REF_NAME" != "main" ]]; then
             echo "Draft releases require a signed-public build from main." >&2
             exit 1
           fi
